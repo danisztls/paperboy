@@ -6,6 +6,7 @@ Reads config from a YAML or JSON file, saves seen entry state to a JSON file.
 
 import html.parser
 import json
+import re
 import sys
 import urllib.request
 import urllib.error
@@ -56,6 +57,14 @@ def strip_html(text: str) -> str:
     except Exception:
         pass
     return p.get_text()
+
+
+# Escapes block-level markers (# > at line start) and common inline markers
+_MD_ESCAPE_RE = re.compile(r'(?m)(^[>#]+|[*_`~])')
+
+
+def escape_markdown(text: str) -> str:
+    return _MD_ESCAPE_RE.sub(r'\\\1', text)
 
 
 def fetch_og_image(url: str) -> str | None:
@@ -193,6 +202,7 @@ def process_feed(feed_cfg: dict, seen: set, debug: bool = False) -> tuple[list[s
             description = strip_html(raw_desc).strip()
             if len(description) > DESCRIPTION_MAX:
                 description = description[:DESCRIPTION_MAX].rstrip() + "…"
+            description = escape_markdown(description)
 
             link = entry.get("link", "")
             log.debug("[%s] Fetching OG image for %s", feed_title, link[:80])
