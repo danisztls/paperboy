@@ -42,12 +42,11 @@ def save_state(path: pathlib.Path, state: dict) -> None:
     path.write_text(json.dumps(state, indent=2))
 
 
-def post_to_discord(webhook_url: str, entry, feed_title: str) -> None:
+def post_to_discord(webhook_url: str, entry, feed_title: str, debug: bool = False) -> None:
     title = entry.get("title", "(no title)").strip()
     link = entry.get("link", "").strip()
     source = feed_title.strip() if feed_title else None
 
-    # Build a clean embed
     embed = {
         "title": title[:256],
         "url": link or None,
@@ -56,7 +55,13 @@ def post_to_discord(webhook_url: str, entry, feed_title: str) -> None:
     if source:
         embed["footer"] = {"text": source}
 
-    payload = json.dumps({"embeds": [embed]}).encode()
+    payload_dict = {"embeds": [embed]}
+    payload = json.dumps(payload_dict).encode()
+
+    if debug:
+        log.debug("Webhook URL: %s", webhook_url)
+        log.debug("Payload: %s", json.dumps(payload_dict, indent=2))
+
     req = urllib.request.Request(
         webhook_url,
         data=payload,
@@ -67,9 +72,10 @@ def post_to_discord(webhook_url: str, entry, feed_title: str) -> None:
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
-            # Discord returns 204 on success
             if resp.status not in (200, 204):
                 log.warning("Unexpected Discord response: %s", resp.status)
+            elif debug:
+                log.debug("Discord response status: %s", resp.status)
     except urllib.error.HTTPError as e:
         log.error("Discord webhook HTTP error: %s - %s", e.code, e.reason)
         raise
@@ -78,18 +84,24 @@ def post_to_discord(webhook_url: str, entry, feed_title: str) -> None:
         raise
 
 
-def process_feed(feed_cfg: dict, seen: set) -> list[str]:
-    """Parse feed, post new entries, return list of all current entry IDs."""
+def process_feed(feed_cfg: dict, seen: set, debug: bool = False) -> tuple[list[str], bool]:
+    """Parse feed, post new entries, return (current entry IDs, posted_any).
+
+    In debug mode posts at most one entry and does not update state.
+    """
     url = feed_cfg["url"]
     webhook = feed_cfg["webhook"]
 
+    log.debug("Fetching feed: %s", url)
     parsed = feedparser.parse(url)
 
     if parsed.bozo and not parsed.entries:
         log.warning("Failed to parse feed %s: %s", url, parsed.bozo_exception)
-        return list(seen)
+        return list(seen), False
 
     feed_title = feed_cfg.get("name") or getattr(parsed.feed, "title", url)
+    log.debug("[%s] Total entries in feed: %d", feed_title, len(parsed.entries))
+
     current_ids = []
     new_entries = []
 
@@ -100,18 +112,25 @@ def process_feed(feed_cfg: dict, seen: set) -> list[str]:
         current_ids.append(eid)
         if eid not in seen:
             new_entries.append((eid, entry))
+            log.debug("[%s] New entry: %s", feed_title, eid[:120])
+        else:
+            log.debug("[%s] Already seen: %s", feed_title, eid[:120])
 
-    # Post in chronological order (oldest first)
+    log.debug("[%s] New entries to post: %d", feed_title, len(new_entries))
+
+    posted_any = False
     for eid, entry in reversed(new_entries):
         try:
-            post_to_discord(webhook, entry, feed_title)
+            post_to_discord(webhook, entry, feed_title, debug=debug)
             log.info("[%s] Posted: %s", feed_title, entry.get("title", eid)[:80])
-            # Respect Discord rate limits
+            posted_any = True
+            if debug:
+                return current_ids, True
             time.sleep(1)
         except Exception:
             log.error("Skipping entry %s due to post failure", eid)
 
-    return current_ids
+    return current_ids, posted_any
 
 
 def main():
@@ -122,7 +141,16 @@ def main():
         default=None,
         help="Path to state file (default: <config_dir>/state.json)",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Post one entry (dry-run for state), verbose output",
+    )
     args = parser.parse_args()
+
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+        log.debug("Debug mode enabled — will post at most one entry and skip state save")
 
     config_path = pathlib.Path(args.config).expanduser().resolve()
     state_path = (
@@ -134,6 +162,9 @@ def main():
     if not config_path.exists():
         log.error("Config file not found: %s", config_path)
         sys.exit(1)
+
+    log.debug("Config: %s", config_path)
+    log.debug("State:  %s", state_path)
 
     config = load_config(config_path)
     state = load_state(state_path)
@@ -149,12 +180,19 @@ def main():
             log.warning("Skipping incomplete feed entry: %s", feed_cfg)
             continue
         seen = set(state.get(url, []))
-        current_ids = process_feed(feed_cfg, seen)
-        # Only keep IDs still present in the feed to avoid unbounded growth
-        state[url] = current_ids
+        current_ids, posted = process_feed(feed_cfg, seen, debug=args.debug)
+        if not args.debug:
+            # Only keep IDs still present in the feed to avoid unbounded growth
+            state[url] = current_ids
+        if args.debug and posted:
+            log.debug("Debug mode: stopping after first posted entry")
+            break
 
-    save_state(state_path, state)
-    log.info("Done. State saved to %s", state_path)
+    if args.debug:
+        log.debug("Debug mode: state not saved")
+    else:
+        save_state(state_path, state)
+        log.info("Done. State saved to %s", state_path)
 
 
 if __name__ == "__main__":
