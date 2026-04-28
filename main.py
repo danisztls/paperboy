@@ -161,13 +161,12 @@ def post_to_discord(
         raise
 
 
-def process_feed(feed_cfg: dict, seen: set, debug: bool = False) -> tuple[list[str], bool]:
+def process_feed(feed_cfg: dict, webhook: str, seen: set, debug: bool = False) -> tuple[list[str], bool]:
     """Parse feed, post new entries, return (current entry IDs, posted_any).
 
     In debug mode posts at most one entry and does not update state.
     """
     url = feed_cfg["url"]
-    webhook = feed_cfg["webhook"]
 
     log.debug("Fetching feed: %s", url)
     parsed = feedparser.parse(url)
@@ -257,24 +256,32 @@ def main():
     config = load_config(config_path)
     state = load_state(state_path)
 
-    feeds = config.get("feeds", [])
-    if not feeds:
-        log.error("No feeds defined in config.")
+    hooks = config.get("hooks", [])
+    if not hooks:
+        log.error("No hooks defined in config.")
         sys.exit(1)
 
-    for feed_cfg in feeds:
-        url = feed_cfg.get("url")
-        if not url or not feed_cfg.get("webhook"):
-            log.warning("Skipping incomplete feed entry: %s", feed_cfg)
+    for hook_cfg in hooks:
+        webhook = hook_cfg.get("webhook")
+        if not webhook:
+            log.warning("Skipping hook with no webhook URL")
             continue
-        seen = set(state.get(url, []))
-        current_ids, posted = process_feed(feed_cfg, seen, debug=args.debug)
-        if not args.debug:
-            # Only keep IDs still present in the feed to avoid unbounded growth
-            state[url] = current_ids
-        if args.debug and posted:
-            log.debug("Debug mode: stopping after first posted entry")
-            break
+        for feed_cfg in hook_cfg.get("feeds", []):
+            url = feed_cfg.get("url")
+            if not url:
+                log.warning("Skipping feed with no URL: %s", feed_cfg)
+                continue
+            seen = set(state.get(url, []))
+            current_ids, posted = process_feed(feed_cfg, webhook, seen, debug=args.debug)
+            if not args.debug:
+                # Only keep IDs still present in the feed to avoid unbounded growth
+                state[url] = current_ids
+            if args.debug and posted:
+                log.debug("Debug mode: stopping after first posted entry")
+                break
+        else:
+            continue
+        break
 
     if args.debug:
         log.debug("Debug mode: state not saved")

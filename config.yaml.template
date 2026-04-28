@@ -1,0 +1,5 @@
+hooks:
+  - webhook: "https://discordapp.com/api/webhooks/<NUMBER>/<TOKEN>"
+    feeds:
+      - name:
+        url:
