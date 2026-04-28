@@ -4,6 +4,7 @@ RSS to Discord webhook notifier
 Reads config from a YAML or JSON file, saves seen entry state to a JSON file.
 """
 
+import html.parser
 import json
 import sys
 import urllib.request
@@ -14,6 +15,62 @@ import logging
 import argparse
 
 import feedparser
+
+DESCRIPTION_MAX = 300
+
+
+class _TagStripper(html.parser.HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self._parts = []
+
+    def handle_data(self, data):
+        self._parts.append(data)
+
+    def get_text(self) -> str:
+        return "".join(self._parts)
+
+
+class _OGImageParser(html.parser.HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.og_image: str | None = None
+        self._done = False
+
+    def handle_starttag(self, tag, attrs):
+        if self._done:
+            return
+        if tag == "body":
+            self._done = True
+        elif tag == "meta":
+            d = dict(attrs)
+            if d.get("property") == "og:image" and d.get("content"):
+                self.og_image = d["content"]
+                self._done = True
+
+
+def strip_html(text: str) -> str:
+    p = _TagStripper()
+    try:
+        p.feed(text)
+    except Exception:
+        pass
+    return p.get_text()
+
+
+def fetch_og_image(url: str) -> str | None:
+    if not url:
+        return None
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "rss-discord/1.0"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            chunk = resp.read(32768).decode("utf-8", errors="replace")
+        p = _OGImageParser()
+        p.feed(chunk)
+        return p.og_image
+    except Exception as exc:
+        log.debug("Could not fetch OG image from %s: %s", url, exc)
+        return None
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -42,7 +99,14 @@ def save_state(path: pathlib.Path, state: dict) -> None:
     path.write_text(json.dumps(state, indent=2))
 
 
-def post_to_discord(webhook_url: str, entry, feed_title: str, debug: bool = False) -> None:
+def post_to_discord(
+    webhook_url: str,
+    entry,
+    feed_title: str,
+    description: str = "",
+    image_url: str | None = None,
+    debug: bool = False,
+) -> None:
     title = entry.get("title", "(no title)").strip()
     link = entry.get("link", "").strip()
     source = feed_title.strip() if feed_title else None
@@ -52,6 +116,10 @@ def post_to_discord(webhook_url: str, entry, feed_title: str, debug: bool = Fals
         "url": link or None,
         "color": 5793266,  # neutral blue
     }
+    if description:
+        embed["description"] = description
+    if image_url:
+        embed["image"] = {"url": image_url}
     if source:
         embed["footer"] = {"text": source}
 
@@ -121,7 +189,17 @@ def process_feed(feed_cfg: dict, seen: set, debug: bool = False) -> tuple[list[s
     posted_any = False
     for eid, entry in reversed(new_entries):
         try:
-            post_to_discord(webhook, entry, feed_title, debug=debug)
+            raw_desc = entry.get("summary") or entry.get("description", "")
+            description = strip_html(raw_desc).strip()
+            if len(description) > DESCRIPTION_MAX:
+                description = description[:DESCRIPTION_MAX].rstrip() + "…"
+
+            link = entry.get("link", "")
+            log.debug("[%s] Fetching OG image for %s", feed_title, link[:80])
+            image_url = fetch_og_image(link)
+            log.debug("[%s] OG image: %s", feed_title, image_url)
+
+            post_to_discord(webhook, entry, feed_title, description=description, image_url=image_url, debug=debug)
             log.info("[%s] Posted: %s", feed_title, entry.get("title", eid)[:80])
             posted_any = True
             if debug:
