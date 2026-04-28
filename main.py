@@ -1,5 +1,160 @@
+#!/usr/bin/env python3
+"""
+RSS to Discord webhook notifier
+Reads config from a YAML or JSON file, saves seen entry state to a JSON file.
+"""
+
+import json
+import sys
+import urllib.request
+import urllib.error
+import pathlib
+import time
+import logging
+import argparse
+
+import feedparser
+
+logging.basicConfig(
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    level=logging.INFO,
+)
+log = logging.getLogger(__name__)
+
+
+def load_config(path: pathlib.Path) -> dict:
+    text = path.read_text()
+    if path.suffix in (".yaml", ".yml"):
+        import yaml
+        return yaml.safe_load(text)
+    return json.loads(text)
+
+
+def load_state(path: pathlib.Path) -> dict:
+    if path.exists():
+        return json.loads(path.read_text())
+    return {}
+
+
+def save_state(path: pathlib.Path, state: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2))
+
+
+def post_to_discord(webhook_url: str, entry, feed_title: str) -> None:
+    title = entry.get("title", "(no title)").strip()
+    link = entry.get("link", "").strip()
+    source = feed_title.strip() if feed_title else None
+
+    # Build a clean embed
+    embed = {
+        "title": title[:256],
+        "url": link or None,
+        "color": 5793266,  # neutral blue
+    }
+    if source:
+        embed["footer"] = {"text": source}
+
+    payload = json.dumps({"embeds": [embed]}).encode()
+    req = urllib.request.Request(
+        webhook_url,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "rss-discord/1.0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            # Discord returns 204 on success
+            if resp.status not in (200, 204):
+                log.warning("Unexpected Discord response: %s", resp.status)
+    except urllib.error.HTTPError as e:
+        log.error("Discord webhook HTTP error: %s - %s", e.code, e.reason)
+        raise
+    except urllib.error.URLError as e:
+        log.error("Discord webhook connection error: %s", e.reason)
+        raise
+
+
+def process_feed(feed_cfg: dict, seen: set) -> list[str]:
+    """Parse feed, post new entries, return list of all current entry IDs."""
+    url = feed_cfg["url"]
+    webhook = feed_cfg["webhook"]
+
+    parsed = feedparser.parse(url)
+
+    if parsed.bozo and not parsed.entries:
+        log.warning("Failed to parse feed %s: %s", url, parsed.bozo_exception)
+        return list(seen)
+
+    feed_title = feed_cfg.get("name") or getattr(parsed.feed, "title", url)
+    current_ids = []
+    new_entries = []
+
+    for entry in parsed.entries:
+        eid = entry.get("id") or entry.get("link") or entry.get("title")
+        if not eid:
+            continue
+        current_ids.append(eid)
+        if eid not in seen:
+            new_entries.append((eid, entry))
+
+    # Post in chronological order (oldest first)
+    for eid, entry in reversed(new_entries):
+        try:
+            post_to_discord(webhook, entry, feed_title)
+            log.info("[%s] Posted: %s", feed_title, entry.get("title", eid)[:80])
+            # Respect Discord rate limits
+            time.sleep(1)
+        except Exception:
+            log.error("Skipping entry %s due to post failure", eid)
+
+    return current_ids
+
+
 def main():
-    print("Hello from claudinho!")
+    parser = argparse.ArgumentParser(description="RSS to Discord webhook notifier")
+    parser.add_argument("config", help="Path to config file (YAML or JSON)")
+    parser.add_argument(
+        "--state",
+        default=None,
+        help="Path to state file (default: <config_dir>/state.json)",
+    )
+    args = parser.parse_args()
+
+    config_path = pathlib.Path(args.config).expanduser().resolve()
+    state_path = (
+        pathlib.Path(args.state).expanduser().resolve()
+        if args.state
+        else config_path.parent / "state.json"
+    )
+
+    if not config_path.exists():
+        log.error("Config file not found: %s", config_path)
+        sys.exit(1)
+
+    config = load_config(config_path)
+    state = load_state(state_path)
+
+    feeds = config.get("feeds", [])
+    if not feeds:
+        log.error("No feeds defined in config.")
+        sys.exit(1)
+
+    for feed_cfg in feeds:
+        url = feed_cfg.get("url")
+        if not url or not feed_cfg.get("webhook"):
+            log.warning("Skipping incomplete feed entry: %s", feed_cfg)
+            continue
+        seen = set(state.get(url, []))
+        current_ids = process_feed(feed_cfg, seen)
+        # Only keep IDs still present in the feed to avoid unbounded growth
+        state[url] = current_ids
+
+    save_state(state_path, state)
+    log.info("Done. State saved to %s", state_path)
 
 
 if __name__ == "__main__":
