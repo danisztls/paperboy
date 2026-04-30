@@ -97,6 +97,12 @@ async def _async_main(args: argparse.Namespace) -> None:
         else config_path.parent / "state.json"
     )
 
+    if args.migrate:
+        state = load_state(state_path)
+        save_state(state_path, state)
+        log.info("Migrated state.json schema, wrote %s", state_path)
+        return
+
     if not config_path.exists():
         log.error("Config file not found: %s", config_path)
         sys.exit(1)
@@ -182,10 +188,16 @@ def main():
         default=None,
         help="Path to state file (default: <config_dir>/state.json)",
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--debug",
         action="store_true",
         help="Post one entry from the first feed with new content; skip state save",
+    )
+    mode.add_argument(
+        "--migrate",
+        action="store_true",
+        help="Migrate state.json to the current schema (no feeds fetched, no posts sent)",
     )
     args = parser.parse_args()
 
