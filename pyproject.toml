@@ -8,3 +8,6 @@ dependencies = [
     "feedparser>=6.0.12",
     "pyyaml>=6.0.3",
 ]
+
+[project.scripts]
+claudinho = "main:main"
