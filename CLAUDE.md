@@ -24,7 +24,7 @@ There is no test suite, linter, or formatter configured.
 Three modules, no package, flat layout:
 
 - `main.py` — CLI entry point and orchestration. Loads config + state, opens a single shared `aiohttp.ClientSession`, then dispatches to one of three modes:
-  - **Normal mode**: filters out feeds whose `last_run` is more recent than the hook's `period` (with a 60-second grace window for cron drift), then builds one task per remaining `(webhook, feed)` pair and `asyncio.gather`s them in parallel; merges per-feed results into `state` and saves once at the end.
+  - **Normal mode**: filters out feeds whose `last_run` is more recent than the task's `period` (with a 60-second grace window for cron drift), then builds one coroutine per remaining `(webhook, feed)` pair and `asyncio.gather`s them in parallel; merges per-feed results into `state` and saves once at the end.
   - **Debug mode (`--debug`)**: walks feeds sequentially, posts the *first* new entry from the *first* feed that has one, then exits. Period is ignored. **State is never saved in debug mode** — this is deliberate, so the same entry can be re-posted while iterating on formatting.
   - **Migrate mode (`--migrate`)**: loads `state.json`, runs the legacy-shape migration in `load_state`, writes the result, and exits. Does not open an HTTP session, does not fetch feeds, does not post. The config file does not need to exist — only its parent directory matters (for the default `state.json` location). Mutually exclusive with `--debug`.
 - `feed.py` — feed fetching, dedup, and entry enrichment. `get_new_entries(feed_cfg, seen, session)` returns `(current_ids, new_entries)` on success or `None` on parse failure (so the caller can skip the `last_run` update and retry on the next cron tick):
@@ -43,15 +43,15 @@ Three modules, no package, flat layout:
 ### Config shape
 
 ```yaml
-hooks:
+tasks:
   - webhook: "https://discord.com/api/webhooks/.../..."
-    period: 1  # optional, hours between processing this hook's feeds. Default: 1.0
+    period: 1  # optional, hours between processing this task's feeds. Default: 1.0
     feeds:
       - name: "Optional display name (used as embed footer)"
         url: "https://example.com/feed.xml"
 ```
 
-Multiple `hooks` entries let different feed groups go to different webhooks. `period` is per-hook only — there's no per-feed override. The threshold check subtracts `PERIOD_GRACE` (60s) so a 1h cron firing every ~60min doesn't skip every other tick due to clock jitter. Both YAML and JSON are accepted (dispatched by file suffix in `load_config`).
+Multiple `tasks` entries let different feed groups go to different webhooks. `period` is per-task only — there's no per-feed override. The threshold check subtracts `PERIOD_GRACE` (60s) so a 1h cron firing every ~60min doesn't skip every other tick due to clock jitter. Both YAML and JSON are accepted (dispatched by file suffix in `load_config`).
 
 ## Conventions worth preserving
 

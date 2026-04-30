@@ -113,9 +113,9 @@ async def _async_main(args: argparse.Namespace) -> None:
     config = load_config(config_path)
     state = load_state(state_path)
 
-    hooks = config.get("hooks", [])
-    if not hooks:
-        log.error("No hooks defined in config.")
+    tasks = config.get("tasks", [])
+    if not tasks:
+        log.error("No tasks defined in config.")
         sys.exit(1)
 
     async with aiohttp.ClientSession(
@@ -126,12 +126,12 @@ async def _async_main(args: argparse.Namespace) -> None:
         if args.debug:
             # Sequential: fetch one feed at a time, stop after the first post.
             # State is never saved in debug mode.
-            for hook_cfg in hooks:
-                webhook = hook_cfg.get("webhook")
+            for task_cfg in tasks:
+                webhook = task_cfg.get("webhook")
                 if not webhook:
-                    log.warning("Skipping hook with no webhook URL")
+                    log.warning("Skipping task with no webhook URL")
                     continue
-                for feed_cfg in hook_cfg.get("feeds", []):
+                for feed_cfg in task_cfg.get("feeds", []):
                     url = feed_cfg.get("url")
                     if not url:
                         log.warning("Skipping feed with no URL: %s", feed_cfg)
@@ -150,13 +150,13 @@ async def _async_main(args: argparse.Namespace) -> None:
         else:
             # Concurrent: all feeds fetched and posted in parallel.
             now = datetime.now(timezone.utc)
-            tasks = []
-            for hook_cfg in hooks:
-                webhook = hook_cfg.get("webhook")
+            feed_tasks = []
+            for task_cfg in tasks:
+                webhook = task_cfg.get("webhook")
                 if not webhook:
                     continue
-                period = float(hook_cfg.get("period", DEFAULT_PERIOD_HOURS))
-                for feed_cfg in hook_cfg.get("feeds", []):
+                period = float(task_cfg.get("period", DEFAULT_PERIOD_HOURS))
+                for feed_cfg in task_cfg.get("feeds", []):
                     url = feed_cfg.get("url")
                     if not url:
                         continue
@@ -169,8 +169,8 @@ async def _async_main(args: argparse.Namespace) -> None:
                             feed_cfg.get("name") or url, mins, period,
                         )
                         continue
-                    tasks.append(_process_feed(webhook, feed_cfg, state, session))
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+                    feed_tasks.append(_process_feed(webhook, feed_cfg, state, session))
+            results = await asyncio.gather(*feed_tasks, return_exceptions=True)
             for result in results:
                 if isinstance(result, Exception):
                     log.error("Feed task failed: %s", result)
