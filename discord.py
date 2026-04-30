@@ -1,16 +1,17 @@
 import json
-import urllib.request
-import urllib.error
 import logging
+
+import aiohttp
 
 from feed import FeedEntry
 
 log = logging.getLogger(__name__)
 
 
-def post_to_discord(
+async def post_to_discord(
     webhook_url: str,
     entry: FeedEntry,
+    session: aiohttp.ClientSession,
     debug: bool = False,
 ) -> None:
     embed = {
@@ -32,23 +33,27 @@ def post_to_discord(
         log.debug("Webhook URL: %s", webhook_url)
         log.debug("Payload: %s", json.dumps(payload_dict, indent=2))
 
-    req = urllib.request.Request(
-        webhook_url,
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": "rss-discord/1.0",
-        },
-    )
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        async with session.post(
+            webhook_url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        ) as resp:
             if resp.status not in (200, 204):
                 log.warning("Unexpected Discord response: %s", resp.status)
             elif debug:
                 log.debug("Discord response status: %s", resp.status)
-    except urllib.error.HTTPError as e:
-        log.error("Discord webhook HTTP error: %s - %s", e.code, e.reason)
+            if resp.status >= 400:
+                body = await resp.text()
+                raise aiohttp.ClientResponseError(
+                    resp.request_info,
+                    resp.history,
+                    status=resp.status,
+                    message=body,
+                )
+    except aiohttp.ClientResponseError as e:
+        log.error("Discord webhook HTTP error: %s - %s", e.status, e.message)
         raise
-    except urllib.error.URLError as e:
-        log.error("Discord webhook connection error: %s", e.reason)
+    except aiohttp.ClientError as e:
+        log.error("Discord webhook connection error: %s", e)
         raise

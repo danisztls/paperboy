@@ -1,10 +1,10 @@
+import asyncio
 import html.parser
 import re
-import urllib.request
-import urllib.error
 import logging
 from dataclasses import dataclass
 
+import aiohttp
 import feedparser
 
 DESCRIPTION_MAX = 300
@@ -68,22 +68,26 @@ def _escape_markdown(text: str) -> str:
     return _MD_ESCAPE_RE.sub(r'\\\1', text)
 
 
-def _fetch_og_image(url: str) -> str | None:
+async def _fetch_og_image(url: str, session: aiohttp.ClientSession) -> str | None:
     if not url:
         return None
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "rss-discord/1.0"})
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            chunk = resp.read(32768).decode("utf-8", errors="replace")
+        async with session.get(url) as resp:
+            chunk = await resp.content.read(32768)
+            text = chunk.decode("utf-8", errors="replace")
         p = _OGImageParser()
-        p.feed(chunk)
+        p.feed(text)
         return p.og_image
     except Exception as exc:
         log.debug("Could not fetch OG image from %s: %s", url, exc)
         return None
 
 
-def get_new_entries(feed_cfg: dict, seen: set[str]) -> tuple[list[str], list[FeedEntry]]:
+async def get_new_entries(
+    feed_cfg: dict,
+    seen: set[str],
+    session: aiohttp.ClientSession,
+) -> tuple[list[str], list[FeedEntry]]:
     """Fetch feed, return (current_ids, new_entries).
 
     current_ids: all entry IDs currently in the feed (for state update).
@@ -92,7 +96,7 @@ def get_new_entries(feed_cfg: dict, seen: set[str]) -> tuple[list[str], list[Fee
     """
     url = feed_cfg["url"]
     log.debug("Fetching feed: %s", url)
-    parsed = feedparser.parse(url)
+    parsed = await asyncio.to_thread(feedparser.parse, url)
 
     if parsed.bozo and not parsed.entries:
         log.warning("Failed to parse feed %s: %s", url, parsed.bozo_exception)
@@ -117,18 +121,20 @@ def get_new_entries(feed_cfg: dict, seen: set[str]) -> tuple[list[str], list[Fee
 
     log.debug("[%s] New entries to post: %d", feed_title, len(unseen_raw))
 
+    # reverse to chronological order, then enrich all OG images concurrently
+    ordered = list(reversed(unseen_raw))
+    links = [e.get("link", "") for _, e in ordered]
+    og_results = await asyncio.gather(*[_fetch_og_image(link, session) for link in links])
+
     new_entries = []
-    for eid, entry in reversed(unseen_raw):
+    for (eid, entry), link, image_url in zip(ordered, links, og_results):
+        log.debug("[%s] OG image for %s: %s", feed_title, link[:80], image_url)
+
         raw_desc = entry.get("summary") or entry.get("description", "")
         description = _strip_html(raw_desc).strip()
         if len(description) > DESCRIPTION_MAX:
             description = description[:DESCRIPTION_MAX].rstrip() + "…"
         description = _escape_markdown(description)
-
-        link = entry.get("link", "")
-        log.debug("[%s] Fetching OG image for %s", feed_title, link[:80])
-        image_url = _fetch_og_image(link)
-        log.debug("[%s] OG image: %s", feed_title, image_url)
 
         new_entries.append(FeedEntry(
             id=eid,

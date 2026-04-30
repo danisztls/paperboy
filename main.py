@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """RSS to Discord webhook notifier"""
 
+import asyncio
 import json
 import sys
 import pathlib
-import time
 import logging
 import argparse
+
+import aiohttp
 
 from feed import get_new_entries
 from discord import post_to_discord
@@ -38,25 +40,28 @@ def save_state(path: pathlib.Path, state: dict) -> None:
     path.write_text(json.dumps(state, indent=2))
 
 
-def main():
-    parser = argparse.ArgumentParser(description="RSS to Discord webhook notifier")
-    parser.add_argument("config", help="Path to config file (YAML or JSON)")
-    parser.add_argument(
-        "--state",
-        default=None,
-        help="Path to state file (default: <config_dir>/state.json)",
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Post one entry (dry-run for state), verbose output",
-    )
-    args = parser.parse_args()
+async def _process_feed(
+    webhook: str,
+    feed_cfg: dict,
+    state: dict,
+    session: aiohttp.ClientSession,
+) -> dict:
+    """Fetch one feed, post new entries, return {url: current_ids} for state update."""
+    url = feed_cfg["url"]
+    seen = set(state.get(url, []))
+    current_ids, new_entries = await get_new_entries(feed_cfg, seen, session)
+    for i, entry in enumerate(new_entries):
+        try:
+            await post_to_discord(webhook, entry, session)
+            log.info("[%s] Posted: %s", entry.feed_title, entry.title[:80])
+            if i < len(new_entries) - 1:
+                await asyncio.sleep(1)
+        except Exception:
+            log.error("Skipping entry %s due to post failure", entry.id)
+    return {url: current_ids}
 
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-        log.debug("Debug mode enabled — will post at most one entry and skip state save")
 
+async def _async_main(args: argparse.Namespace) -> None:
     config_path = pathlib.Path(args.config).expanduser().resolve()
     state_path = (
         pathlib.Path(args.state).expanduser().resolve()
@@ -79,43 +84,71 @@ def main():
         log.error("No hooks defined in config.")
         sys.exit(1)
 
-    for hook_cfg in hooks:
-        webhook = hook_cfg.get("webhook")
-        if not webhook:
-            log.warning("Skipping hook with no webhook URL")
-            continue
-        for feed_cfg in hook_cfg.get("feeds", []):
-            url = feed_cfg.get("url")
-            if not url:
-                log.warning("Skipping feed with no URL: %s", feed_cfg)
-                continue
-            seen = set(state.get(url, []))
-            current_ids, new_entries = get_new_entries(feed_cfg, seen)
-            posted_any = False
-            for entry in new_entries:
-                try:
-                    post_to_discord(webhook, entry, debug=args.debug)
-                    log.info("[%s] Posted: %s", entry.feed_title, entry.title[:80])
-                    posted_any = True
-                    if args.debug:
-                        break
-                    time.sleep(1)
-                except Exception:
-                    log.error("Skipping entry %s due to post failure", entry.id)
-            if not args.debug:
-                state[url] = current_ids
-            if args.debug and posted_any:
-                log.debug("Debug mode: stopping after first posted entry")
-                break
+    async with aiohttp.ClientSession(
+        connector=aiohttp.TCPConnector(limit=20),
+        timeout=aiohttp.ClientTimeout(total=15),
+        headers={"User-Agent": "rss-discord/1.0"},
+    ) as session:
+        if args.debug:
+            # Sequential: fetch one feed at a time, stop after the first post.
+            # State is never saved in debug mode.
+            for hook_cfg in hooks:
+                webhook = hook_cfg.get("webhook")
+                if not webhook:
+                    log.warning("Skipping hook with no webhook URL")
+                    continue
+                for feed_cfg in hook_cfg.get("feeds", []):
+                    url = feed_cfg.get("url")
+                    if not url:
+                        log.warning("Skipping feed with no URL: %s", feed_cfg)
+                        continue
+                    seen = set(state.get(url, []))
+                    current_ids, new_entries = await get_new_entries(feed_cfg, seen, session)
+                    if new_entries:
+                        await post_to_discord(webhook, new_entries[0], session, debug=True)
+                        log.info("[%s] Posted: %s", new_entries[0].feed_title, new_entries[0].title[:80])
+                        log.debug("Debug mode: stopping after first posted entry")
+                        return
+            log.debug("Debug mode: no new entries found in any feed")
         else:
-            continue
-        break
+            # Concurrent: all feeds fetched and posted in parallel.
+            tasks = [
+                _process_feed(hook_cfg["webhook"], feed_cfg, state, session)
+                for hook_cfg in hooks
+                if hook_cfg.get("webhook")
+                for feed_cfg in hook_cfg.get("feeds", [])
+                if feed_cfg.get("url")
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    log.error("Feed task failed: %s", result)
+                elif result:
+                    state.update(result)
+            save_state(state_path, state)
+            log.info("Done. State saved to %s", state_path)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="RSS to Discord webhook notifier")
+    parser.add_argument("config", help="Path to config file (YAML or JSON)")
+    parser.add_argument(
+        "--state",
+        default=None,
+        help="Path to state file (default: <config_dir>/state.json)",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Post one entry from the first feed with new content; skip state save",
+    )
+    args = parser.parse_args()
 
     if args.debug:
-        log.debug("Debug mode: state not saved")
-    else:
-        save_state(state_path, state)
-        log.info("Done. State saved to %s", state_path)
+        logging.getLogger().setLevel(logging.DEBUG)
+        log.debug("Debug mode enabled — will parse one feed, post one entry, skip state save")
+
+    asyncio.run(_async_main(args))
 
 
 if __name__ == "__main__":
