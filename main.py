@@ -7,11 +7,15 @@ import sys
 import pathlib
 import logging
 import argparse
+from datetime import datetime, timedelta, timezone
 
 import aiohttp
 
 from feed import get_new_entries
 from discord import post_to_discord
+
+DEFAULT_PERIOD_HOURS = 1.0
+PERIOD_GRACE = timedelta(seconds=60)
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -30,14 +34,31 @@ def load_config(path: pathlib.Path) -> dict:
 
 
 def load_state(path: pathlib.Path) -> dict:
-    if path.exists():
-        return json.loads(path.read_text())
-    return {}
+    if not path.exists():
+        return {}
+    raw = json.loads(path.read_text())
+    # Migrate legacy shape {url: [ids]} -> {url: {"ids": [...], "last_run": None}}
+    for url, value in list(raw.items()):
+        if isinstance(value, list):
+            raw[url] = {"ids": value, "last_run": None}
+    return raw
 
 
 def save_state(path: pathlib.Path, state: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, indent=2))
+
+
+def _is_due(feed_state: dict, period_hours: float, now: datetime) -> bool:
+    last_run = feed_state.get("last_run")
+    if not last_run:
+        return True
+    try:
+        last = datetime.fromisoformat(last_run)
+    except ValueError:
+        return True
+    threshold = timedelta(hours=period_hours) - PERIOD_GRACE
+    return (now - last) >= threshold
 
 
 async def _process_feed(
@@ -46,10 +67,17 @@ async def _process_feed(
     state: dict,
     session: aiohttp.ClientSession,
 ) -> dict:
-    """Fetch one feed, post new entries, return {url: current_ids} for state update."""
+    """Fetch one feed, post new entries, return {url: feed_state} for state update.
+
+    Returns {} if the feed fetch failed, so the caller leaves the existing
+    last_run untouched and the feed will be retried on the next run.
+    """
     url = feed_cfg["url"]
-    seen = set(state.get(url, []))
-    current_ids, new_entries = await get_new_entries(feed_cfg, seen, session)
+    seen = set(state.get(url, {}).get("ids", []))
+    result = await get_new_entries(feed_cfg, seen, session)
+    if result is None:
+        return {}
+    current_ids, new_entries = result
     for i, entry in enumerate(new_entries):
         try:
             await post_to_discord(webhook, entry, session)
@@ -58,7 +86,7 @@ async def _process_feed(
                 await asyncio.sleep(1)
         except Exception:
             log.error("Skipping entry %s due to post failure", entry.id)
-    return {url: current_ids}
+    return {url: {"ids": current_ids, "last_run": datetime.now(timezone.utc).isoformat()}}
 
 
 async def _async_main(args: argparse.Namespace) -> None:
@@ -102,8 +130,11 @@ async def _async_main(args: argparse.Namespace) -> None:
                     if not url:
                         log.warning("Skipping feed with no URL: %s", feed_cfg)
                         continue
-                    seen = set(state.get(url, []))
-                    current_ids, new_entries = await get_new_entries(feed_cfg, seen, session)
+                    seen = set(state.get(url, {}).get("ids", []))
+                    result = await get_new_entries(feed_cfg, seen, session)
+                    if result is None:
+                        continue
+                    _current_ids, new_entries = result
                     if new_entries:
                         await post_to_discord(webhook, new_entries[0], session, debug=True)
                         log.info("[%s] Posted: %s", new_entries[0].feed_title, new_entries[0].title[:80])
@@ -112,13 +143,27 @@ async def _async_main(args: argparse.Namespace) -> None:
             log.debug("Debug mode: no new entries found in any feed")
         else:
             # Concurrent: all feeds fetched and posted in parallel.
-            tasks = [
-                _process_feed(hook_cfg["webhook"], feed_cfg, state, session)
-                for hook_cfg in hooks
-                if hook_cfg.get("webhook")
-                for feed_cfg in hook_cfg.get("feeds", [])
-                if feed_cfg.get("url")
-            ]
+            now = datetime.now(timezone.utc)
+            tasks = []
+            for hook_cfg in hooks:
+                webhook = hook_cfg.get("webhook")
+                if not webhook:
+                    continue
+                period = float(hook_cfg.get("period", DEFAULT_PERIOD_HOURS))
+                for feed_cfg in hook_cfg.get("feeds", []):
+                    url = feed_cfg.get("url")
+                    if not url:
+                        continue
+                    feed_state = state.get(url, {"ids": [], "last_run": None})
+                    if not _is_due(feed_state, period, now):
+                        last = datetime.fromisoformat(feed_state["last_run"])
+                        mins = int((now - last).total_seconds() // 60)
+                        log.info(
+                            "[%s] Skipping — last run %d min ago, period is %g h",
+                            feed_cfg.get("name") or url, mins, period,
+                        )
+                        continue
+                    tasks.append(_process_feed(webhook, feed_cfg, state, session))
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for result in results:
                 if isinstance(result, Exception):
