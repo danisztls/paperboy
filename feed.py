@@ -87,12 +87,13 @@ async def get_new_entries(
     feed_cfg: dict,
     seen: set[str],
     session: aiohttp.ClientSession,
-) -> tuple[list[str], list[FeedEntry]]:
-    """Fetch feed, return (current_ids, new_entries).
+) -> tuple[list[str], list[FeedEntry]] | None:
+    """Fetch feed, return (current_ids, new_entries) or None on failure.
 
     current_ids: all entry IDs currently in the feed (for state update).
     new_entries: fully enriched FeedEntry list for unseen entries, chronological order.
-    On parse failure returns (list(seen), []).
+    Returns None if the feed could not be parsed, so the caller can avoid
+    overwriting state (including the last_run timestamp) for a broken fetch.
     """
     url = feed_cfg["url"]
     log.debug("Fetching feed: %s", url)
@@ -100,7 +101,7 @@ async def get_new_entries(
 
     if parsed.bozo and not parsed.entries:
         log.warning("Failed to parse feed %s: %s", url, parsed.bozo_exception)
-        return list(seen), []
+        return None
 
     feed_title = feed_cfg.get("name") or getattr(parsed.feed, "title", url)
     log.debug("[%s] Total entries in feed: %d", feed_title, len(parsed.entries))
