@@ -1,3 +1,5 @@
 state.json
 config.yaml
-__pycache__
+__pycache__/
+.venv/
+*.py[co]
