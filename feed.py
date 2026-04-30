@@ -96,7 +96,7 @@ async def get_new_entries(
     overwriting state (including the last_run timestamp) for a broken fetch.
     """
     url = feed_cfg["url"]
-    log.debug("Fetching feed: %s", url)
+    log.info("Fetching feed: %s", url)
     parsed = await asyncio.to_thread(feedparser.parse, url)
 
     if parsed.bozo and not parsed.entries:
@@ -120,7 +120,7 @@ async def get_new_entries(
         else:
             log.debug("[%s] Already seen: %s", feed_title, eid[:120])
 
-    log.debug("[%s] New entries to post: %d", feed_title, len(unseen_raw))
+    log.info("[%s] New entries to post: %d", feed_title, len(unseen_raw))
 
     # reverse to chronological order, then enrich all OG images concurrently
     ordered = list(reversed(unseen_raw))

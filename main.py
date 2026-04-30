@@ -107,8 +107,8 @@ async def _async_main(args: argparse.Namespace) -> None:
         log.error("Config file not found: %s", config_path)
         sys.exit(1)
 
-    log.debug("Config: %s", config_path)
-    log.debug("State:  %s", state_path)
+    log.info("Config: %s", config_path)
+    log.info("State:  %s", state_path)
 
     config = load_config(config_path)
     state = load_state(state_path)
