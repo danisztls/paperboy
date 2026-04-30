@@ -1,6 +1,6 @@
-hooks:
+tasks:
   - webhook: "https://discordapp.com/api/webhooks/<NUMBER>/<TOKEN>"
-    # Minimum hours between processing this hook's feeds. Default: 1.
+    # Minimum hours between processing this task's feeds. Default: 1.
     period: 1
     feeds:
       - name:
