@@ -36,14 +36,16 @@ async def filter_entries(
     instructions = (
         f"{criteria}\n\n"
         f"{context_block}"
-        "You will receive a JSON array of feed items (each with id, title, description). "
-        "For each item, decide if it matches the criteria above. "
-        'Return a JSON array where each element is {"id": "<item id>", "pass": true/false, "reason": "<one short sentence>"}. '
+        "You will receive a JSON array of source groups, each with a 'source' name and an 'items' array "
+        "(each item has an integer 'id' and a 'title'). "
+        "For each item across all groups, decide if it matches the criteria above. "
+        'Return a JSON array where each element is {"id": <integer>, "pass": true/false, "reason": "<one short sentence>"}. '
         "Include ALL input items in the output, both passing and failing. "
         "Return ONLY a valid JSON array, no other text."
     )
     payload = json.dumps(items, ensure_ascii=False)
-    log.info("Filtering %d entries with LLM (model=%s)", len(items), model)
+    total = sum(len(g.get("items", [])) for g in items)
+    log.info("Filtering %d entries with LLM (model=%s)", total, model)
     log.debug("Filter criteria: %s", criteria)
     try:
         response = await client.responses.create(
