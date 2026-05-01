@@ -13,7 +13,7 @@ import aiohttp
 
 from feed import get_new_entries
 from discord import post_to_discord, post_text_to_discord
-from llm import run_llm_task
+from llm import run_llm_task, filter_entries
 
 DEFAULT_PERIOD_HOURS = 1.0
 PERIOD_GRACE = timedelta(seconds=60)
@@ -97,6 +97,9 @@ async def _process_feed(
     feed_cfg: dict,
     state: dict,
     session: aiohttp.ClientSession,
+    *,
+    filter_cfg: dict | None = None,
+    llm_model: str | None = None,
 ) -> dict:
     """Fetch one feed, post new entries, return {url: feed_state} for state update.
 
@@ -109,15 +112,54 @@ async def _process_feed(
     if result is None:
         return {}
     current_items, new_entries = result
-    for i, entry in enumerate(new_entries):
+
+    filter_result: dict | None = None
+    passing_ids: set[str] | None = None
+    if filter_cfg and new_entries:
+        items = [{"id": e.id, "title": e.title, "description": e.description} for e in new_entries]
+        filter_result = await filter_entries(items, filter_cfg, llm_model)
+        if filter_result is None:
+            log.warning("[%s] Filter failed, posting all entries", feed_cfg.get("name") or url)
+            passing_ids = {e.id for e in new_entries}
+        else:
+            passing_ids = {eid for eid, v in filter_result.items() if v["pass"]}
+
+    entries_to_post = new_entries if passing_ids is None else [e for e in new_entries if e.id in passing_ids]
+
+    # Build annotated state items: new entries get pass_filter+filter_reason, old entries carry them forward
+    if filter_cfg:
+        new_entry_by_link = {e.link: e for e in new_entries}
+        prev_by_url = {item["url"]: item for item in state.get(url, {}).get("items", [])}
+        final_items = []
+        for item in current_items:
+            item_url = item["url"]
+            if item_url in new_entry_by_link:
+                e = new_entry_by_link[item_url]
+                if filter_result is not None and e.id in filter_result:
+                    v = filter_result[e.id]
+                    final_items.append({**item, "pass_filter": v["pass"], "filter_reason": v["reason"]})
+                else:
+                    final_items.append({**item, "pass_filter": True})
+            elif "pass_filter" in prev_by_url.get(item_url, {}):
+                prev = prev_by_url[item_url]
+                extra = {"pass_filter": prev["pass_filter"]}
+                if "filter_reason" in prev:
+                    extra["filter_reason"] = prev["filter_reason"]
+                final_items.append({**item, **extra})
+            else:
+                final_items.append(item)
+    else:
+        final_items = current_items
+
+    for i, entry in enumerate(entries_to_post):
         try:
             await post_to_discord(webhook, entry, session)
             log.info("[%s] Posted: %s", entry.feed_title, entry.title[:80])
-            if i < len(new_entries) - 1:
+            if i < len(entries_to_post) - 1:
                 await asyncio.sleep(1)
         except Exception:
             log.error("Skipping entry %s due to post failure", entry.id)
-    return {url: {"items": current_items, "last_run": datetime.now(timezone.utc).isoformat()}}
+    return {url: {"items": final_items, "last_run": datetime.now(timezone.utc).isoformat()}}
 
 
 async def _async_main(args: argparse.Namespace) -> None:
@@ -189,6 +231,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                         log.debug("Debug mode: stopping after first LLM task")
                         return
                 else:
+                    task_filter_cfg = task_cfg.get("filter") or None
                     for feed_cfg in task_cfg.get("feeds", []):
                         url = feed_cfg.get("url")
                         if not url:
@@ -199,6 +242,15 @@ async def _async_main(args: argparse.Namespace) -> None:
                         if result is None:
                             continue
                         _current_items, new_entries = result
+                        if new_entries:
+                            if task_filter_cfg:
+                                items = [{"id": e.id, "title": e.title, "description": e.description} for e in new_entries]
+                                filter_result = await filter_entries(items, task_filter_cfg, llm_model)
+                                if filter_result is not None:
+                                    passing_ids = {eid for eid, v in filter_result.items() if v["pass"]}
+                                else:
+                                    passing_ids = {e.id for e in new_entries}
+                                new_entries = [e for e in new_entries if e.id in passing_ids]
                         if new_entries:
                             await post_to_discord(webhook, new_entries[0], session, debug=True)
                             log.info("[%s] Posted: %s", new_entries[0].feed_title, new_entries[0].title[:80])
@@ -239,6 +291,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                         continue
                     feed_tasks.append(_process_llm_task(task_cfg, state, session, instructions=instructions, llm_model=llm_model))
                 else:
+                    task_filter_cfg = task_cfg.get("filter") or None
                     for feed_cfg in task_cfg.get("feeds", []):
                         url = feed_cfg.get("url")
                         if not url:
@@ -252,7 +305,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                                 feed_cfg.get("name") or url, mins, period,
                             )
                             continue
-                        feed_tasks.append(_process_feed(webhook, feed_cfg, state, session))
+                        feed_tasks.append(_process_feed(webhook, feed_cfg, state, session, filter_cfg=task_filter_cfg, llm_model=llm_model))
             results = await asyncio.gather(*feed_tasks, return_exceptions=True)
             for result in results:
                 if isinstance(result, Exception):

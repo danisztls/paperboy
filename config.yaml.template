@@ -8,6 +8,9 @@ tasks:
     webhook: "https://discordapp.com/api/webhooks/<NUMBER>/<TOKEN>"
     # Minimum hours between processing this task's feeds. Default: 1.
     period: 1
+    # filter:                    # optional — LLM pre-post filter applied to all feeds in this task
+    #   prompt: "Only keep items about AI and machine learning"
+    #   model: gpt-4o-mini       # optional; falls back to global llm.model, then default model
     feeds:
       - name:
         url:
