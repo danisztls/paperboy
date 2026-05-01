@@ -37,15 +37,7 @@ def load_config(path: pathlib.Path) -> dict:
 def load_state(path: pathlib.Path) -> dict:
     if not path.exists():
         return {}
-    raw = json.loads(path.read_text())
-    # Migrate legacy shape {url: [ids]} -> {url: {"ids": [...], "last_run": None}}
-    for url, value in list(raw.items()):
-        if isinstance(value, list):
-            raw[url] = {"ids": value, "last_run": None}
-    # Migrate legacy llm:<name> keys -> <name>
-    for key in [k for k in raw if k.startswith("llm:")]:
-        raw[key[4:]] = raw.pop(key)
-    return raw
+    return json.loads(path.read_text())
 
 
 def save_state(path: pathlib.Path, state: dict) -> None:
@@ -128,12 +120,6 @@ async def _async_main(args: argparse.Namespace) -> None:
         if args.state
         else config_path.parent / "state.json"
     )
-
-    if args.migrate:
-        state = load_state(state_path)
-        save_state(state_path, state)
-        log.info("Migrated state.json schema, wrote %s", state_path)
-        return
 
     if not config_path.exists():
         log.error("Config file not found: %s", config_path)
@@ -270,11 +256,6 @@ def main():
         "--debug",
         action="store_true",
         help="Post one entry from the first feed with new content; skip state save",
-    )
-    mode.add_argument(
-        "--migrate",
-        action="store_true",
-        help="Migrate state.json to the current schema (no feeds fetched, no posts sent)",
     )
     mode.add_argument(
         "--task",
