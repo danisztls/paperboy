@@ -14,17 +14,26 @@ async def filter_entries(
     global_model: str | None = None,
     *,
     context_items: list[dict] | None = None,
-) -> dict[str, dict] | None:
-    """Filter feed entries through LLM.
+    memory_history: list[str] | None = None,
+) -> tuple[dict[str, dict], str | None] | None:
+    """Filter feed entries through LLM and optionally update memory.
 
-    Returns a dict mapping item ID → {"pass": bool, "reason": str}, or None on failure
-    (caller should fail-open: treat all entries as passing).
-    context_items: recently posted items (pass_filter=True) passed as context to help
-    detect repetition and track ongoing events.
+    Returns (results, memory_text) where results maps item ID → {"pass": bool, "reason": str}
+    and memory_text is the new memory entry (or None if the LLM didn't produce one).
+    Returns None on failure (caller should fail-open: treat all entries as passing).
+    memory_history: chronological list of prior memory entries (oldest first) passed as
+    context so the model can build continuity across runs.
     """
     client = AsyncOpenAI()
     model = filter_cfg.get("model") or global_model or DEFAULT_MODEL
     criteria = filter_cfg.get("prompt", "")
+    memory_block = ""
+    if memory_history:
+        memory_block = (
+            "Previous memory log (oldest → newest — your evolving view of this information space):\n"
+            + "\n---\n".join(memory_history)
+            + "\n\n"
+        )
     context_block = ""
     if context_items:
         context_block = (
@@ -35,13 +44,18 @@ async def filter_entries(
         )
     instructions = (
         f"{criteria}\n\n"
+        f"{memory_block}"
         f"{context_block}"
         "You will receive a JSON array of source groups, each with a 'source' name and an 'items' array "
         "(each item has an integer 'id' and a 'title'). "
         "For each item across all groups, decide if it matches the criteria above. "
-        'Return a JSON array where each element is {"id": <integer>, "pass": true/false, "reason": "<one short sentence>"}. '
-        "Include ALL input items in the output, both passing and failing. "
-        "Return ONLY a valid JSON array, no other text."
+        "Also write a 'memory': a concise update (≤300 words) summarising what you observed across ALL "
+        "items (passing and failing) and how it relates to the previous memory log. Focus on patterns, "
+        "new developments, and recurring themes. This becomes the next memory log entry. "
+        'Return a JSON object with exactly two keys: "items" (array where each element is '
+        '{"id": <integer>, "pass": true/false, "reason": "<one short sentence>"} — include ALL input '
+        'items, both passing and failing) and "memory" (string, the new memory log entry). '
+        "Return ONLY a valid JSON object, no other text."
     )
     payload = json.dumps(items, ensure_ascii=False)
     total = sum(len(g.get("items", [])) for g in items)
@@ -54,15 +68,24 @@ async def filter_entries(
             input=payload,
         )
         text = (response.output_text or "").strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         log.debug("Filter LLM response: %s", text[:500])
         result = json.loads(text)
-        if not isinstance(result, list):
-            log.warning("LLM filter returned non-list response: %s", text[:200])
+        if isinstance(result, list):
+            log.warning("LLM filter returned bare array — memory will not be saved; model may be ignoring format instruction")
+            items_list = result
+            memory_text = None
+        elif isinstance(result, dict) and "items" in result:
+            items_list = result["items"]
+            memory_text = str(result.get("memory", "")).strip()[:1500] or None
+        else:
+            log.warning("LLM filter returned unexpected format: %s", text[:200])
             return None
-        parsed = {str(r["id"]): {"pass": bool(r.get("pass")), "reason": str(r.get("reason", ""))} for r in result if "id" in r}
+        parsed = {str(r["id"]): {"pass": bool(r.get("pass")), "reason": str(r.get("reason", ""))} for r in items_list if "id" in r}
         passed = sum(1 for v in parsed.values() if v["pass"])
-        log.info("Filter: %d/%d items passed", passed, len(items))
-        return parsed
+        log.info("Filter: %d/%d items passed", passed, total)
+        return parsed, memory_text
     except Exception as exc:
         log.error("LLM filter failed: %s", exc)
         return None
