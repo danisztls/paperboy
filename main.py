@@ -70,11 +70,14 @@ async def _process_llm_task(
     task_cfg: dict,
     state: dict,
     session: aiohttp.ClientSession,
+    *,
+    instructions: str | None = None,
+    llm_model: str | None = None,
 ) -> dict:
     """Run one LLM task, post the response, return {state_key: task_state} on success or {} on failure."""
     name = task_cfg["name"]
     state_key = f"llm:{name}"
-    text = await run_llm_task(task_cfg)
+    text = await run_llm_task(task_cfg, instructions, llm_model)
     if text is None:
         return {}
     webhook = task_cfg["webhook"]
@@ -138,6 +141,9 @@ async def _async_main(args: argparse.Namespace) -> None:
 
     config = load_config(config_path)
     state = load_state(state_path)
+    llm_cfg = config.get("llm", {})
+    instructions = llm_cfg.get("instructions") or None
+    llm_model = llm_cfg.get("model") or None
 
     tasks = config.get("tasks", [])
     if not tasks:
@@ -162,7 +168,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     if not name:
                         log.warning("Skipping LLM task with no name")
                         continue
-                    text = await run_llm_task(task_cfg)
+                    text = await run_llm_task(task_cfg, instructions, llm_model)
                     if text:
                         await post_text_to_discord(webhook, text, session, debug=True)
                         log.info("[%s] Posted LLM response (%d chars)", name, len(text))
@@ -208,7 +214,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                             name, mins, period,
                         )
                         continue
-                    feed_tasks.append(_process_llm_task(task_cfg, state, session))
+                    feed_tasks.append(_process_llm_task(task_cfg, state, session, instructions=instructions, llm_model=llm_model))
                 else:
                     for feed_cfg in task_cfg.get("feeds", []):
                         url = feed_cfg.get("url")
