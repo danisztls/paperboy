@@ -35,16 +35,38 @@ Four modules, no package, flat layout:
   - Entry ID resolution falls back: `entry.id` → `entry.link` → `entry.title`.
   - Unseen entries are reversed into chronological order, then OG images are fetched concurrently (only the first 32KB of each article page is read — the parser stops at `<body>`).
   - Descriptions are HTML-stripped, truncated to 300 chars, and Markdown-escaped (`_MD_ESCAPE_RE` covers `*_` `~` `` ` `` and leading `>`/`#` per line) so feed content can't accidentally format Discord messages.
-- `llm.py` — two functions: `run_llm_task(task_cfg)` calls the OpenAI Responses API with the `web_search_preview` built-in tool and posts the plain-text response; `filter_entries(items, filter_cfg, global_model)` is a pure classification call (no web search) that receives a list of `{"id", "title", "description"}` dicts and returns the set of IDs that pass the filter prompt, or `None` on failure. Requires `$OPENAI_API_KEY` in env. Default model: `gpt-5.4-mini`.
+- `llm.py` — two functions: `run_llm_task(task_cfg)` calls the OpenAI Responses API with the `web_search_preview` built-in tool and posts the plain-text response; `filter_entries(items, filter_cfg, global_model, *, context_items, memory_history)` is a pure classification call (no web search) that returns `(results_dict, memory_text) | None`. `results_dict` maps str(id) → `{"pass": bool, "reason": str}`; `memory_text` is the new memory log entry or `None`. Requires `$OPENAI_API_KEY` in env. Default model: `gpt-5.4-mini`.
 - `discord.py` — two posting functions: `post_to_discord` (embed from a `FeedEntry`) and `post_text_to_discord` (plain `content` message, truncated to 2000 chars). Both raise on HTTP ≥400.
 
 ### State shape
 
-RSS task entries: `{feed_url: {"items": [{"url": "...", "title": "...", "pass_filter": true|false}, ...], "last_run": "<iso8601 utc>" | null}}`. Each successful run replaces `items` with the items currently in the feed (not a union, so the file size is bounded by feed length). `pass_filter` is only present on items that went through an LLM filter; items from tasks without a `filter` key don't have it.
+State is keyed by task name at the top level, matching the config structure:
 
-LLM task entries: `{"<task_name>": {"last_run": "<iso8601 utc>" | null}}`. No `ids` field — only `last_run` matters.
+```json
+{
+  "my-feeds": {
+    "feeds": {
+      "https://feed1.url": {
+        "items": [{"url": "...", "title": "...", "pass_filter": true, "filter_reason": "..."}, ...],
+        "last_run": "<iso8601 utc>"
+      }
+    },
+    "memory": {
+      "2026-05-01T12:00:00Z": "Recurring themes this week include...",
+      "2026-05-01T14:00:00Z": "Following the earlier AI announcements..."
+    }
+  },
+  "world-news": {
+    "last_run": "<iso8601 utc>"
+  }
+}
+```
 
-`load_state` returns the parsed JSON as-is; `null` `last_run` always means "due now".
+- `feeds` sub-dict holds per-URL state. Each successful fetch replaces `items` with the feed's current entries (bounded by feed length). `pass_filter` and `filter_reason` are only present on items from tasks with a `filter` key.
+- `memory` is only present on filtered RSS tasks. Each run appends one entry keyed by ISO8601 timestamp; history is capped at 20 entries (oldest evicted). The LLM receives the last 5 entries as context on each run.
+- LLM tasks store only `last_run` directly under the task name key.
+- `load_state` returns the parsed JSON as-is; absent or `null` `last_run` always means "due now".
+- There is no migration from the old flat (URL-keyed) state format — use `--regenerate-state` to rebuild.
 
 ### Config shape
 
