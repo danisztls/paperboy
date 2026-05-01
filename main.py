@@ -127,8 +127,15 @@ async def _process_feed(
     filter_result: dict | None = None
     passing_ids: set[str] | None = None
     if filter_cfg and new_entries:
-        items = [{"id": e.id, "title": e.title, "description": e.description} for e in new_entries]
+        source_name = new_entries[0].feed_title if new_entries else ""
+        items = [{"source": source_name, "items": [{"id": i, "title": e.title} for i, e in enumerate(new_entries)]}]
         filter_result = await filter_entries(items, filter_cfg, llm_model, context_items=context_items)
+        if filter_result is not None:
+            filter_result = {
+                new_entries[int(idx)].id: v
+                for idx, v in filter_result.items()
+                if idx.isdigit() and int(idx) < len(new_entries)
+            }
         if filter_result is None:
             log.warning("[%s] Filter failed, posting all entries", feed_cfg.get("name") or url)
             passing_ids = {e.id for e in new_entries}
@@ -257,10 +264,15 @@ async def _async_main(args: argparse.Namespace) -> None:
                         _current_items, new_entries = result
                         if new_entries:
                             if task_filter_cfg:
-                                items = [{"id": e.id, "title": e.title, "description": e.description} for e in new_entries]
+                                source_name = new_entries[0].feed_title if new_entries else ""
+                                items = [{"source": source_name, "items": [{"id": i, "title": e.title} for i, e in enumerate(new_entries)]}]
                                 filter_result = await filter_entries(items, task_filter_cfg, llm_model, context_items=ctx)
                                 if filter_result is not None:
-                                    passing_ids = {eid for eid, v in filter_result.items() if v["pass"]}
+                                    passing_ids = {
+                                        new_entries[int(idx)].id
+                                        for idx, v in filter_result.items()
+                                        if v["pass"] and idx.isdigit() and int(idx) < len(new_entries)
+                                    }
                                 else:
                                     passing_ids = {e.id for e in new_entries}
                                 new_entries = [e for e in new_entries if e.id in passing_ids]
