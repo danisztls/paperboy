@@ -35,12 +35,12 @@ Four modules, no package, flat layout:
   - Entry ID resolution falls back: `entry.id` → `entry.link` → `entry.title`.
   - Unseen entries are reversed into chronological order, then OG images are fetched concurrently (only the first 32KB of each article page is read — the parser stops at `<body>`).
   - Descriptions are HTML-stripped, truncated to 300 chars, and Markdown-escaped (`_MD_ESCAPE_RE` covers `*_` `~` `` ` `` and leading `>`/`#` per line) so feed content can't accidentally format Discord messages.
-- `llm.py` — `run_llm_task(task_cfg)` calls the OpenAI Responses API (`AsyncOpenAI().responses.create`) with the `web_search_preview` built-in tool. Returns the response text or `None` on failure. The `tools` dict in config is shallow-merged into the default `{"type": "web_search_preview"}` so you can add `allowed_domains`, `user_location`, etc. from config without code changes. Requires `$OPENAI_API_KEY` in env. Default model: `gpt-5.4-mini`.
+- `llm.py` — two functions: `run_llm_task(task_cfg)` calls the OpenAI Responses API with the `web_search_preview` built-in tool and posts the plain-text response; `filter_entries(items, filter_cfg, global_model)` is a pure classification call (no web search) that receives a list of `{"id", "title", "description"}` dicts and returns the set of IDs that pass the filter prompt, or `None` on failure. Requires `$OPENAI_API_KEY` in env. Default model: `gpt-5.4-mini`.
 - `discord.py` — two posting functions: `post_to_discord` (embed from a `FeedEntry`) and `post_text_to_discord` (plain `content` message, truncated to 2000 chars). Both raise on HTTP ≥400.
 
 ### State shape
 
-RSS task entries: `{feed_url: {"ids": [entry_id, ...], "last_run": "<iso8601 utc>" | null}}`. Each successful run replaces `ids` with the IDs currently in the feed (not a union, so the file size is bounded by feed length).
+RSS task entries: `{feed_url: {"items": [{"url": "...", "title": "...", "pass_filter": true|false}, ...], "last_run": "<iso8601 utc>" | null}}`. Each successful run replaces `items` with the items currently in the feed (not a union, so the file size is bounded by feed length). `pass_filter` is only present on items that went through an LLM filter; items from tasks without a `filter` key don't have it.
 
 LLM task entries: `{"<task_name>": {"last_run": "<iso8601 utc>" | null}}`. No `ids` field — only `last_run` matters.
 
@@ -54,6 +54,9 @@ tasks:
   - name: my-feeds                   # required for all tasks
     webhook: "https://discord.com/api/webhooks/.../..."
     period: 1                        # optional, hours. Default: 1.0
+    filter:                          # optional — LLM pre-post filter for all feeds in this task
+      prompt: "Only keep items about AI and machine learning"
+      model: gpt-4o-mini             # optional, falls back to global llm.model then default
     feeds:
       - name: "Display name"         # optional, used as embed footer
         url: "https://example.com/feed.xml"
