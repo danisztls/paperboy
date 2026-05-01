@@ -117,10 +117,12 @@ async def _process_task(
         memory_history = [raw_history[k] for k in keys] or None
 
     # Fetch all feeds concurrently
+    fetch_og = task_cfg.get("og_images", True)
+
     async def _fetch_one(fc: dict):
         url = fc["url"]
         seen = {item["url"] for item in feeds_state.get(url, {}).get("items", [])}
-        return fc, await get_new_entries(fc, seen, session)
+        return fc, await get_new_entries(fc, seen, session, fetch_og_images=fetch_og)
 
     fetch_results = await asyncio.gather(*[_fetch_one(fc) for fc in feed_cfgs], return_exceptions=True)
 
@@ -279,11 +281,12 @@ async def _async_main(args: argparse.Namespace) -> None:
                     continue
                 task_state = state.setdefault(task_name, {})
                 feeds_state = task_state.setdefault("feeds", {})
+                fetch_og = task_cfg.get("og_images", True)
                 for feed_cfg in task_cfg.get("feeds", []):
                     url = feed_cfg.get("url")
                     if not url:
                         continue
-                    result = await get_new_entries(feed_cfg, set(), session)
+                    result = await get_new_entries(feed_cfg, set(), session, fetch_og_images=fetch_og)
                     if result is None:
                         log.warning("Failed to fetch %s, skipping", url)
                         continue
@@ -318,6 +321,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     feeds_state = task_state.get("feeds", {})
 
                     # Fetch all feeds and build global-ID payload
+                    fetch_og = task_cfg.get("og_images", True)
                     global_id = 0
                     id_map: dict[int, object] = {}
                     feed_entries: list[tuple[dict, list]] = []
@@ -328,7 +332,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                             log.warning("Skipping feed with no URL: %s", feed_cfg)
                             continue
                         seen = {item["url"] for item in feeds_state.get(url, {}).get("items", [])}
-                        result = await get_new_entries(feed_cfg, seen, session)
+                        result = await get_new_entries(feed_cfg, seen, session, fetch_og_images=fetch_og)
                         if result is None:
                             continue
                         _current_items, new_entries = result
