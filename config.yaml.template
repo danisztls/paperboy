@@ -1,3 +1,7 @@
+llm:                        # optional — global defaults for all LLM tasks
+  model: gpt-5.4-mini      # default model (per-task 'model' overrides this)
+  # instructions: "..."      # system prompt
+
 tasks:
   # RSS task: fetches feeds and posts new entries as Discord embeds.
   - name: my-feeds
