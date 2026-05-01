@@ -195,7 +195,16 @@ async def _async_main(args: argparse.Namespace) -> None:
             # Concurrent: all tasks run in parallel.
             now = datetime.now(timezone.utc)
             feed_tasks = []
-            for task_cfg in tasks:
+            force_task = args.task
+
+            task_list = tasks
+            if force_task:
+                task_list = [t for t in tasks if t.get("name") == force_task]
+                if not task_list:
+                    log.error("No task named %r found in config", force_task)
+                    sys.exit(1)
+
+            for task_cfg in task_list:
                 webhook = task_cfg.get("webhook")
                 if not webhook:
                     continue
@@ -206,7 +215,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                         log.warning("Skipping LLM task with no name")
                         continue
                     task_state = state.get(f"llm:{name}", {"last_run": None})
-                    if not _is_due(task_state, period, now):
+                    if not force_task and not _is_due(task_state, period, now):
                         last = datetime.fromisoformat(task_state["last_run"])
                         mins = int((now - last).total_seconds() // 60)
                         log.info(
@@ -221,7 +230,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                         if not url:
                             continue
                         feed_state = state.get(url, {"ids": [], "last_run": None})
-                        if not _is_due(feed_state, period, now):
+                        if not force_task and not _is_due(feed_state, period, now):
                             last = datetime.fromisoformat(feed_state["last_run"])
                             mins = int((now - last).total_seconds() // 60)
                             log.info(
@@ -258,6 +267,11 @@ def main():
         "--migrate",
         action="store_true",
         help="Migrate state.json to the current schema (no feeds fetched, no posts sent)",
+    )
+    mode.add_argument(
+        "--task",
+        metavar="NAME",
+        help="Run a single task by name, ignoring period and last_run state",
     )
     args = parser.parse_args()
 
