@@ -17,7 +17,6 @@ The project uses `uv` (see `uv.lock`, `.python-version` pinning Python 3.14).
 - Run: `uv run claudinho config.yaml`
 - Debug a single entry without touching state: `uv run claudinho config.yaml --debug`
 - Run one task by name, ignoring period/last_run: `uv run claudinho config.yaml --task "world-news"`
-- Upgrade `state.json` to the current schema without touching feeds: `uv run claudinho config.yaml --migrate`
 - Sync deps: `uv sync`
 
 There is no test suite, linter, or formatter configured.
@@ -31,8 +30,7 @@ Four modules, no package, flat layout:
 - `main.py` — CLI entry point and orchestration. Loads config + state, opens a single shared `aiohttp.ClientSession`, then dispatches to one of three modes:
   - **Normal mode**: filters tasks by `_is_due` (period with 60s grace), then gathers all due tasks in parallel. Task type is inferred from config shape: `feeds` key → RSS task, `prompt` key → LLM task.
   - **Debug mode (`--debug`)**: runs the first task sequentially — for LLM tasks posts the full response; for RSS tasks posts the first new entry. Period is ignored. **State is never saved in debug mode.**
-  - **Migrate mode (`--migrate`)**: loads `state.json`, runs the legacy-shape migration in `load_state`, writes the result, and exits. Does not open an HTTP session. Mutually exclusive with `--debug`.
-- `feed.py` — feed fetching, dedup, and entry enrichment. `get_new_entries(feed_cfg, seen, session)` returns `(current_ids, new_entries)` on success or `None` on parse failure (so the caller can skip the `last_run` update and retry on the next cron tick):
+  - `feed.py` — feed fetching, dedup, and entry enrichment. `get_new_entries(feed_cfg, seen, session)` returns `(current_ids, new_entries)` on success or `None` on parse failure (so the caller can skip the `last_run` update and retry on the next cron tick):
   - `current_ids` is *all* IDs currently in the feed (used to overwrite state — old IDs that fall off the feed are forgotten, which keeps `state.json` from growing forever).
   - Entry ID resolution falls back: `entry.id` → `entry.link` → `entry.title`.
   - Unseen entries are reversed into chronological order, then OG images are fetched concurrently (only the first 32KB of each article page is read — the parser stops at `<body>`).
@@ -46,7 +44,7 @@ RSS task entries: `{feed_url: {"ids": [entry_id, ...], "last_run": "<iso8601 utc
 
 LLM task entries: `{"<task_name>": {"last_run": "<iso8601 utc>" | null}}`. No `ids` field — only `last_run` matters.
 
-`load_state` transparently migrates the legacy `{feed_url: [entry_id, ...]}` shape: any list value is wrapped as `{"ids": <list>, "last_run": null}`, so a `null` `last_run` always means "due now".
+`load_state` returns the parsed JSON as-is; `null` `last_run` always means "due now".
 
 ### Config shape
 
