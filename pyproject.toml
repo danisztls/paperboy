@@ -9,6 +9,7 @@ dependencies = [
     "feedparser>=6.0.12",
     "openai>=2.33.0",
     "pyyaml>=6.0.3",
+    "Pillow>=11.0",
 ]
 
 [project.scripts]

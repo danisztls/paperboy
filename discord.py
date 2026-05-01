@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 
@@ -6,6 +7,43 @@ import aiohttp
 from feed import FeedEntry
 
 log = logging.getLogger(__name__)
+
+_MAX_BYTES = 4 * 1024 * 1024
+_MAX_DIM = 2000
+
+
+async def _fetch_image(url: str, session: aiohttp.ClientSession) -> bytes | None:
+    try:
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                return None
+            ct = resp.headers.get("Content-Type", "").split(";")[0].strip()
+            if not ct.startswith("image/"):
+                return None
+            return await resp.read()
+    except Exception as exc:
+        log.debug("Could not download image %s: %s", url, exc)
+        return None
+
+
+def _optimize_image(data: bytes) -> bytes | None:
+    try:
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(data))
+        img = img.convert("RGB")
+        needs_resize = max(img.size) > _MAX_DIM
+        if len(data) <= _MAX_BYTES and not needs_resize:
+            return data
+        if needs_resize:
+            img.thumbnail((_MAX_DIM, _MAX_DIM), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="WEBP", quality=85)
+        result = buf.getvalue()
+        return result if len(result) <= 8 * 1024 * 1024 else None
+    except Exception as exc:
+        log.debug("Could not optimize image: %s", exc)
+        return None
 
 
 async def post_text_to_discord(
@@ -59,24 +97,32 @@ async def post_to_discord(
     }
     if entry.description:
         embed["description"] = entry.description
-    if entry.image_url:
-        embed["image"] = {"url": entry.image_url}
     if entry.feed_title:
         embed["footer"] = {"text": entry.feed_title}
 
-    payload_dict = {"embeds": [embed]}
-    payload = json.dumps(payload_dict).encode()
+    image_bytes: bytes | None = None
+    if entry.image_url:
+        raw = await _fetch_image(entry.image_url, session)
+        if raw is not None:
+            image_bytes = _optimize_image(raw)
+
+    if image_bytes is not None:
+        embed["image"] = {"url": "attachment://og_image.webp"}
+        form = aiohttp.FormData()
+        form.add_field("payload_json", json.dumps({"embeds": [embed]}), content_type="application/json")
+        form.add_field("files[0]", image_bytes, filename="og_image.webp", content_type="image/webp")
+        post_kwargs: dict = {"data": form}
+    else:
+        if entry.image_url:
+            embed["image"] = {"url": entry.image_url}
+        post_kwargs = {"data": json.dumps({"embeds": [embed]}).encode(), "headers": {"Content-Type": "application/json"}}
 
     if debug:
         log.debug("Webhook URL: %s", webhook_url)
-        log.debug("Payload: %s", json.dumps(payload_dict, indent=2))
+        log.debug("Payload embed: %s", json.dumps(embed, indent=2))
 
     try:
-        async with session.post(
-            webhook_url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        ) as resp:
+        async with session.post(webhook_url, **post_kwargs) as resp:
             if resp.status not in (200, 204):
                 log.warning("Unexpected Discord response: %s", resp.status)
             elif debug:
