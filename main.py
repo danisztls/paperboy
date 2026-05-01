@@ -56,6 +56,16 @@ def _task_type(task_cfg: dict) -> str:
     return "llm" if "prompt" in task_cfg else "feeds"
 
 
+def _recent_passed_items(state: dict, feed_urls: list[str], n: int = 7) -> list[dict]:
+    """Return the n most recent pass_filter=True items across the given feed URLs."""
+    passed = []
+    for url in feed_urls:
+        for item in state.get(url, {}).get("items", []):
+            if item.get("pass_filter") is True:
+                passed.append({"title": item.get("title", ""), "url": item.get("url", "")})
+    return passed[:n]
+
+
 def _is_due(feed_state: dict, period_hours: float, now: datetime) -> bool:
     last_run = feed_state.get("last_run")
     if not last_run:
@@ -100,6 +110,7 @@ async def _process_feed(
     *,
     filter_cfg: dict | None = None,
     llm_model: str | None = None,
+    context_items: list[dict] | None = None,
 ) -> dict:
     """Fetch one feed, post new entries, return {url: feed_state} for state update.
 
@@ -117,7 +128,7 @@ async def _process_feed(
     passing_ids: set[str] | None = None
     if filter_cfg and new_entries:
         items = [{"id": e.id, "title": e.title, "description": e.description} for e in new_entries]
-        filter_result = await filter_entries(items, filter_cfg, llm_model)
+        filter_result = await filter_entries(items, filter_cfg, llm_model, context_items=context_items)
         if filter_result is None:
             log.warning("[%s] Filter failed, posting all entries", feed_cfg.get("name") or url)
             passing_ids = {e.id for e in new_entries}
@@ -232,6 +243,8 @@ async def _async_main(args: argparse.Namespace) -> None:
                         return
                 else:
                     task_filter_cfg = task_cfg.get("filter") or None
+                    feed_urls = [f["url"] for f in task_cfg.get("feeds", []) if f.get("url")]
+                    ctx = _recent_passed_items(state, feed_urls) if task_filter_cfg else None
                     for feed_cfg in task_cfg.get("feeds", []):
                         url = feed_cfg.get("url")
                         if not url:
@@ -245,7 +258,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                         if new_entries:
                             if task_filter_cfg:
                                 items = [{"id": e.id, "title": e.title, "description": e.description} for e in new_entries]
-                                filter_result = await filter_entries(items, task_filter_cfg, llm_model)
+                                filter_result = await filter_entries(items, task_filter_cfg, llm_model, context_items=ctx)
                                 if filter_result is not None:
                                     passing_ids = {eid for eid, v in filter_result.items() if v["pass"]}
                                 else:
@@ -292,6 +305,8 @@ async def _async_main(args: argparse.Namespace) -> None:
                     feed_tasks.append(_process_llm_task(task_cfg, state, session, instructions=instructions, llm_model=llm_model))
                 else:
                     task_filter_cfg = task_cfg.get("filter") or None
+                    feed_urls = [f["url"] for f in task_cfg.get("feeds", []) if f.get("url")]
+                    context_items = _recent_passed_items(state, feed_urls) if task_filter_cfg else None
                     for feed_cfg in task_cfg.get("feeds", []):
                         url = feed_cfg.get("url")
                         if not url:
@@ -305,7 +320,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                                 feed_cfg.get("name") or url, mins, period,
                             )
                             continue
-                        feed_tasks.append(_process_feed(webhook, feed_cfg, state, session, filter_cfg=task_filter_cfg, llm_model=llm_model))
+                        feed_tasks.append(_process_feed(webhook, feed_cfg, state, session, filter_cfg=task_filter_cfg, llm_model=llm_model, context_items=context_items))
             results = await asyncio.gather(*feed_tasks, return_exceptions=True)
             for result in results:
                 if isinstance(result, Exception):

@@ -12,17 +12,30 @@ async def filter_entries(
     items: list[dict],
     filter_cfg: dict,
     global_model: str | None = None,
+    *,
+    context_items: list[dict] | None = None,
 ) -> dict[str, dict] | None:
     """Filter feed entries through LLM.
 
     Returns a dict mapping item ID → {"pass": bool, "reason": str}, or None on failure
     (caller should fail-open: treat all entries as passing).
+    context_items: recently posted items (pass_filter=True) passed as context to help
+    detect repetition and track ongoing events.
     """
     client = AsyncOpenAI()
     model = filter_cfg.get("model") or global_model or DEFAULT_MODEL
     criteria = filter_cfg.get("prompt", "")
+    context_block = ""
+    if context_items:
+        context_block = (
+            "Recently posted items (most recent first) — use these to detect repetition "
+            "and recognise ongoing events:\n"
+            + json.dumps(context_items, ensure_ascii=False)
+            + "\n\n"
+        )
     instructions = (
         f"{criteria}\n\n"
+        f"{context_block}"
         "You will receive a JSON array of feed items (each with id, title, description). "
         "For each item, decide if it matches the criteria above. "
         'Return a JSON array where each element is {"id": "<item id>", "pass": true/false, "reason": "<one short sentence>"}. '
