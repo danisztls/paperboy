@@ -257,6 +257,11 @@ def main():
         default=None,
         help="Path to state file (default: <config_dir>/state.json)",
     )
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable verbose (DEBUG) logging",
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
         "--debug",
@@ -275,8 +280,9 @@ def main():
     )
     args = parser.parse_args()
 
-    if args.debug:
+    if args.verbose or args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
+    if args.debug:
         log.debug("Debug mode enabled — will parse one feed, post one entry, skip state save")
 
     asyncio.run(_async_main(args))
