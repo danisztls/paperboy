@@ -12,7 +12,8 @@ from datetime import datetime, timedelta, timezone
 import aiohttp
 
 from feed import get_new_entries
-from discord import post_to_discord
+from discord import post_to_discord, post_text_to_discord
+from llm import run_llm_task
 
 DEFAULT_PERIOD_HOURS = 1.0
 PERIOD_GRACE = timedelta(seconds=60)
@@ -49,6 +50,10 @@ def save_state(path: pathlib.Path, state: dict) -> None:
     path.write_text(json.dumps(state, indent=2))
 
 
+def _task_type(task_cfg: dict) -> str:
+    return "llm" if "prompt" in task_cfg else "feeds"
+
+
 def _is_due(feed_state: dict, period_hours: float, now: datetime) -> bool:
     last_run = feed_state.get("last_run")
     if not last_run:
@@ -59,6 +64,27 @@ def _is_due(feed_state: dict, period_hours: float, now: datetime) -> bool:
         return True
     threshold = timedelta(hours=period_hours) - PERIOD_GRACE
     return (now - last) >= threshold
+
+
+async def _process_llm_task(
+    task_cfg: dict,
+    state: dict,
+    session: aiohttp.ClientSession,
+) -> dict:
+    """Run one LLM task, post the response, return {state_key: task_state} on success or {} on failure."""
+    name = task_cfg["name"]
+    state_key = f"llm:{name}"
+    text = await run_llm_task(task_cfg)
+    if text is None:
+        return {}
+    webhook = task_cfg["webhook"]
+    try:
+        await post_text_to_discord(webhook, text, session)
+        log.info("[%s] Posted LLM response (%d chars)", name, len(text))
+    except Exception:
+        log.error("Skipping LLM task %s due to post failure", name)
+        return {}
+    return {state_key: {"last_run": datetime.now(timezone.utc).isoformat()}}
 
 
 async def _process_feed(
@@ -124,31 +150,43 @@ async def _async_main(args: argparse.Namespace) -> None:
         headers={"User-Agent": "rss-discord/1.0"},
     ) as session:
         if args.debug:
-            # Sequential: fetch one feed at a time, stop after the first post.
+            # Sequential: run one task, stop after the first successful post.
             # State is never saved in debug mode.
             for task_cfg in tasks:
                 webhook = task_cfg.get("webhook")
                 if not webhook:
                     log.warning("Skipping task with no webhook URL")
                     continue
-                for feed_cfg in task_cfg.get("feeds", []):
-                    url = feed_cfg.get("url")
-                    if not url:
-                        log.warning("Skipping feed with no URL: %s", feed_cfg)
+                if _task_type(task_cfg) == "llm":
+                    name = task_cfg.get("name")
+                    if not name:
+                        log.warning("Skipping LLM task with no name")
                         continue
-                    seen = set(state.get(url, {}).get("ids", []))
-                    result = await get_new_entries(feed_cfg, seen, session)
-                    if result is None:
-                        continue
-                    _current_ids, new_entries = result
-                    if new_entries:
-                        await post_to_discord(webhook, new_entries[0], session, debug=True)
-                        log.info("[%s] Posted: %s", new_entries[0].feed_title, new_entries[0].title[:80])
-                        log.debug("Debug mode: stopping after first posted entry")
+                    text = await run_llm_task(task_cfg)
+                    if text:
+                        await post_text_to_discord(webhook, text, session, debug=True)
+                        log.info("[%s] Posted LLM response (%d chars)", name, len(text))
+                        log.debug("Debug mode: stopping after first LLM task")
                         return
+                else:
+                    for feed_cfg in task_cfg.get("feeds", []):
+                        url = feed_cfg.get("url")
+                        if not url:
+                            log.warning("Skipping feed with no URL: %s", feed_cfg)
+                            continue
+                        seen = set(state.get(url, {}).get("ids", []))
+                        result = await get_new_entries(feed_cfg, seen, session)
+                        if result is None:
+                            continue
+                        _current_ids, new_entries = result
+                        if new_entries:
+                            await post_to_discord(webhook, new_entries[0], session, debug=True)
+                            log.info("[%s] Posted: %s", new_entries[0].feed_title, new_entries[0].title[:80])
+                            log.debug("Debug mode: stopping after first posted entry")
+                            return
             log.debug("Debug mode: no new entries found in any feed")
         else:
-            # Concurrent: all feeds fetched and posted in parallel.
+            # Concurrent: all tasks run in parallel.
             now = datetime.now(timezone.utc)
             feed_tasks = []
             for task_cfg in tasks:
@@ -156,20 +194,36 @@ async def _async_main(args: argparse.Namespace) -> None:
                 if not webhook:
                     continue
                 period = float(task_cfg.get("period", DEFAULT_PERIOD_HOURS))
-                for feed_cfg in task_cfg.get("feeds", []):
-                    url = feed_cfg.get("url")
-                    if not url:
+                if _task_type(task_cfg) == "llm":
+                    name = task_cfg.get("name")
+                    if not name:
+                        log.warning("Skipping LLM task with no name")
                         continue
-                    feed_state = state.get(url, {"ids": [], "last_run": None})
-                    if not _is_due(feed_state, period, now):
-                        last = datetime.fromisoformat(feed_state["last_run"])
+                    task_state = state.get(f"llm:{name}", {"last_run": None})
+                    if not _is_due(task_state, period, now):
+                        last = datetime.fromisoformat(task_state["last_run"])
                         mins = int((now - last).total_seconds() // 60)
                         log.info(
                             "[%s] Skipping — last run %d min ago, period is %g h",
-                            feed_cfg.get("name") or url, mins, period,
+                            name, mins, period,
                         )
                         continue
-                    feed_tasks.append(_process_feed(webhook, feed_cfg, state, session))
+                    feed_tasks.append(_process_llm_task(task_cfg, state, session))
+                else:
+                    for feed_cfg in task_cfg.get("feeds", []):
+                        url = feed_cfg.get("url")
+                        if not url:
+                            continue
+                        feed_state = state.get(url, {"ids": [], "last_run": None})
+                        if not _is_due(feed_state, period, now):
+                            last = datetime.fromisoformat(feed_state["last_run"])
+                            mins = int((now - last).total_seconds() // 60)
+                            log.info(
+                                "[%s] Skipping — last run %d min ago, period is %g h",
+                                feed_cfg.get("name") or url, mins, period,
+                            )
+                            continue
+                        feed_tasks.append(_process_feed(webhook, feed_cfg, state, session))
             results = await asyncio.gather(*feed_tasks, return_exceptions=True)
             for result in results:
                 if isinstance(result, Exception):
