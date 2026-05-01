@@ -62,6 +62,13 @@ def _strip_html(text: str) -> str:
 
 
 _MD_ESCAPE_RE = re.compile(r'(?m)(^[>#]+|[*_`~])')
+_CDATA_RE = re.compile(r'<!\[CDATA\[(.*?)\]\]>', re.DOTALL)
+
+
+def _entry_title(entry) -> str:
+    title = entry.get("title") or (entry.get("title_detail") or {}).get("value") or ""
+    m = _CDATA_RE.search(title)
+    return m.group(1).strip() if m else title.strip()
 
 
 def _escape_markdown(text: str) -> str:
@@ -87,7 +94,7 @@ async def get_new_entries(
     feed_cfg: dict,
     seen: set[str],
     session: aiohttp.ClientSession,
-) -> tuple[list[str], list[FeedEntry]] | None:
+) -> tuple[list[dict], list[FeedEntry]] | None:
     """Fetch feed, return (current_ids, new_entries) or None on failure.
 
     current_ids: all entry IDs currently in the feed (for state update).
@@ -106,14 +113,14 @@ async def get_new_entries(
     feed_title = feed_cfg.get("name") or getattr(parsed.feed, "title", url)
     log.debug("[%s] Total entries in feed: %d", feed_title, len(parsed.entries))
 
-    current_ids = []
+    current_items = []
     unseen_raw = []
 
     for entry in parsed.entries:
-        eid = entry.get("id") or entry.get("link") or entry.get("title")
+        eid = entry.get("link") or entry.get("title")
         if not eid:
             continue
-        current_ids.append(eid)
+        current_items.append({"url": entry.get("link", ""), "title": _entry_title(entry)})
         if eid not in seen:
             unseen_raw.append((eid, entry))
             log.debug("[%s] New entry: %s", feed_title, eid[:120])
@@ -139,11 +146,11 @@ async def get_new_entries(
 
         new_entries.append(FeedEntry(
             id=eid,
-            title=entry.get("title", "(no title)").strip()[:256],
+            title=(_entry_title(entry) or "(no title)")[:256],
             link=link,
             description=description,
             image_url=image_url,
             feed_title=feed_title,
         ))
 
-    return current_ids, new_entries
+    return current_items, new_entries

@@ -40,9 +40,16 @@ def load_state(path: pathlib.Path) -> dict:
     return json.loads(path.read_text())
 
 
+def _migrate_state(state: dict) -> dict:
+    for val in state.values():
+        if isinstance(val, dict) and "ids" in val and "items" not in val:
+            val["items"] = [{"url": eid, "title": ""} for eid in val.pop("ids")]
+    return state
+
+
 def save_state(path: pathlib.Path, state: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, indent=2))
+    path.write_text(json.dumps(state, indent=2, ensure_ascii=False))
 
 
 def _task_type(task_cfg: dict) -> str:
@@ -97,11 +104,11 @@ async def _process_feed(
     last_run untouched and the feed will be retried on the next run.
     """
     url = feed_cfg["url"]
-    seen = set(state.get(url, {}).get("ids", []))
+    seen = {item["url"] for item in state.get(url, {}).get("items", [])}
     result = await get_new_entries(feed_cfg, seen, session)
     if result is None:
         return {}
-    current_ids, new_entries = result
+    current_items, new_entries = result
     for i, entry in enumerate(new_entries):
         try:
             await post_to_discord(webhook, entry, session)
@@ -110,7 +117,7 @@ async def _process_feed(
                 await asyncio.sleep(1)
         except Exception:
             log.error("Skipping entry %s due to post failure", entry.id)
-    return {url: {"ids": current_ids, "last_run": datetime.now(timezone.utc).isoformat()}}
+    return {url: {"items": current_items, "last_run": datetime.now(timezone.utc).isoformat()}}
 
 
 async def _async_main(args: argparse.Namespace) -> None:
@@ -129,7 +136,7 @@ async def _async_main(args: argparse.Namespace) -> None:
     log.info("State:  %s", state_path)
 
     config = load_config(config_path)
-    state = load_state(state_path)
+    state = _migrate_state(load_state(state_path))
     llm_cfg = config.get("llm", {})
     instructions = llm_cfg.get("instructions") or None
     llm_model = llm_cfg.get("model") or None
@@ -144,7 +151,25 @@ async def _async_main(args: argparse.Namespace) -> None:
         timeout=aiohttp.ClientTimeout(total=15),
         headers={"User-Agent": "rss-discord/1.0"},
     ) as session:
-        if args.debug:
+        if args.regenerate_state:
+            now = datetime.now(timezone.utc).isoformat()
+            for task_cfg in tasks:
+                if _task_type(task_cfg) != "feeds":
+                    continue
+                for feed_cfg in task_cfg.get("feeds", []):
+                    url = feed_cfg.get("url")
+                    if not url:
+                        continue
+                    result = await get_new_entries(feed_cfg, set(), session)
+                    if result is None:
+                        log.warning("Failed to fetch %s, skipping", url)
+                        continue
+                    current_items, _ = result
+                    state[url] = {"items": current_items, "last_run": now}
+                    log.info("Regenerated %d items for %s", len(current_items), url)
+            save_state(state_path, state)
+            log.info("Done. State regenerated and saved to %s", state_path)
+        elif args.debug:
             # Sequential: run one task, stop after the first successful post.
             # State is never saved in debug mode.
             for task_cfg in tasks:
@@ -169,11 +194,11 @@ async def _async_main(args: argparse.Namespace) -> None:
                         if not url:
                             log.warning("Skipping feed with no URL: %s", feed_cfg)
                             continue
-                        seen = set(state.get(url, {}).get("ids", []))
+                        seen = {item["url"] for item in state.get(url, {}).get("items", [])}
                         result = await get_new_entries(feed_cfg, seen, session)
                         if result is None:
                             continue
-                        _current_ids, new_entries = result
+                        _current_items, new_entries = result
                         if new_entries:
                             await post_to_discord(webhook, new_entries[0], session, debug=True)
                             log.info("[%s] Posted: %s", new_entries[0].feed_title, new_entries[0].title[:80])
@@ -261,6 +286,11 @@ def main():
         "--task",
         metavar="NAME",
         help="Run a single task by name, ignoring period and last_run state",
+    )
+    mode.add_argument(
+        "--regenerate-state",
+        action="store_true",
+        help="Fetch all feeds and write current items to state without posting to Discord",
     )
     args = parser.parse_args()
 
