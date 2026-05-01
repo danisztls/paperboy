@@ -16,6 +16,7 @@ The project uses `uv` (see `uv.lock`, `.python-version` pinning Python 3.14).
 
 - Run: `uv run claudinho config.yaml`
 - Debug a single entry without touching state: `uv run claudinho config.yaml --debug`
+- Run one task by name, ignoring period/last_run: `uv run claudinho config.yaml --task "world-news"`
 - Upgrade `state.json` to the current schema without touching feeds: `uv run claudinho config.yaml --migrate`
 - Sync deps: `uv sync`
 
