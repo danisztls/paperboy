@@ -1,7 +1,23 @@
 tasks:
-  - webhook: "https://discordapp.com/api/webhooks/<NUMBER>/<TOKEN>"
+  # RSS task: fetches feeds and posts new entries as Discord embeds.
+  - name: my-feeds
+    webhook: "https://discordapp.com/api/webhooks/<NUMBER>/<TOKEN>"
     # Minimum hours between processing this task's feeds. Default: 1.
     period: 1
     feeds:
       - name:
         url:
+
+  # LLM task: calls OpenAI Responses API with web_search and posts the plain-text
+  # response to Discord. Detected by presence of 'prompt' key.
+  - name: world-news
+    webhook: "https://discordapp.com/api/webhooks/<NUMBER>/<TOKEN>"
+    period: 24
+    prompt: "Today news. World. Filter for signal > noise."
+    model: gpt-5.4-mini  # optional, default: gpt-5.4-mini
+    # tools:             # optional — shallow-merged into the web_search_preview tool config
+    #   allowed_domains:
+    #     - reuters.com
+    #   user_location:
+    #     type: approximate
+    #     country: US

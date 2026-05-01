@@ -4,7 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A personal RSS → Discord webhook notifier. Polls a list of feeds, posts new entries as Discord embeds, persists which entry IDs have already been seen so the next run only sends what's new. Intended to be run on a cron, not as a long-lived process.
+A personal notifier that posts to Discord webhooks on a cron schedule. Supports two task types:
+- **RSS tasks**: polls feeds, posts new entries as embeds, tracks seen IDs.
+- **LLM tasks**: calls OpenAI Responses API with a prompt + `web_search_preview` tool, posts the plain-text response. Good for scheduled digests ("today's news, filter for signal > noise").
+
+Intended to be run on a cron, not as a long-lived process.
 
 ## Commands
 
@@ -21,22 +25,25 @@ There is no test suite, linter, or formatter configured.
 
 ## Architecture
 
-Three modules, no package, flat layout:
+Four modules, no package, flat layout:
 
 - `main.py` — CLI entry point and orchestration. Loads config + state, opens a single shared `aiohttp.ClientSession`, then dispatches to one of three modes:
-  - **Normal mode**: filters out feeds whose `last_run` is more recent than the task's `period` (with a 60-second grace window for cron drift), then builds one coroutine per remaining `(webhook, feed)` pair and `asyncio.gather`s them in parallel; merges per-feed results into `state` and saves once at the end.
-  - **Debug mode (`--debug`)**: walks feeds sequentially, posts the *first* new entry from the *first* feed that has one, then exits. Period is ignored. **State is never saved in debug mode** — this is deliberate, so the same entry can be re-posted while iterating on formatting.
-  - **Migrate mode (`--migrate`)**: loads `state.json`, runs the legacy-shape migration in `load_state`, writes the result, and exits. Does not open an HTTP session, does not fetch feeds, does not post. The config file does not need to exist — only its parent directory matters (for the default `state.json` location). Mutually exclusive with `--debug`.
+  - **Normal mode**: filters tasks by `_is_due` (period with 60s grace), then gathers all due tasks in parallel. Task type is inferred from config shape: `feeds` key → RSS task, `prompt` key → LLM task.
+  - **Debug mode (`--debug`)**: runs the first task sequentially — for LLM tasks posts the full response; for RSS tasks posts the first new entry. Period is ignored. **State is never saved in debug mode.**
+  - **Migrate mode (`--migrate`)**: loads `state.json`, runs the legacy-shape migration in `load_state`, writes the result, and exits. Does not open an HTTP session. Mutually exclusive with `--debug`.
 - `feed.py` — feed fetching, dedup, and entry enrichment. `get_new_entries(feed_cfg, seen, session)` returns `(current_ids, new_entries)` on success or `None` on parse failure (so the caller can skip the `last_run` update and retry on the next cron tick):
   - `current_ids` is *all* IDs currently in the feed (used to overwrite state — old IDs that fall off the feed are forgotten, which keeps `state.json` from growing forever).
   - Entry ID resolution falls back: `entry.id` → `entry.link` → `entry.title`.
   - Unseen entries are reversed into chronological order, then OG images are fetched concurrently (only the first 32KB of each article page is read — the parser stops at `<body>`).
   - Descriptions are HTML-stripped, truncated to 300 chars, and Markdown-escaped (`_MD_ESCAPE_RE` covers `*_` `~` `` ` `` and leading `>`/`#` per line) so feed content can't accidentally format Discord messages.
-- `discord.py` — single-purpose: build an embed from a `FeedEntry` and POST it. Raises on HTTP ≥400 so `main.py` can log+skip that one entry without aborting the rest.
+- `llm.py` — `run_llm_task(task_cfg)` calls the OpenAI Responses API (`AsyncOpenAI().responses.create`) with the `web_search_preview` built-in tool. Returns the response text or `None` on failure. The `tools` dict in config is shallow-merged into the default `{"type": "web_search_preview"}` so you can add `allowed_domains`, `user_location`, etc. from config without code changes. Requires `$OPENAI_API_KEY` in env. Default model: `gpt-5.4-mini`.
+- `discord.py` — two posting functions: `post_to_discord` (embed from a `FeedEntry`) and `post_text_to_discord` (plain `content` message, truncated to 2000 chars). Both raise on HTTP ≥400.
 
 ### State shape
 
-`state.json` is `{feed_url: {"ids": [entry_id, ...], "last_run": "<iso8601 utc>" | null}}`. Each successful run replaces `ids` with the IDs currently in the feed (not a union, so the file size is bounded by feed length) and stamps `last_run` with `datetime.now(timezone.utc).isoformat()`. A failed fetch (network or parse error) leaves the entry untouched.
+RSS task entries: `{feed_url: {"ids": [entry_id, ...], "last_run": "<iso8601 utc>" | null}}`. Each successful run replaces `ids` with the IDs currently in the feed (not a union, so the file size is bounded by feed length).
+
+LLM task entries: `{"llm:<task_name>": {"last_run": "<iso8601 utc>" | null}}`. No `ids` field — only `last_run` matters.
 
 `load_state` transparently migrates the legacy `{feed_url: [entry_id, ...]}` shape: any list value is wrapped as `{"ids": <list>, "last_run": null}`, so a `null` `last_run` always means "due now".
 
@@ -44,14 +51,29 @@ Three modules, no package, flat layout:
 
 ```yaml
 tasks:
-  - webhook: "https://discord.com/api/webhooks/.../..."
-    period: 1  # optional, hours between processing this task's feeds. Default: 1.0
+  # RSS task — detected by presence of 'feeds' key
+  - name: my-feeds                   # required for all tasks
+    webhook: "https://discord.com/api/webhooks/.../..."
+    period: 1                        # optional, hours. Default: 1.0
     feeds:
-      - name: "Optional display name (used as embed footer)"
+      - name: "Display name"         # optional, used as embed footer
         url: "https://example.com/feed.xml"
+
+  # LLM task — detected by presence of 'prompt' key
+  - name: world-news
+    webhook: "https://discord.com/api/webhooks/.../..."
+    period: 24
+    prompt: "Today news. World. Filter for signal > noise."
+    model: gpt-5.4-mini              # optional, default: gpt-5.4-mini
+    tools:                           # optional, merged into web_search_preview config
+      allowed_domains:
+        - reuters.com
+      user_location:
+        type: approximate
+        country: US
 ```
 
-Multiple `tasks` entries let different feed groups go to different webhooks. `period` is per-task only — there's no per-feed override. The threshold check subtracts `PERIOD_GRACE` (60s) so a 1h cron firing every ~60min doesn't skip every other tick due to clock jitter. Both YAML and JSON are accepted (dispatched by file suffix in `load_config`).
+Multiple `tasks` entries let different groups go to different webhooks. `period` is per-task only. The threshold check subtracts `PERIOD_GRACE` (60s) so a 1h cron firing every ~60min doesn't skip every other tick due to clock jitter. Both YAML and JSON are accepted (dispatched by file suffix in `load_config`).
 
 ## Conventions worth preserving
 
