@@ -94,6 +94,8 @@ async def get_new_entries(
     feed_cfg: dict,
     seen: set[str],
     session: aiohttp.ClientSession,
+    *,
+    fetch_og_images: bool = True,
 ) -> tuple[list[dict], list[FeedEntry]] | None:
     """Fetch feed, return (current_ids, new_entries) or None on failure.
 
@@ -132,7 +134,10 @@ async def get_new_entries(
     # reverse to chronological order, then enrich all OG images concurrently
     ordered = list(reversed(unseen_raw))
     links = [e.get("link", "") for _, e in ordered]
-    og_results = await asyncio.gather(*[_fetch_og_image(link, session) for link in links])
+    if fetch_og_images:
+        og_results = await asyncio.gather(*[_fetch_og_image(link, session) for link in links])
+    else:
+        og_results = [None] * len(links)
 
     new_entries = []
     for (eid, entry), link, image_url in zip(ordered, links, og_results):
