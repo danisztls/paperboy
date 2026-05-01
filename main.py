@@ -42,6 +42,9 @@ def load_state(path: pathlib.Path) -> dict:
     for url, value in list(raw.items()):
         if isinstance(value, list):
             raw[url] = {"ids": value, "last_run": None}
+    # Migrate legacy llm:<name> keys -> <name>
+    for key in [k for k in raw if k.startswith("llm:")]:
+        raw[key[4:]] = raw.pop(key)
     return raw
 
 
@@ -76,7 +79,7 @@ async def _process_llm_task(
 ) -> dict:
     """Run one LLM task, post the response, return {state_key: task_state} on success or {} on failure."""
     name = task_cfg["name"]
-    state_key = f"llm:{name}"
+    state_key = name
     text = await run_llm_task(task_cfg, instructions, llm_model)
     if text is None:
         return {}
@@ -214,7 +217,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     if not name:
                         log.warning("Skipping LLM task with no name")
                         continue
-                    task_state = state.get(f"llm:{name}", {"last_run": None})
+                    task_state = state.get(name, {"last_run": None})
                     if not force_task and not _is_due(task_state, period, now):
                         last = datetime.fromisoformat(task_state["last_run"])
                         mins = int((now - last).total_seconds() // 60)

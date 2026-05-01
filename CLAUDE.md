@@ -44,7 +44,7 @@ Four modules, no package, flat layout:
 
 RSS task entries: `{feed_url: {"ids": [entry_id, ...], "last_run": "<iso8601 utc>" | null}}`. Each successful run replaces `ids` with the IDs currently in the feed (not a union, so the file size is bounded by feed length).
 
-LLM task entries: `{"llm:<task_name>": {"last_run": "<iso8601 utc>" | null}}`. No `ids` field — only `last_run` matters.
+LLM task entries: `{"<task_name>": {"last_run": "<iso8601 utc>" | null}}`. No `ids` field — only `last_run` matters.
 
 `load_state` transparently migrates the legacy `{feed_url: [entry_id, ...]}` shape: any list value is wrapped as `{"ids": <list>, "last_run": null}`, so a `null` `last_run` always means "due now".
 
