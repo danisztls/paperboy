@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 import aiohttp
 
 from feed import get_new_entries
-from discord import post_to_discord, post_text_to_discord
+from discord import post_to_discord, post_text_to_discord, post_digest_to_discord
 from llm import run_llm_task, filter_entries
 
 DEFAULT_PERIOD_HOURS = 1.0
@@ -46,6 +46,9 @@ def save_state(path: pathlib.Path, state: dict) -> None:
 
 
 def _task_type(task_cfg: dict) -> str:
+    explicit = task_cfg.get("type")
+    if explicit:
+        return explicit
     return "llm" if "prompt" in task_cfg else "feeds"
 
 
@@ -170,6 +173,8 @@ async def _process_task(
                 if gid.isdigit() and int(gid) in id_map
             }
 
+    task_type = _task_type(task_cfg)
+    digest_entries: list = []
     now_iso = datetime.now(timezone.utc).isoformat()
     new_feeds_state = dict(feeds_state)  # carry forward state for feeds not fetched this run
 
@@ -214,16 +219,27 @@ async def _process_task(
         else:
             final_items = current_items
 
-        for i, entry in enumerate(entries_to_post):
-            try:
-                await post_to_discord(webhook, entry, session, fetch_og=fetch_og)
-                log.info("[%s] Posted: %s", entry.feed_title, entry.title[:80])
-                if i < len(entries_to_post) - 1:
-                    await asyncio.sleep(2)
-            except Exception:
-                log.error("Skipping entry %s due to post failure", entry.id)
+        if task_type == "digest":
+            digest_entries.extend(entries_to_post)
+        else:
+            for i, entry in enumerate(entries_to_post):
+                try:
+                    await post_to_discord(webhook, entry, session, fetch_og=fetch_og)
+                    log.info("[%s] Posted: %s", entry.feed_title, entry.title[:80])
+                    if i < len(entries_to_post) - 1:
+                        await asyncio.sleep(2)
+                except Exception:
+                    log.error("Skipping entry %s due to post failure", entry.id)
 
         new_feeds_state[url] = {"items": final_items, "last_run": now_iso}
+
+    if task_type == "digest" and digest_entries:
+        try:
+            await post_digest_to_discord(webhook, digest_entries, session, memory_text=memory_text)
+            log.info("[%s] Posted digest: %d entries", task_name, len(digest_entries))
+        except Exception:
+            log.error("[%s] Failed to post digest — state not saved", task_name)
+            return {}
 
     new_task_state: dict = {"feeds": new_feeds_state}
     if filter_cfg:
@@ -364,16 +380,31 @@ async def _async_main(args: argparse.Namespace) -> None:
                         else:
                             passing_entry_ids = {e.id for _, entries in feed_entries for e in entries}
 
-                    for _feed_cfg, new_entries in feed_entries:
-                        visible = (
-                            new_entries if passing_entry_ids is None
-                            else [e for e in new_entries if e.id in passing_entry_ids]
-                        )
-                        if visible:
-                            await post_to_discord(webhook, visible[0], session, debug=True, fetch_og=fetch_og)
-                            log.info("[%s] Posted: %s", visible[0].feed_title, visible[0].title[:80])
-                            log.debug("Debug mode: stopping after first posted entry")
+                    if _task_type(task_cfg) == "digest":
+                        all_visible = []
+                        for _feed_cfg, new_entries in feed_entries:
+                            vis = (
+                                new_entries if passing_entry_ids is None
+                                else [e for e in new_entries if e.id in passing_entry_ids]
+                            )
+                            all_visible.extend(vis)
+                        if all_visible:
+                            await post_digest_to_discord(webhook, all_visible, session,
+                                                         memory_text=None, debug=True)
+                            log.info("Posted digest: %d entries", len(all_visible))
+                            log.debug("Debug mode: stopping after digest post")
                             return
+                    else:
+                        for _feed_cfg, new_entries in feed_entries:
+                            visible = (
+                                new_entries if passing_entry_ids is None
+                                else [e for e in new_entries if e.id in passing_entry_ids]
+                            )
+                            if visible:
+                                await post_to_discord(webhook, visible[0], session, debug=True, fetch_og=fetch_og)
+                                log.info("[%s] Posted: %s", visible[0].feed_title, visible[0].title[:80])
+                                log.debug("Debug mode: stopping after first posted entry")
+                                return
             log.debug("Debug mode: no new entries found in any feed")
         else:
             # Concurrent: all tasks run in parallel.
