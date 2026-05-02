@@ -122,7 +122,7 @@ async def _process_task(
     async def _fetch_one(fc: dict):
         url = fc["url"]
         seen = {item["url"] for item in feeds_state.get(url, {}).get("items", [])}
-        return fc, await get_new_entries(fc, seen, session, fetch_og_images=fetch_og)
+        return fc, await get_new_entries(fc, seen)
 
     fetch_results = await asyncio.gather(*[_fetch_one(fc) for fc in feed_cfgs], return_exceptions=True)
 
@@ -216,10 +216,10 @@ async def _process_task(
 
         for i, entry in enumerate(entries_to_post):
             try:
-                await post_to_discord(webhook, entry, session)
+                await post_to_discord(webhook, entry, session, fetch_og=fetch_og)
                 log.info("[%s] Posted: %s", entry.feed_title, entry.title[:80])
                 if i < len(entries_to_post) - 1:
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(2)
             except Exception:
                 log.error("Skipping entry %s due to post failure", entry.id)
 
@@ -281,12 +281,11 @@ async def _async_main(args: argparse.Namespace) -> None:
                     continue
                 task_state = state.setdefault(task_name, {})
                 feeds_state = task_state.setdefault("feeds", {})
-                fetch_og = task_cfg.get("og_images", True)
                 for feed_cfg in task_cfg.get("feeds", []):
                     url = feed_cfg.get("url")
                     if not url:
                         continue
-                    result = await get_new_entries(feed_cfg, set(), session, fetch_og_images=fetch_og)
+                    result = await get_new_entries(feed_cfg, set())
                     if result is None:
                         log.warning("Failed to fetch %s, skipping", url)
                         continue
@@ -321,7 +320,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     feeds_state = task_state.get("feeds", {})
 
                     # Fetch all feeds and build global-ID payload
-                    fetch_og = task_cfg.get("og_images", True)
+                    fetch_og = task_cfg.get("og_images", True)  # passed to post_to_discord
                     global_id = 0
                     id_map: dict[int, object] = {}
                     feed_entries: list[tuple[dict, list]] = []
@@ -332,7 +331,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                             log.warning("Skipping feed with no URL: %s", feed_cfg)
                             continue
                         seen = {item["url"] for item in feeds_state.get(url, {}).get("items", [])}
-                        result = await get_new_entries(feed_cfg, seen, session, fetch_og_images=fetch_og)
+                        result = await get_new_entries(feed_cfg, seen)
                         if result is None:
                             continue
                         _current_items, new_entries = result
@@ -371,7 +370,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                             else [e for e in new_entries if e.id in passing_entry_ids]
                         )
                         if visible:
-                            await post_to_discord(webhook, visible[0], session, debug=True)
+                            await post_to_discord(webhook, visible[0], session, debug=True, fetch_og=fetch_og)
                             log.info("[%s] Posted: %s", visible[0].feed_title, visible[0].title[:80])
                             log.debug("Debug mode: stopping after first posted entry")
                             return
