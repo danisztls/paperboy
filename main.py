@@ -2,7 +2,9 @@
 """RSS to Discord webhook notifier"""
 
 import asyncio
+import atexit
 import json
+import os
 import sys
 import pathlib
 import logging
@@ -268,6 +270,19 @@ async def _async_main(args: argparse.Namespace) -> None:
         if args.state
         else config_path.parent / "state.json"
     )
+
+    lock_path = state_path.with_suffix(".lock")
+    if lock_path.exists():
+        raw = lock_path.read_text().strip()
+        try:
+            os.kill(int(raw), 0)
+        except (ValueError, ProcessLookupError):
+            log.warning("Removing stale lock file (PID %s)", raw)
+        else:
+            log.error("Another instance is running (PID %s), exiting.", raw)
+            sys.exit(1)
+    lock_path.write_text(str(os.getpid()))
+    atexit.register(lock_path.unlink, missing_ok=True)
 
     if not config_path.exists():
         log.error("Config file not found: %s", config_path)
