@@ -175,6 +175,7 @@ async def _process_task(
 
     task_type = _task_type(task_cfg)
     digest_entries: list = []
+    all_entries_to_post: list = []
     now_iso = datetime.now(timezone.utc).isoformat()
     new_feeds_state = dict(feeds_state)  # carry forward state for feeds not fetched this run
 
@@ -222,16 +223,21 @@ async def _process_task(
         if task_type == "digest":
             digest_entries.extend(entries_to_post)
         else:
-            for i, entry in enumerate(entries_to_post):
-                try:
-                    await post_to_discord(webhook, entry, session, fetch_og=fetch_og)
-                    log.info("[%s] Posted: %s", entry.feed_title, entry.title[:80])
-                    if i < len(entries_to_post) - 1:
-                        await asyncio.sleep(2)
-                except Exception:
-                    log.error("Skipping entry %s due to post failure", entry.id)
+            all_entries_to_post.extend(entries_to_post)
 
         new_feeds_state[url] = {"items": final_items, "last_run": now_iso}
+
+    if task_type != "digest" and all_entries_to_post:
+        _far_future = datetime.max.replace(tzinfo=timezone.utc)
+        all_entries_to_post.sort(key=lambda e: e.published or _far_future)
+        for i, entry in enumerate(all_entries_to_post):
+            try:
+                await post_to_discord(webhook, entry, session, fetch_og=fetch_og)
+                log.info("[%s] Posted: %s", entry.feed_title, entry.title[:80])
+                if i < len(all_entries_to_post) - 1:
+                    await asyncio.sleep(2)
+            except Exception:
+                log.error("Skipping entry %s due to post failure", entry.id)
 
     if task_type == "digest" and digest_entries:
         try:

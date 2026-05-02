@@ -3,6 +3,7 @@ import html.parser
 import re
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import feedparser
 
@@ -19,6 +20,7 @@ class FeedEntry:
     description: str
     feed_title: str
     image: str | None = None
+    published: datetime | None = None
 
 
 class _TagStripper(html.parser.HTMLParser):
@@ -146,6 +148,9 @@ async def get_new_entries(
             description = description[:DESCRIPTION_MAX].rstrip() + "…"
         description = _escape_markdown(description)
 
+        pt = entry.get("published_parsed") or entry.get("updated_parsed")
+        published = datetime(*pt[:6], tzinfo=timezone.utc) if pt else None
+
         fe = FeedEntry(
             id=eid,
             title=(_entry_title(entry) or "(no title)")[:256],
@@ -153,6 +158,7 @@ async def get_new_entries(
             description=description,
             feed_title=feed_title,
             image=_entry_image(entry),
+            published=published,
         )
         if regex_title:
             fe.title = _apply_regex(regex_title, fe.title)
