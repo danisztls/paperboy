@@ -46,12 +46,15 @@ async def filter_entries(
         f"{criteria}\n\n"
         f"{memory_block}"
         f"{context_block}"
-        "You will receive a JSON array of source groups, each with a 'source' name and an 'items' array "
-        "(each item has an integer 'id' and a 'title'). "
-        "For each item across all groups, decide if it matches the criteria above. "
-        "Also write a 'memory': a concise update (≤300 words) summarising what you observed across ALL "
-        "items (passing and failing) and how it relates to the previous memory log. Focus on patterns, "
-        "new developments, and recurring themes. This becomes the next memory log entry. "
+        "You will receive a JSON array of source groups, each with a 'source' name and an 'items' array"
+        "(each item has an integer 'id' and a 'title')."
+        "For each item across all groups, decide if it matches the criteria above."
+        "Also write a 'memory': a factual news briefing (≤300 words, PT-BR) covering only the items that passed the filter."
+        "Write it as journalist would write an executive summary:"
+        "lead with the most significant development; one sentence per story stating the concrete fact;"
+        "group loosely by theme if helpful (geopolitics, economy, Brazil); no meta-commentary about the filtering process;"
+        "no mentions of what was discarded; no hedging phrases."
+        "This becomes context for the next run, so it must contain enough factual specificity to recognize a follow-up story as a continuation."
         'Return a JSON object with exactly two keys: "items" (array where each element is '
         '{"id": <integer>, "pass": true/false, "reason": "<one short sentence>"} — include ALL input '
         'items, both passing and failing) and "memory" (string, the new memory log entry). '
