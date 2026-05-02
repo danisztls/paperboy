@@ -11,6 +11,7 @@ import feedparser.sanitizer
 feedparser.sanitizer._HTMLSanitizer.acceptable_attributes.add("srcset")
 
 DESCRIPTION_MAX = 300
+ENTRY_MAX_AGE_SECONDS = 7 * 86400
 
 log = logging.getLogger(__name__)
 
@@ -143,9 +144,15 @@ async def get_new_entries(
     current_items = []
     unseen_raw = []
 
+    now = datetime.now(timezone.utc)
     for entry in parsed.entries:
         eid = entry.get("link") or entry.get("title")
         if not eid:
+            continue
+        pt = entry.get("published_parsed") or entry.get("updated_parsed")
+        published = datetime(*pt[:6], tzinfo=timezone.utc) if pt else None
+        if published and (now - published).total_seconds() > ENTRY_MAX_AGE_SECONDS:
+            log.debug("[%s] Skipping old entry (%s): %s", feed_title, published.date(), eid[:80])
             continue
         current_items.append({"url": entry.get("link", ""), "title": _entry_title(entry)})
         if eid not in seen:
@@ -172,10 +179,6 @@ async def get_new_entries(
 
         pt = entry.get("published_parsed") or entry.get("updated_parsed")
         published = datetime(*pt[:6], tzinfo=timezone.utc) if pt else None
-
-        if published and (datetime.now(timezone.utc) - published).total_seconds() > 7 * 86400:
-            log.debug("[%s] Skipping old entry (%s): %s", feed_title, published.date(), eid[:80])
-            continue
 
         fe = FeedEntry(
             id=eid,
