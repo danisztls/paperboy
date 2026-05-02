@@ -70,10 +70,15 @@ State is keyed by task name at the top level, matching the config structure:
 ### Config shape
 
 ```yaml
+discord:                             # optional — global defaults for Discord posting
+  color: "#5865F2"                   # default embed color for RSS embeds
+
 tasks:
   # RSS task — detected by presence of 'feeds' key
   - name: my-feeds                   # required for all tasks
-    webhook: "https://discord.com/api/webhooks/.../..."
+    discord:
+      webhook: "https://discord.com/api/webhooks/.../..."
+      color: "#5865F2"               # optional — overrides global discord.color for this task
     period: "30m"                    # optional, number (hours) or string with m/h/d suffix. Default: 1h
     filter:                          # optional — LLM pre-post filter for all feeds in this task
       prompt: "Only keep items about AI and machine learning"
@@ -82,10 +87,13 @@ tasks:
     feeds:
       - name: "Display name"         # optional, used as embed footer
         url: "https://example.com/feed.xml"
+        discord:
+          color: "#FF0000"           # optional — overrides task discord.color for this feed
 
   # LLM task — detected by presence of 'prompt' key
   - name: world-news
-    webhook: "https://discord.com/api/webhooks/.../..."
+    discord:
+      webhook: "https://discord.com/api/webhooks/.../..."
     period: "24h"
     prompt: "Today news. World. Filter for signal > noise."
     model: gpt-5.4-mini              # optional, default: gpt-5.4-mini
@@ -97,7 +105,7 @@ tasks:
         country: US
 ```
 
-Multiple `tasks` entries let different groups go to different webhooks. `period` is per-task only; accepts a plain number (hours, for backward compat) or a string with suffix `m` (minutes), `h` (hours), or `d` (days) — e.g. `"30m"`, `"6h"`, `"1d"`. The threshold check subtracts `PERIOD_GRACE` (60s) so a 1h cron firing every ~60min doesn't skip every other tick due to clock jitter. Both YAML and JSON are accepted (dispatched by file suffix in `load_config`).
+Embed color resolution order: feed `discord.color` → task `discord.color` → global `discord.color` → hardcoded default (`#5865F2`). Values are CSS-style hex strings (e.g. `"#FF0000"`). Color only applies to RSS embed tasks; LLM and digest tasks post plain text. Multiple `tasks` entries let different groups go to different webhooks. `period` is per-task only; accepts a plain number (hours, for backward compat) or a string with suffix `m` (minutes), `h` (hours), or `d` (days) — e.g. `"30m"`, `"6h"`, `"1d"`. The threshold check subtracts `PERIOD_GRACE` (60s) so a 1h cron firing every ~60min doesn't skip every other tick due to clock jitter. Both YAML and JSON are accepted (dispatched by file suffix in `load_config`).
 
 ## Conventions worth preserving
 
