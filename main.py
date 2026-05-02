@@ -331,102 +331,6 @@ async def _async_main(args: argparse.Namespace) -> None:
                     log.info("Regenerated %d items for %s", len(current_items), url)
             save_state(state_path, state)
             log.info("Done. State regenerated and saved to %s", state_path)
-        elif args.debug:
-            # Sequential: run one task, stop after the first successful post.
-            # State is never saved in debug mode.
-            for task_cfg in tasks:
-                webhook = task_cfg.get("webhook")
-                if not webhook:
-                    log.warning("Skipping task with no webhook URL")
-                    continue
-                if _task_type(task_cfg) == "llm":
-                    name = task_cfg.get("name")
-                    if not name:
-                        log.warning("Skipping LLM task with no name")
-                        continue
-                    text = await run_llm_task(task_cfg, instructions, llm_model)
-                    if text:
-                        await post_text_to_discord(webhook, text, session, debug=True)
-                        log.info("[%s] Posted LLM response (%d chars)", name, len(text))
-                        log.debug("Debug mode: stopping after first LLM task")
-                        return
-                else:
-                    task_filter_cfg = task_cfg.get("filter") or None
-                    task_name = task_cfg.get("name", "")
-                    task_state = state.get(task_name, {})
-                    feeds_state = task_state.get("feeds", {})
-
-                    # Fetch all feeds and build global-ID payload
-                    fetch_og = task_cfg.get("og_images", True)  # passed to post_to_discord
-                    global_id = 0
-                    id_map: dict[int, object] = {}
-                    feed_entries: list[tuple[dict, list]] = []
-                    payload_groups: list[dict] = []
-                    for feed_cfg in task_cfg.get("feeds", []):
-                        url = feed_cfg.get("url")
-                        if not url:
-                            log.warning("Skipping feed with no URL: %s", feed_cfg)
-                            continue
-                        seen = {item["url"] for item in feeds_state.get(url, {}).get("items", [])}
-                        result = await get_new_entries(feed_cfg, seen)
-                        if result is None:
-                            continue
-                        _current_items, new_entries = result
-                        feed_entries.append((feed_cfg, new_entries))
-                        if new_entries and task_filter_cfg:
-                            group = {"source": new_entries[0].feed_title, "items": []}
-                            for entry in new_entries:
-                                group["items"].append({"id": global_id, "title": entry.title})
-                                id_map[global_id] = entry
-                                global_id += 1
-                            payload_groups.append(group)
-
-                    # One filter call for the whole task (memory discarded in debug mode)
-                    passing_entry_ids: set[str] | None = None
-                    if task_filter_cfg and payload_groups:
-                        raw_history = task_state.get("memory", {})
-                        memory_history = [raw_history[k] for k in sorted(raw_history)[-5:]] or None
-                        llm_return = await filter_entries(
-                            payload_groups, task_filter_cfg, llm_model,
-                            context_items=_recent_passed_items(task_state),
-                            memory_history=memory_history,
-                        )
-                        if llm_return is not None:
-                            raw_results, _ = llm_return
-                            passing_entry_ids = {
-                                id_map[int(gid)].id
-                                for gid, v in raw_results.items()
-                                if v["pass"] and gid.isdigit() and int(gid) in id_map
-                            }
-                        else:
-                            passing_entry_ids = {e.id for _, entries in feed_entries for e in entries}
-
-                    if _task_type(task_cfg) == "digest":
-                        all_visible = []
-                        for _feed_cfg, new_entries in feed_entries:
-                            vis = (
-                                new_entries if passing_entry_ids is None
-                                else [e for e in new_entries if e.id in passing_entry_ids]
-                            )
-                            all_visible.extend(vis)
-                        if all_visible:
-                            await post_digest_to_discord(webhook, all_visible, session,
-                                                         memory_text=None, debug=True)
-                            log.info("Posted digest: %d entries", len(all_visible))
-                            log.debug("Debug mode: stopping after digest post")
-                            return
-                    else:
-                        for _feed_cfg, new_entries in feed_entries:
-                            visible = (
-                                new_entries if passing_entry_ids is None
-                                else [e for e in new_entries if e.id in passing_entry_ids]
-                            )
-                            if visible:
-                                await post_to_discord(webhook, visible[0], session, debug=True, fetch_og=fetch_og)
-                                log.info("[%s] Posted: %s", visible[0].feed_title, visible[0].title[:80])
-                                log.debug("Debug mode: stopping after first posted entry")
-                                return
-            log.debug("Debug mode: no new entries found in any feed")
         else:
             # Concurrent: all tasks run in parallel.
             now = datetime.now(timezone.utc)
@@ -499,11 +403,6 @@ def main():
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
-        "--debug",
-        action="store_true",
-        help="Post one entry from the first feed with new content; skip state save",
-    )
-    mode.add_argument(
         "--task",
         metavar="NAME",
         help="Run a single task by name, ignoring period and last_run state",
@@ -515,11 +414,9 @@ def main():
     )
     args = parser.parse_args()
 
-    if args.verbose or args.debug:
+    if args.verbose:
         for name in ("__main__", "feed", "llm", "discord"):
             logging.getLogger(name).setLevel(logging.DEBUG)
-    if args.debug:
-        log.debug("Debug mode enabled — will parse one feed, post one entry, skip state save")
 
     asyncio.run(_async_main(args))
 

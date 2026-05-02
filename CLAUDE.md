@@ -15,13 +15,13 @@ Intended to be run on a cron, not as a long-lived process.
 The project uses `uv` (see `uv.lock`, `.python-version` pinning Python 3.14).
 
 - Run: `uv run claudinho config.yaml`
-- Debug a single entry without touching state: `uv run claudinho config.yaml --debug`
 - Run one task by name, ignoring period/last_run: `uv run claudinho config.yaml --task "world-news"`
+- Verbose output: add `--verbose` to any invocation
 - Sync deps: `uv sync`
 
 There is no test suite, linter, or formatter configured.
 
-`config.yaml` is gitignored — copy `config.yaml.template` and fill in webhook URLs and feed URLs. `state.json` is also gitignored and is created next to the config on first non-debug run.
+`config.yaml` is gitignored — copy `config.yaml.template` and fill in webhook URLs and feed URLs. `state.json` is also gitignored and is created next to the config on first run.
 
 ## Architecture
 
@@ -29,7 +29,6 @@ Four modules, no package, flat layout:
 
 - `main.py` — CLI entry point and orchestration. Loads config + state, opens a single shared `aiohttp.ClientSession`, then dispatches to one of three modes:
   - **Normal mode**: filters tasks by `_is_due` (period with 60s grace), then gathers all due tasks in parallel. Task type is inferred from config shape: `feeds` key → RSS task, `prompt` key → LLM task.
-  - **Debug mode (`--debug`)**: runs the first task sequentially — for LLM tasks posts the full response; for RSS tasks posts the first new entry. Period is ignored. **State is never saved in debug mode.**
   - `feed.py` — feed fetching, dedup, and entry enrichment. `get_new_entries(feed_cfg, seen, session)` returns `(current_ids, new_entries)` on success or `None` on parse failure (so the caller can skip the `last_run` update and retry on the next cron tick):
   - `current_ids` is *all* IDs currently in the feed (used to overwrite state — old IDs that fall off the feed are forgotten, which keeps `state.json` from growing forever).
   - Entry ID resolution falls back: `entry.id` → `entry.link` → `entry.title`.
