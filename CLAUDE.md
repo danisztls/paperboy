@@ -74,7 +74,7 @@ tasks:
   # RSS task — detected by presence of 'feeds' key
   - name: my-feeds                   # required for all tasks
     webhook: "https://discord.com/api/webhooks/.../..."
-    period: 1                        # optional, hours. Default: 1.0
+    period: "30m"                    # optional, number (hours) or string with m/h/d suffix. Default: 1h
     filter:                          # optional — LLM pre-post filter for all feeds in this task
       prompt: "Only keep items about AI and machine learning"
       model: gpt-4o-mini             # optional, falls back to global llm.model then default
@@ -86,7 +86,7 @@ tasks:
   # LLM task — detected by presence of 'prompt' key
   - name: world-news
     webhook: "https://discord.com/api/webhooks/.../..."
-    period: 24
+    period: "24h"
     prompt: "Today news. World. Filter for signal > noise."
     model: gpt-5.4-mini              # optional, default: gpt-5.4-mini
     tools:                           # optional, merged into web_search_preview config
@@ -97,7 +97,7 @@ tasks:
         country: US
 ```
 
-Multiple `tasks` entries let different groups go to different webhooks. `period` is per-task only. The threshold check subtracts `PERIOD_GRACE` (60s) so a 1h cron firing every ~60min doesn't skip every other tick due to clock jitter. Both YAML and JSON are accepted (dispatched by file suffix in `load_config`).
+Multiple `tasks` entries let different groups go to different webhooks. `period` is per-task only; accepts a plain number (hours, for backward compat) or a string with suffix `m` (minutes), `h` (hours), or `d` (days) — e.g. `"30m"`, `"6h"`, `"1d"`. The threshold check subtracts `PERIOD_GRACE` (60s) so a 1h cron firing every ~60min doesn't skip every other tick due to clock jitter. Both YAML and JSON are accepted (dispatched by file suffix in `load_config`).
 
 ## Conventions worth preserving
 

@@ -17,8 +17,20 @@ from feed import get_new_entries
 from discord import post_to_discord, post_text_to_discord, post_digest_to_discord
 from llm import run_llm_task, filter_entries
 
-DEFAULT_PERIOD_HOURS = 1.0
+DEFAULT_PERIOD = timedelta(hours=1)
 PERIOD_GRACE = timedelta(seconds=60)
+
+_PERIOD_UNITS = {"m": "minutes", "h": "hours", "d": "days"}
+
+
+def _parse_period(value) -> timedelta:
+    if isinstance(value, str):
+        value = value.strip()
+        suffix = value[-1].lower() if value else ""
+        if suffix in _PERIOD_UNITS:
+            return timedelta(**{_PERIOD_UNITS[suffix]: float(value[:-1])})
+        return timedelta(hours=float(value))
+    return timedelta(hours=float(value))
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -64,7 +76,7 @@ def _recent_passed_items(task_state: dict, n: int = 7) -> list[dict]:
     return passed[:n]
 
 
-def _is_due(feed_state: dict, period_hours: float, now: datetime) -> bool:
+def _is_due(feed_state: dict, period: timedelta, now: datetime) -> bool:
     last_run = feed_state.get("last_run")
     if not last_run:
         return True
@@ -72,8 +84,7 @@ def _is_due(feed_state: dict, period_hours: float, now: datetime) -> bool:
         last = datetime.fromisoformat(last_run)
     except ValueError:
         return True
-    threshold = timedelta(hours=period_hours) - PERIOD_GRACE
-    return (now - last) >= threshold
+    return (now - last) >= period - PERIOD_GRACE
 
 
 async def _process_llm_task(
@@ -348,7 +359,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                 webhook = task_cfg.get("webhook")
                 if not webhook:
                     continue
-                period = float(task_cfg.get("period", DEFAULT_PERIOD_HOURS))
+                period = _parse_period(task_cfg.get("period", DEFAULT_PERIOD))
                 if _task_type(task_cfg) == "llm":
                     name = task_cfg.get("name")
                     if not name:
@@ -359,7 +370,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                         last = datetime.fromisoformat(task_state["last_run"])
                         mins = int((now - last).total_seconds() // 60)
                         log.info(
-                            "[%s] Skipping — last run %d min ago, period is %g h",
+                            "[%s] Skipping — last run %d min ago, period is %s",
                             name, mins, period,
                         )
                         continue
