@@ -1,3 +1,5 @@
+import asyncio
+import html.parser
 import io
 import json
 import logging
@@ -7,6 +9,66 @@ import aiohttp
 from feed import FeedEntry
 
 log = logging.getLogger(__name__)
+
+_BOT_DETECTION_THRESHOLD = 2048
+_OG_FETCH_DELAY = 2.0
+
+
+class _OGImageParser(html.parser.HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.og_image: str | None = None
+        self._done = False
+
+    def handle_starttag(self, tag, attrs):
+        if self._done:
+            return
+        if tag == "body":
+            self._done = True
+        elif tag == "meta":
+            d = dict(attrs)
+            if d.get("property") == "og:image" and d.get("content"):
+                self.og_image = d["content"]
+                self._done = True
+
+
+async def _fetch_og_image_once(url: str, session: aiohttp.ClientSession) -> tuple[str | None, bool]:
+    """Single attempt. Returns (og_image_url, bot_detected)."""
+    if not url:
+        return None, False
+    try:
+        async with session.get(url) as resp:
+            status = resp.status
+            content_type = resp.headers.get("Content-Type", "")
+            chunk = await resp.content.read(32768)
+        if status >= 400:
+            log.debug("OG image fetch failed for %s: HTTP %d", url, status)
+            return None, False
+        if len(chunk) < _BOT_DETECTION_THRESHOLD:
+            log.debug("OG image: got %d bytes (bot-detection?) from %s", len(chunk), url)
+            return None, True
+        text = chunk.decode("utf-8", errors="replace")
+        log.debug("OG image: fetched %d bytes (status=%d, ct=%s) from %s", len(chunk), status, content_type, url)
+        p = _OGImageParser()
+        p.feed(text)
+        if p.og_image:
+            log.debug("OG image: found %s", p.og_image)
+        else:
+            log.debug("OG image: no og:image tag found in first %d bytes of %s", len(chunk), url)
+        return p.og_image, False
+    except Exception as exc:
+        log.debug("OG image: exception fetching %s: %s: %s", url, type(exc).__name__, exc)
+        return None, False
+
+
+async def _fetch_og_image(url: str, session: aiohttp.ClientSession) -> str | None:
+    """Fetch og:image URL from article HTML, with one bot-detection retry."""
+    og, bot_detected = await _fetch_og_image_once(url, session)
+    if bot_detected:
+        log.debug("OG image: bot-detected, retrying after %.0f s for %s", _OG_FETCH_DELAY, url)
+        await asyncio.sleep(_OG_FETCH_DELAY)
+        og, _ = await _fetch_og_image_once(url, session)
+    return og
 
 _MAX_BYTES = 4 * 1024 * 1024
 _MAX_DIM = 2000
@@ -89,6 +151,7 @@ async def post_to_discord(
     entry: FeedEntry,
     session: aiohttp.ClientSession,
     debug: bool = False,
+    fetch_og: bool = True,
 ) -> None:
     embed = {
         "title": entry.title,
@@ -100,9 +163,13 @@ async def post_to_discord(
     if entry.feed_title:
         embed["footer"] = {"text": entry.feed_title}
 
+    og_image_url: str | None = None
+    if fetch_og and entry.link:
+        og_image_url = await _fetch_og_image(entry.link, session)
+
     image_bytes: bytes | None = None
-    if entry.image_url:
-        raw = await _fetch_image(entry.image_url, session)
+    if og_image_url:
+        raw = await _fetch_image(og_image_url, session)
         if raw is not None:
             image_bytes = _optimize_image(raw)
 
@@ -113,8 +180,8 @@ async def post_to_discord(
         form.add_field("files[0]", image_bytes, filename="og_image.webp", content_type="image/webp")
         post_kwargs: dict = {"data": form}
     else:
-        if entry.image_url:
-            embed["image"] = {"url": entry.image_url}
+        if og_image_url:
+            embed["image"] = {"url": og_image_url}
         post_kwargs = {"data": json.dumps({"embeds": [embed]}).encode(), "headers": {"Content-Type": "application/json"}}
 
     if debug:
