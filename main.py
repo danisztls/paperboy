@@ -5,6 +5,7 @@ import asyncio
 import atexit
 import json
 import os
+import re
 import sys
 import pathlib
 import logging
@@ -18,6 +19,7 @@ from discord import post_to_discord, post_text_to_discord, post_digest_to_discor
 from llm import run_llm_task, filter_entries
 
 DEFAULT_PERIOD = timedelta(hours=1)
+_CITE_STRIP_RE = re.compile(r'\s*\[\d+\]')
 PERIOD_GRACE = timedelta(seconds=60)
 
 _PERIOD_UNITS = {"m": "minutes", "h": "hours", "d": "days"}
@@ -184,6 +186,7 @@ async def _process_task(
     # One LLM filter call for the whole task
     filter_result: dict | None = None
     memory_text: str | None = None
+    cite_map: dict[int, str] = {gid: entry.link for gid, entry in id_map.items() if entry.link}
     if filter_cfg and payload_groups:
         llm_return = await filter_entries(
             payload_groups, filter_cfg, llm_model,
@@ -201,7 +204,6 @@ async def _process_task(
             }
 
     task_type = _task_type(task_cfg)
-    digest_entries: list = []
     all_entries_to_post: list = []
     now_iso = datetime.now(timezone.utc).isoformat()
     new_feeds_state = dict(feeds_state)  # carry forward state for feeds not fetched this run
@@ -247,9 +249,7 @@ async def _process_task(
         else:
             final_items = current_items
 
-        if task_type == "digest":
-            digest_entries.extend(entries_to_post)
-        else:
+        if task_type != "digest":
             feed_color = _parse_color(fc.get("discord", {}).get("color")) or task_color or global_color
             all_entries_to_post.extend((feed_color, e) for e in entries_to_post)
 
@@ -267,10 +267,10 @@ async def _process_task(
             except Exception:
                 log.error("Skipping entry %s due to post failure", entry.id)
 
-    if task_type == "digest" and digest_entries:
+    if task_type == "digest" and memory_text:
         try:
-            await post_digest_to_discord(webhook, digest_entries, session, memory_text=memory_text)
-            log.info("[%s] Posted digest: %d entries", task_name, len(digest_entries))
+            await post_digest_to_discord(webhook, session, memory_text=memory_text, cite_map=cite_map)
+            log.info("[%s] Posted digest", task_name)
         except Exception:
             log.error("[%s] Failed to post digest — state not saved", task_name)
             return {}
@@ -279,7 +279,7 @@ async def _process_task(
     if filter_cfg:
         history = dict(raw_history)
         if memory_text is not None:
-            history[now_iso] = memory_text
+            history[now_iso] = _CITE_STRIP_RE.sub('', memory_text).strip()
             if len(history) > 20:
                 for old_key in sorted(history)[:len(history) - 20]:
                     del history[old_key]

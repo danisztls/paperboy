@@ -49,12 +49,10 @@ async def filter_entries(
         "You will receive a JSON array of source groups, each with a 'source' name and an 'items' array"
         "(each item has an integer 'id' and a 'title')."
         "For each item across all groups, decide if it matches the criteria above."
-        "Also write a 'memory': a factual news briefing (≤300 words, PT-BR) covering only the items that passed the filter."
-        "Write it as journalist would write an executive summary:"
-        "lead with the most significant development; one sentence per story stating the concrete fact;"
-        "group loosely by theme if helpful (geopolitics, economy, Brazil); no meta-commentary about the filtering process;"
-        "no mentions of what was discarded; no hedging phrases."
-        "This becomes context for the next run, so it must contain enough factual specificity to recognize a follow-up story as a continuation."
+        "Also write a 'memory': a factual news briefing in PT-BR covering every item that passed the filter — include all of them, one sentence per story stating the concrete fact; do not omit any passing item."
+        "Lead with the most significant development; group loosely by theme if helpful (geopolitics, economy, Brazil); no meta-commentary about the filtering process; no mentions of what was discarded; no hedging phrases."
+        "After each sentence, append the story's numeric id in square brackets immediately after the sentence, e.g. 'Trump signed deal [3].' — use the same integer id values from the input items."
+        "This becomes context for the next run, so it must contain enough factual specificity to recognise a follow-up story as a continuation."
         'Return a JSON object with exactly two keys: "items" (array where each element is '
         '{"id": <integer>, "pass": true/false, "reason": "<one short sentence>"} — include ALL input '
         'items, both passing and failing) and "memory" (string, the new memory log entry). '
@@ -81,7 +79,7 @@ async def filter_entries(
             memory_text = None
         elif isinstance(result, dict) and "items" in result:
             items_list = result["items"]
-            memory_text = str(result.get("memory", "")).strip()[:1500] or None
+            memory_text = str(result.get("memory", "")).strip() or None
         else:
             log.warning("LLM filter returned unexpected format: %s", text[:200])
             return None
