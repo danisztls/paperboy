@@ -173,6 +173,10 @@ async def get_new_entries(
         pt = entry.get("published_parsed") or entry.get("updated_parsed")
         published = datetime(*pt[:6], tzinfo=timezone.utc) if pt else None
 
+        if published and (datetime.now(timezone.utc) - published).total_seconds() > 7 * 86400:
+            log.debug("[%s] Skipping old entry (%s): %s", feed_title, published.date(), eid[:80])
+            continue
+
         fe = FeedEntry(
             id=eid,
             title=(_entry_title(entry) or "(no title)")[:256],
