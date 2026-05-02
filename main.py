@@ -23,6 +23,17 @@ PERIOD_GRACE = timedelta(seconds=60)
 _PERIOD_UNITS = {"m": "minutes", "h": "hours", "d": "days"}
 
 
+def _parse_color(value) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    s = str(value).strip()
+    if s.startswith("#") and len(s) == 7:
+        return int(s[1:], 16)
+    return None
+
+
 def _parse_period(value) -> timedelta:
     if isinstance(value, str):
         value = value.strip()
@@ -100,7 +111,7 @@ async def _process_llm_task(
     text = await run_llm_task(task_cfg, instructions, llm_model)
     if text is None:
         return {}
-    webhook = task_cfg["webhook"]
+    webhook = task_cfg.get("discord", {}).get("webhook")
     try:
         await post_text_to_discord(webhook, text, session)
         log.info("[%s] Posted LLM response (%d chars)", name, len(text))
@@ -116,10 +127,13 @@ async def _process_task(
     session: aiohttp.ClientSession,
     *,
     llm_model: str | None = None,
+    global_color: int | None = None,
 ) -> dict:
     """Run one RSS task (filtered or not), return {task_name: task_state}."""
     task_name = task_cfg["name"]
-    webhook = task_cfg["webhook"]
+    task_discord = task_cfg.get("discord", {})
+    webhook = task_discord.get("webhook")
+    task_color = _parse_color(task_discord.get("color"))
     filter_cfg = task_cfg.get("filter") or None
     feed_cfgs = [fc for fc in task_cfg.get("feeds", []) if fc.get("url")]
     task_state = state.get(task_name, {})
@@ -236,16 +250,17 @@ async def _process_task(
         if task_type == "digest":
             digest_entries.extend(entries_to_post)
         else:
-            all_entries_to_post.extend(entries_to_post)
+            feed_color = _parse_color(fc.get("discord", {}).get("color")) or task_color or global_color
+            all_entries_to_post.extend((feed_color, e) for e in entries_to_post)
 
         new_feeds_state[url] = {"items": final_items, "last_run": now_iso}
 
     if task_type != "digest" and all_entries_to_post:
         _far_future = datetime.max.replace(tzinfo=timezone.utc)
-        all_entries_to_post.sort(key=lambda e: e.published or _far_future)
-        for i, entry in enumerate(all_entries_to_post):
+        all_entries_to_post.sort(key=lambda c_e: c_e[1].published or _far_future)
+        for i, (entry_color, entry) in enumerate(all_entries_to_post):
             try:
-                await post_to_discord(webhook, entry, session, fetch_og=fetch_og)
+                await post_to_discord(webhook, entry, session, fetch_og=fetch_og, color=entry_color)
                 log.info("[%s] Posted: %s", entry.feed_title, entry.title[:80])
                 if i < len(all_entries_to_post) - 1:
                     await asyncio.sleep(2)
@@ -307,6 +322,8 @@ async def _async_main(args: argparse.Namespace) -> None:
     llm_cfg = config.get("llm", {})
     instructions = llm_cfg.get("instructions") or None
     llm_model = llm_cfg.get("model") or None
+    discord_cfg = config.get("discord", {})
+    global_color = _parse_color(discord_cfg.get("color"))
 
     tasks = config.get("tasks", [])
     if not tasks:
@@ -356,7 +373,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     sys.exit(1)
 
             for task_cfg in task_list:
-                webhook = task_cfg.get("webhook")
+                webhook = task_cfg.get("discord", {}).get("webhook")
                 if not webhook:
                     continue
                 period = _parse_period(task_cfg.get("period", DEFAULT_PERIOD))
@@ -387,7 +404,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     ):
                         log.info("[%s] Skipping — no feeds are due", task_name)
                         continue
-                    feed_tasks.append(_process_task(task_cfg, state, session, llm_model=llm_model))
+                    feed_tasks.append(_process_task(task_cfg, state, session, llm_model=llm_model, global_color=global_color))
 
             results = await asyncio.gather(*feed_tasks, return_exceptions=True)
             for result in results:

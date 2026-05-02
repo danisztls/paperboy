@@ -191,11 +191,12 @@ async def post_to_discord(
     entry: FeedEntry,
     session: aiohttp.ClientSession,
     fetch_og: bool = True,
+    color: int | None = None,
 ) -> None:
     embed = {
         "title": entry.title,
         "url": entry.link or None,
-        "color": 5793266,
+        "color": color if color is not None else 0x5865F2,
     }
     if entry.description:
         embed["description"] = entry.description
