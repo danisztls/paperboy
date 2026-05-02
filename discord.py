@@ -3,6 +3,7 @@ import html.parser
 import io
 import json
 import logging
+import re
 
 import aiohttp
 
@@ -143,46 +144,68 @@ async def post_text_to_discord(
 
 
 _CONTENT_LIMIT = 2000
+_CITE_RE = re.compile(r'\[(\d+)\]')
+_CONSEC_CITE_RE = re.compile(r'\)\s*(\[\[)')
+_SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?])\s+')
+
+
+def _apply_cite_map(text: str, cite_map: dict[int, str]) -> str:
+    seen: list[int] = []
+    seen_set: set[int] = set()
+    for m in _CITE_RE.finditer(text):
+        n = int(m.group(1))
+        if n not in seen_set:
+            seen.append(n)
+            seen_set.add(n)
+    renumber = {orig: idx + 1 for idx, orig in enumerate(seen)}
+
+    def replace(m: re.Match) -> str:
+        n = int(m.group(1))
+        new_n = renumber.get(n, n)
+        url = cite_map.get(n)
+        return f"[[{new_n}]](<{url}>)" if url else f"[{new_n}]"
+
+    text = _CITE_RE.sub(replace, text)
+    return _CONSEC_CITE_RE.sub(r') \1', text)
 
 
 def _build_digest_chunks(
-    entries: list[FeedEntry],
     memory_text: str | None,
+    cite_map: dict[int, str] | None = None,
 ) -> list[str]:
-    lines = []
-    if memory_text:
-        lines.append(memory_text)
-        lines.append("")
-    for entry in entries:
-        title = entry.title.replace("[", "\\[").replace("]", "\\]")
-        lines.append(f"- [{title}](<{entry.link}>)" if entry.link else f"- {title}")
+    if not memory_text:
+        return []
+    text = _apply_cite_map(memory_text, cite_map) if cite_map else memory_text
+
+    sentences = [s for s in _SENTENCE_SPLIT_RE.split(text.strip()) if s.strip()]
 
     chunks: list[str] = []
     current: list[str] = []
     current_len = 0
-    for line in lines:
-        addition = len(line) + (1 if current else 0)
+    for sent in sentences:
+        addition = len(sent) + (1 if current else 0)
         if current and current_len + addition > _CONTENT_LIMIT:
-            chunks.append("\n".join(current))
-            current, current_len = [line], len(line)
+            chunks.append(" ".join(current))
+            current, current_len = [sent], len(sent)
         else:
-            current.append(line)
+            current.append(sent)
             current_len += addition
     if current:
-        chunks.append("\n".join(current))
+        chunks.append(" ".join(current))
 
     return [c for c in chunks if c.strip()]
 
 
 async def post_digest_to_discord(
     webhook_url: str,
-    entries: list[FeedEntry],
     session: aiohttp.ClientSession,
+    *,
     memory_text: str | None = None,
+    cite_map: dict[int, str] | None = None,
 ) -> None:
-    if not entries and not memory_text:
+    if not memory_text:
         return
-    for chunk in _build_digest_chunks(entries, memory_text):
+    for chunk in _build_digest_chunks(memory_text, cite_map):
         await post_text_to_discord(webhook_url, chunk, session)
 
 
