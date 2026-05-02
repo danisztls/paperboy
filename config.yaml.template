@@ -15,6 +15,10 @@ tasks:
     feeds:
       - name:
         url:
+        # regex_title: "\\d+ de \\w+"           # string → extract: title becomes the match (group 1 if captured, else group 0)
+        # regex_description:                  # dict → substitute: re.sub(pattern, sub, description)
+        #   pattern: "Imagem do dia\\s*"
+        #   sub: ""
 
   # Digest task: like RSS task but all passing entries from all feeds are collected
   # and posted as a single embed (splits into multiple if the 4096-char limit is hit).

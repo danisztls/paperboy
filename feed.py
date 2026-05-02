@@ -56,6 +56,13 @@ def _escape_markdown(text: str) -> str:
     return _MD_ESCAPE_RE.sub(r'\\\1', text)
 
 
+def _apply_regex(cfg, text: str) -> str:
+    if isinstance(cfg, dict):
+        return re.sub(cfg["pattern"], cfg.get("sub", ""), text)
+    m = re.search(cfg, text)
+    return (m.group(1) if m.lastindex else m.group(0)) if m else text
+
+
 class _ImgSrcParser(html.parser.HTMLParser):
     def __init__(self):
         super().__init__()
@@ -125,22 +132,30 @@ async def get_new_entries(
 
     ordered = list(reversed(unseen_raw))
 
+    regex_title = feed_cfg.get("regex_title")
+    regex_description = feed_cfg.get("regex_description")
+
     new_entries = []
     for eid, entry in ordered:
         link = entry.get("link", "")
         raw_desc = entry.get("summary") or entry.get("description", "")
         description = _strip_html(raw_desc).strip()
+        if regex_description:
+            description = _apply_regex(regex_description, description)
         if len(description) > DESCRIPTION_MAX:
             description = description[:DESCRIPTION_MAX].rstrip() + "…"
         description = _escape_markdown(description)
 
-        new_entries.append(FeedEntry(
+        fe = FeedEntry(
             id=eid,
             title=(_entry_title(entry) or "(no title)")[:256],
             link=link,
             description=description,
             feed_title=feed_title,
             image=_entry_image(entry),
-        ))
+        )
+        if regex_title:
+            fe.title = _apply_regex(regex_title, fe.title)
+        new_entries.append(fe)
 
     return current_items, new_entries
