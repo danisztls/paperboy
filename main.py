@@ -268,7 +268,7 @@ async def _async_main(args: argparse.Namespace) -> None:
     async with aiohttp.ClientSession(
         connector=aiohttp.TCPConnector(limit=20),
         timeout=aiohttp.ClientTimeout(total=15),
-        headers={"User-Agent": "rss-discord/1.0"},
+        headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"},
     ) as session:
         if args.regenerate_state:
             now = datetime.now(timezone.utc).isoformat()
@@ -465,7 +465,8 @@ def main():
     args = parser.parse_args()
 
     if args.verbose or args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
+        for name in ("__main__", "feed", "llm", "discord"):
+            logging.getLogger(name).setLevel(logging.DEBUG)
     if args.debug:
         log.debug("Debug mode enabled — will parse one feed, post one entry, skip state save")
 

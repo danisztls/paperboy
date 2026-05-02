@@ -75,19 +75,40 @@ def _escape_markdown(text: str) -> str:
     return _MD_ESCAPE_RE.sub(r'\\\1', text)
 
 
-async def _fetch_og_image(url: str, session: aiohttp.ClientSession) -> str | None:
+_BOT_DETECTION_THRESHOLD = 2048
+_OG_FETCH_DELAY = 2.0
+
+async def _fetch_og_image(url: str, session: aiohttp.ClientSession) -> tuple[str | None, bool]:
+    """Single fetch attempt. Returns (og_image, bot_detected).
+
+    bot_detected=True means the response was suspiciously small (<2kB), likely
+    a challenge page — the caller should requeue rather than accept None as final.
+    """
     if not url:
-        return None
+        return None, False
     try:
         async with session.get(url) as resp:
+            status = resp.status
+            content_type = resp.headers.get("Content-Type", "")
             chunk = await resp.content.read(32768)
-            text = chunk.decode("utf-8", errors="replace")
+        if status >= 400:
+            log.debug("OG image fetch failed for %s: HTTP %d", url, status)
+            return None, False
+        if len(chunk) < _BOT_DETECTION_THRESHOLD:
+            log.debug("OG image: got %d bytes (bot-detection?) from %s", len(chunk), url)
+            return None, True
+        text = chunk.decode("utf-8", errors="replace")
+        log.debug("OG image: fetched %d bytes (status=%d, ct=%s) from %s", len(chunk), status, content_type, url)
         p = _OGImageParser()
         p.feed(text)
-        return p.og_image
+        if p.og_image:
+            log.debug("OG image: found %s", p.og_image)
+        else:
+            log.debug("OG image: no og:image tag found in first %d bytes of %s", len(chunk), url)
+        return p.og_image, False
     except Exception as exc:
-        log.debug("Could not fetch OG image from %s: %s", url, exc)
-        return None
+        log.debug("OG image: exception fetching %s: %s: %s", url, type(exc).__name__, exc)
+        return None, False
 
 
 async def get_new_entries(
@@ -126,16 +147,32 @@ async def get_new_entries(
         if eid not in seen:
             unseen_raw.append((eid, entry))
             log.debug("[%s] New entry: %s", feed_title, eid[:120])
-        else:
-            log.debug("[%s] Already seen: %s", feed_title, eid[:120])
 
     log.info("[%s] New entries to post: %d", feed_title, len(unseen_raw))
 
-    # reverse to chronological order, then enrich all OG images concurrently
+    # reverse to chronological order, then fetch OG images with a cooldown between requests.
+    # bot-detected responses (<2kB) are appended to the end of the queue for one retry.
     ordered = list(reversed(unseen_raw))
     links = [e.get("link", "") for _, e in ordered]
     if fetch_og_images:
-        og_results = await asyncio.gather(*[_fetch_og_image(link, session) for link in links])
+        og_results = [None] * len(links)
+        queue = list(enumerate(links))  # (original_index, url)
+        retry = []
+        for i, (idx, link) in enumerate(queue):
+            if i > 0:
+                await asyncio.sleep(_OG_FETCH_DELAY)
+            og, bot_detected = await _fetch_og_image(link, session)
+            if bot_detected:
+                log.debug("OG image: queuing %s for retry after remaining fetches", link)
+                retry.append((idx, link))
+            else:
+                og_results[idx] = og
+        for idx, link in retry:
+            await asyncio.sleep(_OG_FETCH_DELAY)
+            og, bot_detected = await _fetch_og_image(link, session)
+            if bot_detected:
+                log.debug("OG image: still bot-detected on retry for %s, giving up", link)
+            og_results[idx] = og
     else:
         og_results = [None] * len(links)
 
