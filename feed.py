@@ -18,6 +18,7 @@ class FeedEntry:
     link: str
     description: str
     feed_title: str
+    image: str | None = None
 
 
 class _TagStripper(html.parser.HTMLParser):
@@ -53,6 +54,37 @@ def _entry_title(entry) -> str:
 
 def _escape_markdown(text: str) -> str:
     return _MD_ESCAPE_RE.sub(r'\\\1', text)
+
+
+class _ImgSrcParser(html.parser.HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.src: str | None = None
+
+    def handle_starttag(self, tag, attrs):
+        if self.src or tag != "img":
+            return
+        src = dict(attrs).get("src", "")
+        if src.startswith("http"):
+            self.src = src
+
+
+def _entry_image(entry) -> str | None:
+    for enc in entry.get("enclosures", []):
+        if enc.get("type", "").startswith("image/"):
+            url = enc.get("url", "")
+            if url:
+                return url
+    raw = entry.get("summary") or entry.get("description", "")
+    if raw:
+        p = _ImgSrcParser()
+        try:
+            p.feed(raw)
+        except Exception:
+            pass
+        if p.src:
+            return p.src
+    return None
 
 
 async def get_new_entries(
@@ -108,6 +140,7 @@ async def get_new_entries(
             link=link,
             description=description,
             feed_title=feed_title,
+            image=_entry_image(entry),
         ))
 
     return current_items, new_entries

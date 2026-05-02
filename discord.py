@@ -208,8 +208,8 @@ async def post_to_discord(
     if entry.feed_title:
         embed["footer"] = {"text": entry.feed_title}
 
-    og_image_url: str | None = None
-    if fetch_og and entry.link:
+    og_image_url: str | None = entry.image
+    if not og_image_url and fetch_og and entry.link:
         og_image_url = await _fetch_og_image(entry.link, session)
 
     image_bytes: bytes | None = None
