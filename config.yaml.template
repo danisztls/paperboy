@@ -16,6 +16,19 @@ tasks:
       - name:
         url:
 
+  # Digest task: like RSS task but all passing entries from all feeds are collected
+  # and posted as a single embed (splits into multiple if the 4096-char limit is hit).
+  # No OG image fetching. URLs use [Title](<url>) to suppress Discord link previews.
+  # - name: my-digest
+  #   type: digest
+  #   webhook: "https://discordapp.com/api/webhooks/<NUMBER>/<TOKEN>"
+  #   period: 24
+  #   filter:
+  #     prompt: "Only keep items about AI and machine learning"
+  #   feeds:
+  #     - name:
+  #       url:
+
   # LLM task: calls OpenAI Responses API with web_search and posts the plain-text
   # response to Discord. Detected by presence of 'prompt' key.
   - name: world-news

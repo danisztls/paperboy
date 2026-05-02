@@ -146,6 +146,79 @@ async def post_text_to_discord(
         raise
 
 
+_EMBED_DESC_LIMIT = 4096
+
+
+def _build_digest_embeds(
+    entries: list[FeedEntry],
+    memory_text: str | None,
+) -> list[dict]:
+    lines = []
+    if memory_text:
+        lines.append(memory_text)
+        lines.append("")
+    for entry in entries:
+        title = entry.title.replace("[", "\\[").replace("]", "\\]")
+        lines.append(f"[{title}](<{entry.link}>)" if entry.link else title)
+
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for line in "\n".join(lines).split("\n"):
+        addition = len(line) + (1 if current else 0)
+        if current and current_len + addition > _EMBED_DESC_LIMIT:
+            chunks.append("\n".join(current))
+            current, current_len = [line], len(line)
+        else:
+            current.append(line)
+            current_len += addition
+    if current:
+        chunks.append("\n".join(current))
+
+    return [{"description": c, "color": 5793266} for c in chunks if c.strip()]
+
+
+async def post_digest_to_discord(
+    webhook_url: str,
+    entries: list[FeedEntry],
+    session: aiohttp.ClientSession,
+    memory_text: str | None = None,
+    debug: bool = False,
+) -> None:
+    if not entries and not memory_text:
+        return
+    embeds = _build_digest_embeds(entries, memory_text)
+    if not embeds:
+        return
+    for embed in embeds:
+        payload = json.dumps({"embeds": [embed]}).encode()
+        if debug:
+            log.debug("Webhook URL: %s", webhook_url)
+            log.debug("Digest payload: desc[:200]: %s", embed["description"][:200])
+        try:
+            async with session.post(
+                webhook_url,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+            ) as resp:
+                if resp.status not in (200, 204):
+                    log.warning("Unexpected Discord response: %s", resp.status)
+                elif debug:
+                    log.debug("Discord response status: %s", resp.status)
+                if resp.status >= 400:
+                    body = await resp.text()
+                    raise aiohttp.ClientResponseError(
+                        resp.request_info, resp.history,
+                        status=resp.status, message=body,
+                    )
+        except aiohttp.ClientResponseError as e:
+            log.error("Discord webhook HTTP error: %s - %s", e.status, e.message)
+            raise
+        except aiohttp.ClientError as e:
+            log.error("Discord webhook connection error: %s", e)
+            raise
+
+
 async def post_to_discord(
     webhook_url: str,
     entry: FeedEntry,
