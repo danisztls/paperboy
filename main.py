@@ -279,7 +279,8 @@ async def _process_task(
     if filter_cfg:
         history = dict(raw_history)
         if memory_text is not None:
-            history[now_iso] = _CITE_STRIP_RE.sub('', memory_text).strip()
+            _stripped = _CITE_STRIP_RE.sub('', memory_text)
+            history[now_iso] = " ".join(line.strip() for line in _stripped.splitlines() if line.strip())
             if len(history) > 20:
                 for old_key in sorted(history)[:len(history) - 20]:
                     del history[old_key]
