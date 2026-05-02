@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import feedparser
+import feedparser.sanitizer
+
+feedparser.sanitizer._HTMLSanitizer.acceptable_attributes.add("srcset")
 
 DESCRIPTION_MAX = 300
 
@@ -65,6 +68,24 @@ def _apply_regex(cfg, text: str) -> str:
     return (m.group(1) if m.lastindex else m.group(0)) if m else text
 
 
+def _best_srcset_url(srcset: str) -> str | None:
+    best_url, best_val = None, -1.0
+    for part in srcset.split(","):
+        tokens = part.strip().split()
+        if not tokens or not tokens[0].startswith("http"):
+            continue
+        url = tokens[0]
+        val = 1.0
+        if len(tokens) > 1:
+            try:
+                val = float(tokens[-1][:-1])  # strip trailing 'x' or 'w'
+            except ValueError:
+                pass
+        if val > best_val:
+            best_val, best_url = val, url
+    return best_url
+
+
 class _ImgSrcParser(html.parser.HTMLParser):
     def __init__(self):
         super().__init__()
@@ -73,7 +94,8 @@ class _ImgSrcParser(html.parser.HTMLParser):
     def handle_starttag(self, tag, attrs):
         if self.src or tag != "img":
             return
-        src = dict(attrs).get("src", "")
+        d = dict(attrs)
+        src = _best_srcset_url(d.get("srcset", "")) or d.get("src", "")
         if src.startswith("http"):
             self.src = src
 
