@@ -109,21 +109,19 @@ def _optimize_image(data: bytes) -> bytes | None:
         return None
 
 
-async def post_text_to_discord(
-    webhook_url: str,
-    text: str,
+async def _post_webhook(
     session: aiohttp.ClientSession,
+    url: str,
+    **kwargs,
 ) -> None:
-    if len(text) > 2000:
-        text = text[:1997] + "…"
-    payload = json.dumps({"content": text}).encode()
-    log.debug("Posting text to Discord (%d chars)", len(text))
-    try:
-        async with session.post(
-            webhook_url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        ) as resp:
+    """POST to a Discord webhook, retrying once on 429 rate-limit."""
+    for attempt in range(2):
+        async with session.post(url, **kwargs) as resp:
+            if resp.status == 429 and attempt == 0:
+                retry_after = min(float(resp.headers.get("Retry-After", "5")), 60.0)
+                log.warning("Discord rate limited, retrying after %.1f s", retry_after)
+                await asyncio.sleep(retry_after)
+                continue
             log.debug("Discord response: %s", resp.status)
             if resp.status not in (200, 204):
                 log.warning("Unexpected Discord response: %s", resp.status)
@@ -135,6 +133,24 @@ async def post_text_to_discord(
                     status=resp.status,
                     message=body,
                 )
+            return
+
+
+async def post_text_to_discord(
+    webhook_url: str,
+    text: str,
+    session: aiohttp.ClientSession,
+) -> None:
+    if len(text) > 2000:
+        text = text[:1997] + "…"
+    payload = json.dumps({"content": text}).encode()
+    log.debug("Posting text to Discord (%d chars)", len(text))
+    try:
+        await _post_webhook(
+            session, webhook_url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
     except aiohttp.ClientResponseError as e:
         log.error("Discord webhook HTTP error: %s - %s", e.status, e.message)
         raise
@@ -205,7 +221,10 @@ async def post_digest_to_discord(
 ) -> None:
     if not memory_text:
         return
-    for chunk in _build_digest_chunks(memory_text, cite_map):
+    chunks = _build_digest_chunks(memory_text, cite_map)
+    for i, chunk in enumerate(chunks):
+        if i:
+            await asyncio.sleep(1)
         await post_text_to_discord(webhook_url, chunk, session)
 
 
@@ -236,31 +255,39 @@ async def post_to_discord(
         if raw is not None:
             image_bytes = _optimize_image(raw)
 
-    if image_bytes is not None:
-        embed["image"] = {"url": "attachment://og_image.webp"}
-        form = aiohttp.FormData()
-        form.add_field("payload_json", json.dumps({"embeds": [embed]}), content_type="application/json")
-        form.add_field("files[0]", image_bytes, filename="og_image.webp", content_type="image/webp")
-        post_kwargs: dict = {"data": form}
-    else:
-        if og_image_url:
-            embed["image"] = {"url": og_image_url}
-        post_kwargs = {"data": json.dumps({"embeds": [embed]}).encode(), "headers": {"Content-Type": "application/json"}}
-
     log.debug("Posting embed to Discord: %s", embed.get("title", ""))
     try:
-        async with session.post(webhook_url, **post_kwargs) as resp:
-            log.debug("Discord response: %s", resp.status)
-            if resp.status not in (200, 204):
-                log.warning("Unexpected Discord response: %s", resp.status)
-            if resp.status >= 400:
-                body = await resp.text()
-                raise aiohttp.ClientResponseError(
-                    resp.request_info,
-                    resp.history,
-                    status=resp.status,
-                    message=body,
-                )
+        # FormData cannot be reused across attempts, so build kwargs inside the loop.
+        def _build_kwargs() -> dict:
+            if image_bytes is not None:
+                embed["image"] = {"url": "attachment://og_image.webp"}
+                form = aiohttp.FormData()
+                form.add_field("payload_json", json.dumps({"embeds": [embed]}), content_type="application/json")
+                form.add_field("files[0]", image_bytes, filename="og_image.webp", content_type="image/webp")
+                return {"data": form}
+            if og_image_url:
+                embed["image"] = {"url": og_image_url}
+            return {"data": json.dumps({"embeds": [embed]}).encode(), "headers": {"Content-Type": "application/json"}}
+
+        for attempt in range(2):
+            async with session.post(webhook_url, **_build_kwargs()) as resp:
+                if resp.status == 429 and attempt == 0:
+                    retry_after = min(float(resp.headers.get("Retry-After", "5")), 60.0)
+                    log.warning("Discord rate limited, retrying after %.1f s", retry_after)
+                    await asyncio.sleep(retry_after)
+                    continue
+                log.debug("Discord response: %s", resp.status)
+                if resp.status not in (200, 204):
+                    log.warning("Unexpected Discord response: %s", resp.status)
+                if resp.status >= 400:
+                    body = await resp.text()
+                    raise aiohttp.ClientResponseError(
+                        resp.request_info,
+                        resp.history,
+                        status=resp.status,
+                        message=body,
+                    )
+                return
     except aiohttp.ClientResponseError as e:
         log.error("Discord webhook HTTP error: %s - %s", e.status, e.message)
         raise

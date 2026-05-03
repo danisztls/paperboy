@@ -5,6 +5,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+import aiohttp
 import feedparser
 import feedparser.sanitizer
 
@@ -122,6 +123,7 @@ def _entry_image(entry) -> str | None:
 async def get_new_entries(
     feed_cfg: dict,
     seen: set[str],
+    session: aiohttp.ClientSession,
 ) -> tuple[list[dict], list[FeedEntry]] | None:
     """Fetch feed, return (current_ids, new_entries) or None on failure.
 
@@ -132,7 +134,18 @@ async def get_new_entries(
     """
     url = feed_cfg["url"]
     log.info("Fetching feed: %s", url)
-    parsed = await asyncio.to_thread(feedparser.parse, url)
+    try:
+        async with session.get(url) as resp:
+            if resp.status >= 400:
+                log.warning("Feed fetch failed %s: HTTP %d", url, resp.status)
+                return None
+            content = await resp.read()
+    except aiohttp.ClientError as exc:
+        log.warning("Feed fetch error %s: %s", url, exc)
+        return None
+    parsed = await asyncio.to_thread(
+        feedparser.parse, content, response_headers={"content-location": url}
+    )
 
     if parsed.bozo and not parsed.entries:
         log.warning("Failed to parse feed %s: %s", url, parsed.bozo_exception)

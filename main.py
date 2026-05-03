@@ -164,7 +164,7 @@ async def _process_task(
     async def _fetch_one(fc: dict):
         url = fc["url"]
         seen = {item["url"] for item in feeds_state.get(url, {}).get("items", [])}
-        return fc, await get_new_entries(fc, seen)
+        return fc, await get_new_entries(fc, seen, session)
 
     fetch_results = await asyncio.gather(*[_fetch_one(fc) for fc in feed_cfgs], return_exceptions=True)
 
@@ -368,7 +368,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     url = feed_cfg.get("url")
                     if not url:
                         continue
-                    result = await get_new_entries(feed_cfg, set())
+                    result = await get_new_entries(feed_cfg, set(), session)
                     if result is None:
                         log.warning("Failed to fetch %s, skipping", url)
                         continue
