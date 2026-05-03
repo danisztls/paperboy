@@ -36,6 +36,16 @@ def _parse_color(value) -> int | None:
     return None
 
 
+def _xdg_config_path() -> pathlib.Path:
+    xdg_config = pathlib.Path(os.environ.get("XDG_CONFIG_HOME", "~/.config")).expanduser()
+    return xdg_config / "claudinho" / "config.yaml"
+
+
+def _xdg_state_path() -> pathlib.Path:
+    xdg_data = pathlib.Path(os.environ.get("XDG_DATA_HOME", "~/.local/share")).expanduser()
+    return xdg_data / "claudinho" / "state.json"
+
+
 def _parse_period(value) -> timedelta:
     if isinstance(value, str):
         value = value.strip()
@@ -291,11 +301,15 @@ async def _process_task(
 
 
 async def _async_main(args: argparse.Namespace) -> None:
-    config_path = pathlib.Path(args.config).expanduser().resolve()
+    xdg_defaults = args.config is None
+    config_path = (
+        _xdg_config_path() if xdg_defaults
+        else pathlib.Path(args.config).expanduser().resolve()
+    )
     state_path = (
         pathlib.Path(args.state).expanduser().resolve()
         if args.state
-        else config_path.parent / "state.json"
+        else (_xdg_state_path() if xdg_defaults else config_path.parent / "state.json")
     )
 
     lock_path = state_path.with_suffix(".lock")
@@ -419,11 +433,16 @@ async def _async_main(args: argparse.Namespace) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description="RSS to Discord webhook notifier")
-    parser.add_argument("config", help="Path to config file (YAML or JSON)")
+    parser.add_argument(
+        "config",
+        nargs="?",
+        default=None,
+        help="Path to config file (YAML or JSON). Default: $XDG_CONFIG_HOME/claudinho/config.yaml",
+    )
     parser.add_argument(
         "--state",
         default=None,
-        help="Path to state file (default: <config_dir>/state.json)",
+        help="Path to state file. Default: $XDG_DATA_HOME/claudinho/state.json (or <config_dir>/state.json when config is given explicitly)",
     )
     parser.add_argument(
         "-v", "--verbose",
