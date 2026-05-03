@@ -13,6 +13,7 @@ async def filter_entries(
     filter_cfg: dict,
     global_model: str | None = None,
     *,
+    language: str = "EN-US",
     context_items: list[dict] | None = None,
     memory_history: list[str] | None = None,
 ) -> tuple[dict[str, dict], str | None] | None:
@@ -49,7 +50,7 @@ async def filter_entries(
         "You will receive a JSON array of source groups, each with a 'source' name and an 'items' array "
         "(each item has an integer 'id', a 'title', and an optional 'description')."
         "For each item across all groups, decide if it matches the criteria above."
-        "Also write a 'memory': a factual news briefing in PT-BR covering every item that passed the filter — include all of them, one line per story; do not omit any passing item. "
+        f"Also write a 'memory': a factual news briefing in {language} covering every item that passed the filter — include all of them, one line per story; do not omit any passing item. "
         "Each story must be on its own line (separated by newlines). Do NOT use semicolons to chain unrelated stories together on the same line. Do NOT mix two different topics in one sentence. "
         "Lead with the most significant development; group loosely by theme if helpful (geopolitics, economy, Brazil); no meta-commentary about the filtering process; no mentions of what was discarded; no hedging phrases."
         "After each sentence, append the story's numeric id in square brackets immediately after the sentence, e.g. 'Trump signed deal [3].' — use the same integer id values from the input items."

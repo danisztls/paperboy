@@ -4,6 +4,7 @@ discord:                    # optional — global defaults for Discord posting
 llm:                        # optional — global defaults for all LLM tasks
   model: gpt-5.4-mini      # default model (per-task 'model' overrides this)
   # instructions: "..."      # system prompt
+  # language: "EN-US"        # language for filter memory briefings (default: EN-US; per-filter 'language' overrides)
 
 tasks:
   # RSS task: fetches feeds and posts new entries as Discord embeds.
@@ -16,6 +17,7 @@ tasks:
     # filter:                    # optional — LLM pre-post filter applied to all feeds in this task
     #   prompt: "Only keep items about AI and machine learning"
     #   model: gpt-4o-mini       # optional; falls back to global llm.model, then default model
+    #   language: "PT-BR"        # optional; language for memory briefings; falls back to llm.language then EN-US
     # og_images: false           # optional — set to false to skip OG image fetching (default: true)
     feeds:
       - name:
