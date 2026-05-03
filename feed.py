@@ -159,7 +159,7 @@ async def get_new_entries(
 
     now = datetime.now(timezone.utc)
     for entry in parsed.entries:
-        eid = entry.get("link") or entry.get("title")
+        eid = entry.get("id") or entry.get("link") or entry.get("title")
         if not eid:
             continue
         pt = entry.get("published_parsed") or entry.get("updated_parsed")
