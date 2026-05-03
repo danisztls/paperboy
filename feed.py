@@ -169,7 +169,12 @@ async def get_new_entries(
     new_entries = []
     for eid, entry in ordered:
         link = entry.get("link", "")
-        raw_desc = entry.get("summary") or entry.get("description", "")
+        raw_desc = (
+            entry.get("summary")
+            or entry.get("description")
+            or next((c.get("value", "") for c in entry.get("content", [])), "")
+            or ""
+        )
         description = _strip_html(raw_desc).strip()
         if regex_description:
             description = _apply_regex(regex_description, description)

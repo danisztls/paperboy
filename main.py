@@ -188,7 +188,10 @@ async def _process_task(
         if filter_cfg and new_entries:
             group = {"source": new_entries[0].feed_title, "items": []}
             for entry in new_entries:
-                group["items"].append({"id": global_id, "title": entry.title})
+                item_payload: dict = {"id": global_id, "title": entry.title}
+                if entry.description:
+                    item_payload["description"] = entry.description
+                group["items"].append(item_payload)
                 id_map[global_id] = entry
                 global_id += 1
             payload_groups.append(group)
