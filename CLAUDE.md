@@ -32,7 +32,7 @@ Four modules, no package, flat layout:
   - **Normal mode**: filters tasks by `_is_due` (period with 60s grace), then gathers all due tasks in parallel. Task type is inferred from config shape: `feeds` key → RSS task, `prompt` key → LLM task.
   - `feed.py` — feed fetching, dedup, and entry enrichment. `get_new_entries(feed_cfg, seen, session)` returns `(current_ids, new_entries)` on success or `None` on parse failure (so the caller can skip the `last_run` update and retry on the next cron tick):
   - `current_ids` is *all* IDs currently in the feed (used to overwrite state — old IDs that fall off the feed are forgotten, which keeps `state.json` from growing forever).
-  - Entry ID resolution falls back: `entry.id` → `entry.link` → `entry.title`.
+  - Entry ID is `entry.link`; entries with no link are skipped.
   - Unseen entries are reversed into chronological order, then OG images are fetched concurrently (only the first 32KB of each article page is read — the parser stops at `<body>`).
   - Descriptions are HTML-stripped, truncated to 300 chars, and Markdown-escaped (`_MD_ESCAPE_RE` covers `*_` `~` `` ` `` and leading `>`/`#` per line) so feed content can't accidentally format Discord messages.
 - `llm.py` — two functions: `run_llm_task(task_cfg)` calls the OpenAI Responses API with the `web_search_preview` built-in tool and posts the plain-text response; `filter_entries(items, filter_cfg, global_model, *, context_items, memory_history)` is a pure classification call (no web search) that returns `(results_dict, memory_text) | None`. `results_dict` maps str(id) → `{"pass": bool, "reason": str}`; `memory_text` is the new memory log entry or `None`. Requires `$OPENAI_API_KEY` in env. Default model: `gpt-5.4-mini`.
