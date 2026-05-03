@@ -140,6 +140,7 @@ async def _process_task(
     *,
     llm_model: str | None = None,
     global_color: int | None = None,
+    global_language: str = "EN-US",
 ) -> dict:
     """Run one RSS task (filtered or not), return {task_name: task_state}."""
     task_name = task_cfg["name"]
@@ -201,8 +202,10 @@ async def _process_task(
     memory_text: str | None = None
     cite_map: dict[int, str] = {gid: entry.link for gid, entry in id_map.items() if entry.link}
     if filter_cfg and payload_groups:
+        language = filter_cfg.get("language") or global_language
         llm_return = await filter_entries(
             payload_groups, filter_cfg, llm_model,
+            language=language,
             context_items=_recent_passed_items(task_state),
             memory_history=memory_history,
         )
@@ -340,6 +343,7 @@ async def _async_main(args: argparse.Namespace) -> None:
     llm_cfg = config.get("llm", {})
     instructions = llm_cfg.get("instructions") or None
     llm_model = llm_cfg.get("model") or None
+    global_language = llm_cfg.get("language") or "EN-US"
     discord_cfg = config.get("discord", {})
     global_color = _parse_color(discord_cfg.get("color"))
 
@@ -422,7 +426,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     ):
                         log.info("[%s] Skipping — no feeds are due", task_name)
                         continue
-                    feed_tasks.append(_process_task(task_cfg, state, session, llm_model=llm_model, global_color=global_color))
+                    feed_tasks.append(_process_task(task_cfg, state, session, llm_model=llm_model, global_color=global_color, global_language=global_language))
 
             results = await asyncio.gather(*feed_tasks, return_exceptions=True)
             for result in results:
