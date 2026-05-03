@@ -14,14 +14,15 @@ Intended to be run on a cron, not as a long-lived process.
 
 The project uses `uv` (see `uv.lock`, `.python-version` pinning Python 3.14).
 
-- Run: `uv run claudinho config.yaml`
-- Run one task by name, ignoring period/last_run: `uv run claudinho config.yaml --task "world-news"`
+- Run: `uv run claudinho` (reads `~/.config/claudinho/config.yaml`, writes state to `~/.local/share/claudinho/state.json`)
+- Run with explicit config: `uv run claudinho config.yaml` (state defaults to `<config_dir>/state.json`)
+- Run one task by name, ignoring period/last_run: `uv run claudinho --task "world-news"`
 - Verbose output: add `--verbose` to any invocation
 - Sync deps: `uv sync`
 
 There is no test suite, linter, or formatter configured.
 
-`config.yaml` is gitignored — copy `config.yaml.template` and fill in webhook URLs and feed URLs. `state.json` is also gitignored and is created next to the config on first run.
+Config is read from `$XDG_CONFIG_HOME/claudinho/config.yaml` (default `~/.config/claudinho/config.yaml`) and state is written to `$XDG_DATA_HOME/claudinho/state.json` (default `~/.local/share/claudinho/state.json`). Both paths can be overridden: pass a positional config path and/or `--state`. Copy `config.yaml.template` and fill in webhook URLs and feed URLs.
 
 ## Architecture
 
