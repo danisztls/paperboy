@@ -84,12 +84,14 @@ tasks:
     filter:                          # optional — LLM pre-post filter for all feeds in this task
       prompt: "Only keep items about AI and machine learning"
       model: gpt-4o-mini             # optional, falls back to global llm.model then default
-    og_images: false                 # optional — skip OG image fetching (default: true)
+    og_images: false                 # optional — skip OG image fetching entirely (default: true)
+    og_image_download: true          # optional — download+optimize OG images as WebP attachments (default: false, uses URL directly)
     feeds:
       - name: "Display name"         # optional, used as embed footer
         url: "https://example.com/feed.xml"
         discord:
           color: "#FF0000"           # optional — overrides task discord.color for this feed
+        og_image_download: true      # optional — overrides task/global og_image_download for this feed
 
   # LLM task — detected by presence of 'prompt' key
   - name: world-news
