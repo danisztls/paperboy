@@ -1,0 +1,29 @@
+{
+  "_version": 2,
+  "_last_run": "2026-05-04T12:00:00+00:00",
+  "_last_clean": "2026-05-04T12:00:00+00:00",
+  "tasks": {
+    "my-feeds": {
+      "feeds": {
+        "https://example.com/feed.xml": {
+          "items": [
+            {
+              "url": "https://example.com/article",
+              "title": "Example Article",
+              "access_date": "2026-05-04T12:00:00+00:00",
+              "filter_pass": true,
+              "filter_reason": "Relevant to AI and machine learning"
+            }
+          ],
+          "last_run": "2026-05-04T12:00:00+00:00"
+        }
+      },
+      "memory": {
+        "2026-05-04T12:00:00+00:00": "Recurring themes this week include AI and machine learning."
+      }
+    },
+    "world-news": {
+      "last_run": "2026-05-04T12:00:00+00:00"
+    }
+  }
+}
