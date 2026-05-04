@@ -233,6 +233,7 @@ async def post_to_discord(
     entry: FeedEntry,
     session: aiohttp.ClientSession,
     fetch_og: bool = True,
+    download_og: bool = False,
     color: int | None = None,
 ) -> None:
     embed = {
@@ -250,7 +251,7 @@ async def post_to_discord(
         og_image_url = await _fetch_og_image(entry.link, session)
 
     image_bytes: bytes | None = None
-    if og_image_url:
+    if og_image_url and download_og:
         raw = await _fetch_image(og_image_url, session)
         if raw is not None:
             image_bytes = _optimize_image(raw)

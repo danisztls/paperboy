@@ -141,6 +141,7 @@ async def _process_task(
     llm_model: str | None = None,
     global_color: int | None = None,
     global_language: str = "EN-US",
+    global_og_download: bool = False,
 ) -> dict:
     """Run one RSS task (filtered or not), return {task_name: task_state}."""
     task_name = task_cfg["name"]
@@ -161,6 +162,7 @@ async def _process_task(
 
     # Fetch all feeds concurrently
     fetch_og = task_cfg.get("og_images", True)
+    task_og_download = task_cfg.get("og_image_download")
 
     async def _fetch_one(fc: dict):
         url = fc["url"]
@@ -266,17 +268,23 @@ async def _process_task(
             final_items = current_items
 
         if task_type != "digest":
+            feed_og_download = fc.get("og_image_download")
+            download_og = (
+                feed_og_download if feed_og_download is not None
+                else task_og_download if task_og_download is not None
+                else global_og_download
+            )
             feed_color = _parse_color(fc.get("discord", {}).get("color")) or task_color or global_color
-            all_entries_to_post.extend((feed_color, e) for e in entries_to_post)
+            all_entries_to_post.extend((feed_color, download_og, e) for e in entries_to_post)
 
         new_feeds_state[url] = {"items": final_items, "last_run": now_iso}
 
     if task_type != "digest" and all_entries_to_post:
         _far_future = datetime.max.replace(tzinfo=timezone.utc)
         all_entries_to_post.sort(key=lambda c_e: c_e[1].published or _far_future)
-        for i, (entry_color, entry) in enumerate(all_entries_to_post):
+        for i, (entry_color, entry_download_og, entry) in enumerate(all_entries_to_post):
             try:
-                await post_to_discord(webhook, entry, session, fetch_og=fetch_og, color=entry_color)
+                await post_to_discord(webhook, entry, session, fetch_og=fetch_og, download_og=entry_download_og, color=entry_color)
                 log.info("[%s] Posted: %s", entry.feed_title, entry.title[:80])
                 if i < len(all_entries_to_post) - 1:
                     await asyncio.sleep(2)
@@ -346,6 +354,7 @@ async def _async_main(args: argparse.Namespace) -> None:
     global_language = llm_cfg.get("language") or "EN-US"
     discord_cfg = config.get("discord", {})
     global_color = _parse_color(discord_cfg.get("color"))
+    global_og_download: bool = config.get("og_image_download", False)
 
     tasks = config.get("tasks", [])
     if not tasks:
@@ -426,7 +435,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     ):
                         log.info("[%s] Skipping — no feeds are due", task_name)
                         continue
-                    feed_tasks.append(_process_task(task_cfg, state, session, llm_model=llm_model, global_color=global_color, global_language=global_language))
+                    feed_tasks.append(_process_task(task_cfg, state, session, llm_model=llm_model, global_color=global_color, global_language=global_language, global_og_download=global_og_download))
 
             results = await asyncio.gather(*feed_tasks, return_exceptions=True)
             for result in results:
