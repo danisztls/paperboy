@@ -394,7 +394,8 @@ async def _async_main(args: argparse.Namespace) -> None:
         else (_xdg_state_path() if xdg_defaults else config_path.parent / "state.json")
     )
 
-    lock_path = state_path.with_suffix(".lock")
+    _xdg_runtime = Path(os.environ.get("XDG_RUNTIME_DIR", f"/tmp/claudinho-{os.getuid()}"))
+    lock_path = _xdg_runtime / "claudinho.lock"
     if lock_path.exists():
         raw = lock_path.read_text().strip()
         try:
