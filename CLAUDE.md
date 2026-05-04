@@ -47,7 +47,7 @@ State is keyed by task name at the top level, matching the config structure:
   "my-feeds": {
     "feeds": {
       "https://feed1.url": {
-        "items": [{"url": "...", "title": "...", "pass_filter": true, "filter_reason": "..."}, ...],
+        "items": [{"url": "...", "title": "...", "filter_pass": true, "filter_reason": "..."}, ...],
         "last_run": "<iso8601 utc>"
       }
     },
@@ -62,7 +62,7 @@ State is keyed by task name at the top level, matching the config structure:
 }
 ```
 
-- `feeds` sub-dict holds per-URL state. Each successful fetch replaces `items` with the feed's current entries (bounded by feed length). `pass_filter` and `filter_reason` are only present on items from tasks with a `filter` key.
+- `feeds` sub-dict holds per-URL state. Each successful fetch replaces `items` with the feed's current entries (bounded by feed length). `filter_pass` and `filter_reason` are only present on items from tasks with a `filter` key.
 - `memory` is only present on filtered RSS tasks. Each run appends one entry keyed by ISO8601 timestamp; history is capped at 20 entries (oldest evicted). The LLM receives the last 5 entries as context on each run.
 - LLM tasks store only `last_run` directly under the task name key.
 - `load_state` returns the parsed JSON as-is; absent or `null` `last_run` always means "due now".
