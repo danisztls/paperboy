@@ -90,11 +90,11 @@ def _task_type(task_cfg: dict) -> str:
 
 
 def _recent_passed_items(task_state: dict, n: int = 7) -> list[dict]:
-    """Return the n most recent pass_filter=True items across all feeds in this task's state."""
+    """Return the n most recent filter_pass=True items across all feeds in this task's state."""
     passed = []
     for feed_state in task_state.get("feeds", {}).values():
         for item in feed_state.get("items", []):
-            if item.get("pass_filter") is True:
+            if item.get("filter_pass") is True:
                 passed.append({"title": item.get("title", ""), "url": item.get("url", "")})
     return passed[:n]
 
@@ -251,12 +251,12 @@ async def _process_task(
                     e = new_entry_by_link[item_url]
                     if filter_result is not None and e.id in filter_result:
                         v = filter_result[e.id]
-                        final_items.append({**item, "pass_filter": v["pass"], "filter_reason": v["reason"]})
+                        final_items.append({**item, "filter_pass": v["pass"], "filter_reason": v["reason"]})
                     else:
-                        final_items.append({**item, "pass_filter": True})
-                elif "pass_filter" in prev_by_url.get(item_url, {}):
+                        final_items.append({**item, "filter_pass": True})
+                elif "filter_pass" in prev_by_url.get(item_url, {}):
                     prev = prev_by_url[item_url]
-                    extra = {"pass_filter": prev["pass_filter"]}
+                    extra = {"filter_pass": prev["filter_pass"]}
                     if "filter_reason" in prev:
                         extra["filter_reason"] = prev["filter_reason"]
                     final_items.append({**item, **extra})
