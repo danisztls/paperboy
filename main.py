@@ -130,7 +130,7 @@ async def _process_llm_task(
     except Exception:
         log.error("Skipping LLM task %s due to post failure", name)
         return {}
-    return {name: {"last_run": datetime.now(timezone.utc).isoformat()}}
+    return {name: {"last_run": datetime.now(timezone.utc).replace(microsecond=0).isoformat()}}
 
 
 async def _process_task(
@@ -223,7 +223,7 @@ async def _process_task(
 
     task_type = _task_type(task_cfg)
     all_entries_to_post: list = []
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     new_feeds_state = dict(feeds_state)  # carry forward state for feeds not fetched this run
 
     for fc in feed_cfgs:
@@ -276,6 +276,15 @@ async def _process_task(
             )
             feed_color = _parse_color(fc.get("discord", {}).get("color")) or task_color or global_color
             all_entries_to_post.extend((feed_color, download_og, e) for e in entries_to_post)
+
+        prev_access = {
+            item["url"]: item["access_date"]
+            for item in feeds_state.get(url, {}).get("items", [])
+            if "access_date" in item
+        }
+        for item in final_items:
+            if "access_date" not in item:
+                item["access_date"] = prev_access.get(item["url"], now_iso)
 
         new_feeds_state[url] = {"items": final_items, "last_run": now_iso}
 
@@ -367,7 +376,7 @@ async def _async_main(args: argparse.Namespace) -> None:
         headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"},
     ) as session:
         if args.regenerate_state:
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
             for task_cfg in tasks:
                 if _task_type(task_cfg) != "feeds":
                     continue
@@ -386,6 +395,13 @@ async def _async_main(args: argparse.Namespace) -> None:
                         log.warning("Failed to fetch %s, skipping", url)
                         continue
                     current_items, _ = result
+                    prev_access = {
+                        item["url"]: item["access_date"]
+                        for item in feeds_state.get(url, {}).get("items", [])
+                        if "access_date" in item
+                    }
+                    for item in current_items:
+                        item["access_date"] = prev_access.get(item["url"], now)
                     feeds_state[url] = {"items": current_items, "last_run": now}
                     log.info("Regenerated %d items for %s", len(current_items), url)
             save_state(state_path, state)
