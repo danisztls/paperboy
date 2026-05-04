@@ -84,7 +84,7 @@ tasks:
     filter:                          # optional — LLM pre-post filter for all feeds in this task
       prompt: "Only keep items about AI and machine learning"
       model: gpt-4o-mini             # optional, falls back to global llm.model then default
-    og_images: false                 # optional — skip OG image fetching entirely (default: true)
+    og_image: false                 # optional — skip OG image fetching entirely (default: true)
     og_image_download: true          # optional — download+optimize OG images as WebP attachments (default: false, uses URL directly)
     feeds:
       - name: "Display name"         # optional, used as embed footer

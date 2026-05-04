@@ -161,7 +161,7 @@ async def _process_task(
         memory_history = [raw_history[k] for k in keys] or None
 
     # Fetch all feeds concurrently
-    fetch_og = task_cfg.get("og_images", True)
+    fetch_og = task_cfg.get("og_image", True)
     task_og_download = task_cfg.get("og_image_download")
 
     async def _fetch_one(fc: dict):
