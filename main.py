@@ -290,7 +290,7 @@ async def _process_task(
 
     if task_type != "digest" and all_entries_to_post:
         _far_future = datetime.max.replace(tzinfo=timezone.utc)
-        all_entries_to_post.sort(key=lambda c_e: c_e[1].published or _far_future)
+        all_entries_to_post.sort(key=lambda c_e: c_e[2].published or _far_future)
         for i, (entry_color, entry_download_og, entry) in enumerate(all_entries_to_post):
             try:
                 await post_to_discord(webhook, entry, session, fetch_og=fetch_og, download_og=entry_download_og, color=entry_color)
