@@ -17,6 +17,7 @@ import aiohttp
 from feed import get_new_entries
 from discord import post_to_discord, post_text_to_discord, post_digest_to_discord
 from llm import run_llm_task, filter_entries
+from migrate import CURRENT_VERSION, needs_migration, migrate
 
 DEFAULT_PERIOD = timedelta(hours=1)
 _CITE_STRIP_RE = re.compile(r'\s*\[\d+\]')
@@ -79,6 +80,10 @@ def load_state(path: pathlib.Path) -> dict:
 
 def save_state(path: pathlib.Path, state: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.replace(path.parent / (path.name + ".old"))
+    state["_last_run"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    state["_version"] = CURRENT_VERSION
     path.write_text(json.dumps(state, indent=2, ensure_ascii=False))
 
 
@@ -150,7 +155,7 @@ async def _process_task(
     task_color = _parse_color(task_discord.get("color"))
     filter_cfg = task_cfg.get("filter") or None
     feed_cfgs = [fc for fc in task_cfg.get("feeds", []) if fc.get("url")]
-    task_state = state.get(task_name, {})
+    task_state = state.get("tasks", {}).get(task_name, {})
     feeds_state = task_state.get("feeds", {})
 
     # Memory history (filtered tasks only)
@@ -336,7 +341,7 @@ def _auto_clean(state: dict) -> None:
 
     cutoff = now - timedelta(days=30)
     removed = expired = 0
-    for task_name, task_state in state.items():
+    for task_name, task_state in state.get("tasks", {}).items():
         if not isinstance(task_state, dict):
             continue
         for feed_url, feed_state in task_state.get("feeds", {}).items():
@@ -414,6 +419,15 @@ async def _async_main(args: argparse.Namespace) -> None:
 
     _auto_clean(state)
 
+    if args.migrate:
+        if not needs_migration(state):
+            log.info("State is already at version %d, nothing to do.", CURRENT_VERSION)
+            return
+        state = migrate(state)
+        save_state(state_path, state)
+        log.info("Migrated to v%d, saved to %s", CURRENT_VERSION, state_path)
+        return
+
     if args.clean:
         save_state(state_path, state)
         log.info("Done. State saved to %s", state_path)
@@ -446,7 +460,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                 if not task_name:
                     log.warning("Skipping feeds task with no name")
                     continue
-                task_state = state.setdefault(task_name, {})
+                task_state = state.setdefault("tasks", {}).setdefault(task_name, {})
                 feeds_state = task_state.setdefault("feeds", {})
                 for feed_cfg in task_cfg.get("feeds", []):
                     url = feed_cfg.get("url")
@@ -491,7 +505,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     if not name:
                         log.warning("Skipping LLM task with no name")
                         continue
-                    task_state = state.get(name, {"last_run": None})
+                    task_state = state.get("tasks", {}).get(name, {"last_run": None})
                     if not force_task and not _is_due(task_state, period, now):
                         last = datetime.fromisoformat(task_state["last_run"])
                         mins = int((now - last).total_seconds() // 60)
@@ -506,7 +520,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     if not task_name:
                         log.warning("Skipping feeds task with no name")
                         continue
-                    feeds_state = state.get(task_name, {}).get("feeds", {})
+                    feeds_state = state.get("tasks", {}).get(task_name, {}).get("feeds", {})
                     feed_urls = [f["url"] for f in task_cfg.get("feeds", []) if f.get("url")]
                     if not force_task and not any(
                         _is_due(feeds_state.get(u, {"last_run": None}), period, now) for u in feed_urls
@@ -520,7 +534,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                 if isinstance(result, Exception):
                     log.error("Feed task failed: %s", result)
                 elif result:
-                    state.update(result)
+                    state.setdefault("tasks", {}).update(result)
             save_state(state_path, state)
             log.info("Done. State saved to %s", state_path)
 
@@ -558,6 +572,11 @@ def main():
         "--clean",
         action="store_true",
         help="Remove state entries older than 30 days or missing access_date, then exit",
+    )
+    mode.add_argument(
+        "--migrate",
+        action="store_true",
+        help="Migrate state.json to the current schema version, then exit",
     )
     args = parser.parse_args()
 
