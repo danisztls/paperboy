@@ -323,6 +323,60 @@ async def _process_task(
     return {task_name: new_task_state}
 
 
+def _auto_clean(state: dict) -> None:
+    """Remove malformed or expired entries from state. Runs automatically when due."""
+    now = datetime.now(timezone.utc)
+    last_clean = state.get("_last_clean")
+    if last_clean:
+        try:
+            if (now - datetime.fromisoformat(last_clean)).days < 30:
+                return
+        except ValueError:
+            pass
+
+    cutoff = now - timedelta(days=30)
+    removed = expired = 0
+    for task_name, task_state in state.items():
+        if not isinstance(task_state, dict):
+            continue
+        for feed_url, feed_state in task_state.get("feeds", {}).items():
+            label = f"[{task_name}] {feed_url[:60]}"
+            kept = []
+            for item in feed_state.get("items", []):
+                url = item.get("url", "")
+
+                if not url:
+                    log.warning("%s: removing item with no url", label)
+                    removed += 1
+                    continue
+
+                if "title" not in item:
+                    log.warning("%s: removing item %s: missing title", label, url[:80])
+                    removed += 1
+                    continue
+
+                ad = item.get("access_date")
+                if not ad:
+                    log.warning("%s: removing item %s: missing access_date", label, url[:80])
+                    removed += 1
+                    continue
+                try:
+                    dt = datetime.fromisoformat(ad)
+                except ValueError:
+                    log.warning("%s: removing item %s: invalid access_date %r", label, url[:80], ad)
+                    removed += 1
+                    continue
+                if dt < cutoff:
+                    expired += 1
+                    continue
+
+                kept.append(item)
+            feed_state["items"] = kept
+
+    state["_last_clean"] = now.replace(microsecond=0).isoformat()
+    log.info("Auto-clean: removed %d malformed + %d expired entries", removed, expired)
+
+
 async def _async_main(args: argparse.Namespace) -> None:
     xdg_defaults = args.config is None
     config_path = (
@@ -357,6 +411,14 @@ async def _async_main(args: argparse.Namespace) -> None:
 
     config = load_config(config_path)
     state = load_state(state_path)
+
+    _auto_clean(state)
+
+    if args.clean:
+        save_state(state_path, state)
+        log.info("Done. State saved to %s", state_path)
+        return
+
     llm_cfg = config.get("llm", {})
     instructions = llm_cfg.get("instructions") or None
     llm_model = llm_cfg.get("model") or None
@@ -491,6 +553,11 @@ def main():
         "--regenerate-state",
         action="store_true",
         help="Fetch all feeds and write current items to state without posting to Discord",
+    )
+    mode.add_argument(
+        "--clean",
+        action="store_true",
+        help="Remove state entries older than 30 days or missing access_date, then exit",
     )
     args = parser.parse_args()
 
