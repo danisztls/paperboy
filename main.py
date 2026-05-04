@@ -157,8 +157,8 @@ async def _process_task(
     raw_history = task_state.get("memory", {}) if filter_cfg else {}
     memory_history: list[str] | None = None
     if raw_history:
-        keys = sorted(raw_history)[-5:]
-        memory_history = [raw_history[k] for k in keys] or None
+        keys = sorted(raw_history)[-7:]
+        memory_history = [(k, raw_history[k]) for k in keys] or None
 
     # Fetch all feeds concurrently
     fetch_og = task_cfg.get("og_image", True)
