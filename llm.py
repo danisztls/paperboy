@@ -15,7 +15,7 @@ async def filter_entries(
     *,
     language: str = "EN-US",
     context_items: list[dict] | None = None,
-    memory_history: list[str] | None = None,
+    memory_history: list[tuple[str, str]] | None = None,
 ) -> tuple[dict[str, dict], str | None] | None:
     """Filter feed entries through LLM and optionally update memory.
 
@@ -30,9 +30,10 @@ async def filter_entries(
     criteria = filter_cfg.get("prompt", "")
     memory_block = ""
     if memory_history:
+        entries = "\n---\n".join(f"[{ts[:16]}] {text}" for ts, text in memory_history)
         memory_block = (
             "Previous memory log (oldest → newest — your evolving view of this information space):\n"
-            + "\n---\n".join(memory_history)
+            + entries
             + "\n\n"
         )
     context_block = ""
