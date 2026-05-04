@@ -19,7 +19,7 @@ tasks:
     #   prompt: "Only keep items about AI and machine learning"
     #   model: gpt-4o-mini       # optional; falls back to global llm.model, then default model
     #   language: "PT-BR"        # optional; language for memory briefings; falls back to llm.language then EN-US
-    # og_images: false           # optional — set to false to skip OG image fetching entirely (default: true)
+    # og_image: false           # optional — set to false to skip OG image fetching entirely (default: true)
     # og_image_download: true    # optional — download+optimize OG images as WebP; overrides global (default: false)
     feeds:
       - name:
