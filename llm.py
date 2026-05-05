@@ -65,11 +65,19 @@ async def filter_entries(
     total = sum(len(g.get("items", [])) for g in items)
     log.info("Filtering %d entries with LLM (model=%s)", total, model)
     log.debug("Filter criteria: %s", criteria)
+    web_search = filter_cfg.get("web_search")
+    tools: list[dict] = []
+    if web_search:
+        tool: dict = {"type": "web_search_preview"}
+        if isinstance(web_search, dict):
+            tool.update(web_search)
+        tools = [tool]
     try:
         response = await client.responses.create(
             model=model,
             instructions=instructions,
             input=payload,
+            **({"tools": tools} if tools else {}),
         )
         text = (response.output_text or "").strip()
         if text.startswith("```"):
@@ -99,9 +107,13 @@ async def run_llm_task(task_cfg: dict, instructions: str | None = None, global_m
     """Call OpenAI Responses API with web_search_preview. Returns response text or None on failure."""
     client = AsyncOpenAI()
     name = task_cfg.get("name")
-    model = task_cfg.get("model") or global_model or DEFAULT_MODEL
-    prompt = task_cfg["prompt"]
-    tool = {"type": "web_search_preview", **task_cfg.get("tools", {})}
+    llm_cfg = task_cfg.get("llm", {})
+    model = llm_cfg.get("model") or global_model or DEFAULT_MODEL
+    prompt = llm_cfg["prompt"]
+    web_search = llm_cfg.get("web_search", {})
+    tool: dict = {"type": "web_search_preview"}
+    if isinstance(web_search, dict):
+        tool.update(web_search)
     log.info("[%s] Calling LLM (model=%s): %s", name, model, prompt[:120])
     log.debug("[%s] Full prompt: %s", name, prompt)
     if instructions:

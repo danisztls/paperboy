@@ -29,13 +29,13 @@ Config is read from `$XDG_CONFIG_HOME/claudinho/config.yaml` (default `~/.config
 Four modules, no package, flat layout:
 
 - `main.py` — CLI entry point and orchestration. Loads config + state, opens a single shared `aiohttp.ClientSession`, then dispatches to one of three modes:
-  - **Normal mode**: filters tasks by `_is_due` (period with 60s grace), then gathers all due tasks in parallel. Task type is inferred from config shape: `feeds` key → RSS task, `prompt` key → LLM task.
+  - **Normal mode**: filters tasks by `_is_due` (period with 60s grace), then gathers all due tasks in parallel. Task type is inferred from config shape: `feeds` key → RSS task, `llm` key without `feeds` → LLM task.
   - `feed.py` — feed fetching, dedup, and entry enrichment. `get_new_entries(feed_cfg, seen, session)` returns `(current_ids, new_entries)` on success or `None` on parse failure (so the caller can skip the `last_run` update and retry on the next cron tick):
   - `current_ids` is *all* IDs currently in the feed (used to overwrite state — old IDs that fall off the feed are forgotten, which keeps `state.json` from growing forever).
   - Entry ID is `entry.link`; entries with no link are skipped.
   - Unseen entries are reversed into chronological order, then OG images are fetched concurrently (only the first 32KB of each article page is read — the parser stops at `<body>`).
   - Descriptions are HTML-stripped, truncated to 300 chars, and Markdown-escaped (`_MD_ESCAPE_RE` covers `*_` `~` `` ` `` and leading `>`/`#` per line) so feed content can't accidentally format Discord messages.
-- `llm.py` — two functions: `run_llm_task(task_cfg)` calls the OpenAI Responses API with the `web_search_preview` built-in tool and posts the plain-text response; `filter_entries(items, filter_cfg, global_model, *, context_items, memory_history)` is a pure classification call (no web search) that returns `(results_dict, memory_text) | None`. `results_dict` maps str(id) → `{"pass": bool, "reason": str}`; `memory_text` is the new memory log entry or `None`. Requires `$OPENAI_API_KEY` in env. Default model: `gpt-5.4-mini`.
+- `llm.py` — two functions: `run_llm_task(task_cfg)` calls the OpenAI Responses API with `web_search_preview` and posts the plain-text response; `filter_entries(items, filter_cfg, global_model, *, context_items, memory_history)` classifies feed items and returns `(results_dict, memory_text) | None`. `results_dict` maps str(id) → `{"pass": bool, "reason": str}`; `memory_text` is the new memory log entry or `None`. `filter_entries` also supports optional `web_search` (from `filter_cfg["web_search"]`) for context/fact-checking. Requires `$OPENAI_API_KEY` in env. Default model: `gpt-5.4-mini`.
 - `discord.py` — two posting functions: `post_to_discord` (embed from a `FeedEntry`) and `post_text_to_discord` (plain `content` message, truncated to 2000 chars). Both raise on HTTP ≥400.
 
 ### State shape
@@ -62,7 +62,7 @@ State is keyed by task name at the top level, matching the config structure:
 }
 ```
 
-- `feeds` sub-dict holds per-URL state. Each successful fetch replaces `items` with the feed's current entries (bounded by feed length). `filter_pass` and `filter_reason` are only present on items from tasks with a `filter` key.
+- `feeds` sub-dict holds per-URL state. Each successful fetch replaces `items` with the feed's current entries (bounded by feed length). `filter_pass` and `filter_reason` are only present on items from tasks with an `llm` key.
 - `memory` is only present on filtered RSS tasks. Each run appends one entry keyed by ISO8601 timestamp; history is capped at 20 entries (oldest evicted). The LLM receives the last 5 entries as context on each run.
 - LLM tasks store only `last_run` directly under the task name key.
 - `load_state` returns the parsed JSON as-is; absent or `null` `last_run` always means "due now".
@@ -81,10 +81,12 @@ tasks:
       webhook: "https://discord.com/api/webhooks/.../..."
       color: "#5865F2"               # optional — overrides global discord.color for this task
     period: "30m"                    # optional, number (hours) or string with m/h/d suffix. Default: 1h
-    filter:                          # optional — LLM pre-post filter for all feeds in this task
+    llm:                             # optional — LLM pre-post filter for all feeds in this task
       prompt: "Only keep items about AI and machine learning"
       model: gpt-4o-mini             # optional, falls back to global llm.model then default
-    og_image: false                 # optional — skip OG image fetching entirely (default: true)
+      language: "PT-BR"              # optional, falls back to global llm.language then EN-US
+      web_search: true               # optional — let LLM search for context/fact-check (default: false)
+    og_image: false                  # optional — skip OG image fetching entirely (default: true)
     og_image_download: true          # optional — download+optimize OG images as WebP attachments (default: false, uses URL directly)
     feeds:
       - name: "Display name"         # optional, used as embed footer
@@ -93,19 +95,22 @@ tasks:
           color: "#FF0000"           # optional — overrides task discord.color for this feed
         og_image_download: true      # optional — overrides task/global og_image_download for this feed
 
-  # LLM task — detected by presence of 'prompt' key
+  # LLM task — detected by absence of 'feeds' key and presence of 'llm' key
+  # Skipped with a warning if llm.web_search is not set (no input source)
   - name: world-news
     discord:
       webhook: "https://discord.com/api/webhooks/.../..."
     period: "24h"
-    prompt: "Today news. World. Filter for signal > noise."
-    model: gpt-5.4-mini              # optional, default: gpt-5.4-mini
-    tools:                           # optional, merged into web_search_preview config
-      allowed_domains:
-        - reuters.com
-      user_location:
-        type: approximate
-        country: US
+    llm:
+      prompt: "Today news. World. Filter for signal > noise."
+      model: gpt-5.4-mini            # optional, default: gpt-5.4-mini
+      web_search: true               # required; dict = options merged into web_search_preview config
+      # web_search:
+      #   allowed_domains:
+      #     - reuters.com
+      #   user_location:
+      #     type: approximate
+      #     country: US
 ```
 
 Embed color resolution order: feed `discord.color` → task `discord.color` → global `discord.color` → hardcoded default (`#5865F2`). Values are CSS-style hex strings (e.g. `"#FF0000"`). Color only applies to RSS embed tasks; LLM and digest tasks post plain text. Multiple `tasks` entries let different groups go to different webhooks. `period` is per-task only; accepts a plain number (hours, for backward compat) or a string with suffix `m` (minutes), `h` (hours), or `d` (days) — e.g. `"30m"`, `"6h"`, `"1d"`. The threshold check subtracts `PERIOD_GRACE` (60s) so a 1h cron firing every ~60min doesn't skip every other tick due to clock jitter. Both YAML and JSON are accepted (dispatched by file suffix in `load_config`).

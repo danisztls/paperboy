@@ -91,7 +91,7 @@ def _task_type(task_cfg: dict) -> str:
     explicit = task_cfg.get("type")
     if explicit:
         return explicit
-    return "llm" if "prompt" in task_cfg else "feeds"
+    return "llm" if "feeds" not in task_cfg and "llm" in task_cfg else "feeds"
 
 
 def _recent_passed_items(task_state: dict, n: int = 7) -> list[dict]:
@@ -153,7 +153,7 @@ async def _process_task(
     task_discord = task_cfg.get("discord", {})
     webhook = task_discord.get("webhook")
     task_color = _parse_color(task_discord.get("color"))
-    filter_cfg = task_cfg.get("filter") or None
+    filter_cfg = task_cfg.get("llm") or None
     feed_cfgs = [fc for fc in task_cfg.get("feeds", []) if fc.get("url")]
     task_state = state.get("tasks", {}).get(task_name, {})
     feeds_state = task_state.get("feeds", {})
@@ -505,6 +505,9 @@ async def _async_main(args: argparse.Namespace) -> None:
                     name = task_cfg.get("name")
                     if not name:
                         log.warning("Skipping LLM task with no name")
+                        continue
+                    if not task_cfg.get("llm", {}).get("web_search"):
+                        log.warning("[%s] Skipping LLM task: llm.web_search not configured (no input source)", name)
                         continue
                     task_state = state.get("tasks", {}).get(name, {"last_run": None})
                     if not force_task and not _is_due(task_state, period, now):
