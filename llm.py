@@ -27,6 +27,7 @@ async def filter_entries(
     """
     client = AsyncOpenAI()
     model = filter_cfg.get("model") or global_model or DEFAULT_MODEL
+    explain = filter_cfg.get("explain", False)
     criteria = filter_cfg.get("prompt", "")
     memory_block = ""
     if memory_history:
@@ -57,9 +58,15 @@ async def filter_entries(
         "After each sentence, append the story's numeric id in square brackets immediately after the sentence, e.g. 'Trump signed deal [3].' — use the same integer id values from the input items."
         "This becomes context for the next run, so it must contain enough factual specificity to recognise a follow-up story as a continuation."
         'Return a JSON object with exactly two keys: "items" (array where each element is '
-        '{"id": <integer>, "pass": true/false, "reason": "<one short sentence>"} — include ALL input '
+        '{"id": <integer>, "pass": true/false, "reason": "<explanation>"} — include ALL input '
         'items, both passing and failing) and "memory" (string, the new memory log entry). '
-        "Return ONLY a valid JSON object, no other text."
+        + (
+            'For items that PASS: write the "reason" as a clear 2-3 sentence plain-language explanation of what the story is about and why it is relevant — explain it as if to someone with no prior context on the topic (ELI5 style). '
+            'For items that FAIL: one short sentence saying why it was excluded. '
+            if explain else
+            'The "reason" field is one short sentence. '
+        )
+        + "Return ONLY a valid JSON object, no other text."
     )
     payload = json.dumps(items, ensure_ascii=False)
     total = sum(len(g.get("items", [])) for g in items)
