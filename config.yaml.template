@@ -15,10 +15,11 @@ tasks:
       # color: "#5865F2"   # optional — overrides global discord.color for this task
     # Minimum hours between processing this task's feeds. Default: 1.
     period: 1
-    # filter:                    # optional — LLM pre-post filter applied to all feeds in this task
+    # llm:                       # optional — LLM pre-post filter applied to all feeds in this task
     #   prompt: "Only keep items about AI and machine learning"
     #   model: gpt-4o-mini       # optional; falls back to global llm.model, then default model
     #   language: "PT-BR"        # optional; language for memory briefings; falls back to llm.language then EN-US
+    #   web_search: true         # optional — let the LLM search for context / fact-check items (default: false)
     # og_image: false           # optional — set to false to skip OG image fetching entirely (default: true)
     # og_image_download: true    # optional — download+optimize OG images as WebP; overrides global (default: false)
     feeds:
@@ -40,23 +41,25 @@ tasks:
   #   discord:
   #     webhook: "https://discordapp.com/api/webhooks/<NUMBER>/<TOKEN>"
   #   period: 24
-  #   filter:
+  #   llm:
   #     prompt: "Only keep items about AI and machine learning"
   #   feeds:
   #     - name:
   #       url:
 
-  # LLM task: calls OpenAI Responses API with web_search and posts the plain-text
-  # response to Discord. Detected by presence of 'prompt' key.
+  # LLM task: calls OpenAI Responses API and posts the plain-text response to Discord.
+  # Detected by absence of 'feeds' key and presence of 'llm' key. Requires llm.web_search.
   - name: world-news
     discord:
       webhook: "https://discordapp.com/api/webhooks/<NUMBER>/<TOKEN>"
     period: 24
-    prompt: "Today news. World. Filter for signal > noise."
-    model: gpt-5.4-mini  # optional, default: gpt-5.4-mini
-    # tools:             # optional — shallow-merged into the web_search_preview tool config
-    #   allowed_domains:
-    #     - reuters.com
-    #   user_location:
-    #     type: approximate
-    #     country: US
+    llm:
+      prompt: "Today news. World. Filter for signal > noise."
+      model: gpt-5.4-mini  # optional, default: gpt-5.4-mini
+      web_search: true      # required for LLM tasks; dict = options for web_search_preview
+      # web_search:
+      #   allowed_domains:
+      #     - reuters.com
+      #   user_location:
+      #     type: approximate
+      #     country: US
