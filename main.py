@@ -10,6 +10,7 @@ import sys
 import pathlib
 import logging
 import argparse
+from dataclasses import replace as dc_replace
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
@@ -154,6 +155,7 @@ async def _process_task(
     webhook = task_discord.get("webhook")
     task_color = _parse_color(task_discord.get("color"))
     filter_cfg = task_cfg.get("llm") or None
+    explain = bool(filter_cfg.get("explain")) if filter_cfg else False
     feed_cfgs = [fc for fc in task_cfg.get("feeds", []) if fc.get("url")]
     task_state = state.get("tasks", {}).get(task_name, {})
     feeds_state = task_state.get("feeds", {})
@@ -280,7 +282,12 @@ async def _process_task(
                 else global_og_download
             )
             feed_color = _parse_color(fc.get("discord", {}).get("color")) or task_color or global_color
-            all_entries_to_post.extend((feed_color, download_og, e) for e in entries_to_post)
+            for e in entries_to_post:
+                if explain and filter_result is not None:
+                    v = filter_result.get(e.id)
+                    if v and v.get("reason"):
+                        e = dc_replace(e, description=v["reason"])
+                all_entries_to_post.append((feed_color, download_og, e))
 
         prev_access = {
             item["url"]: item["access_date"]
