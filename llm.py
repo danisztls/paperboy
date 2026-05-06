@@ -46,27 +46,36 @@ async def filter_entries(
             + "\n\n"
         )
     instructions = (
-        f"{criteria}\n\n"
+        f"## Filter criteria\n{criteria}\n\n"
         f"{memory_block}"
         f"{context_block}"
-        "You will receive a JSON array of source groups, each with a 'source' name and an 'items' array "
-        "(each item has an integer 'id', a 'title', and an optional 'description')."
-        "For each item across all groups, decide if it matches the criteria above."
-        f"Also write a 'memory': a factual news briefing in {language} covering every item that passed the filter — include all of them, one line per story; do not omit any passing item. "
-        "Each story must be on its own line (separated by newlines). Do NOT use semicolons to chain unrelated stories together on the same line. Do NOT mix two different topics in one sentence. "
-        "Lead with the most significant development; group loosely by theme if helpful (geopolitics, economy, Brazil); no meta-commentary about the filtering process; no mentions of what was discarded; no hedging phrases."
-        "After each sentence, append the story's numeric id in square brackets immediately after the sentence, e.g. 'Trump signed deal [3].' — use the same integer id values from the input items."
-        "This becomes context for the next run, so it must contain enough factual specificity to recognise a follow-up story as a continuation."
-        'Return a JSON object with exactly two keys: "items" (array where each element is '
-        '{"id": <integer>, "pass": true/false, "reason": "<explanation>"} — include ALL input '
-        'items, both passing and failing) and "memory" (string, the new memory log entry). '
+        "## Input\n\n"
+        "You will receive a JSON array of source groups, each with a 'source' name and an 'items' array. "
+        "Each item has an integer 'id', a 'title', and an optional 'description'.\n\n"
+        "## Steps\n\n"
+        "**Step 1 — Filter.** For each item, decide whether it matches the filter criteria above. "
+        "Mark it pass: true if it does, pass: false otherwise.\n\n"
+        "**Step 2 — Deduplicate.**\n"
+        "- Fail any item that covers a story already present in the context above without adding a significant new development. Use reason: 'already covered'.\n"
+        "- Within this batch, if multiple items cover the same event, keep only the one(s) that contribute the most relevant information; fail the rest with reason: 'duplicate within batch'.\n\n"
+        f"**Step 3 — Write memory.** Write a factual news briefing in {language} covering every item that passed the filter. Rules:\n"
+        "- Include ALL passing items — do not omit any.\n"
+        "- One story per line (newline-separated). Never use semicolons to chain unrelated stories on the same line. Never mix two different topics in one sentence.\n"
+        "- Group by theme; within each group order by significance. Lead with the single most significant development overall.\n"
+        "- After each sentence, append the story's numeric id in square brackets immediately after the period, e.g. 'Trump signed deal [3].' — use the integer id values from the input.\n"
+        "- No meta-commentary about the filtering process, no mention of what was discarded, no hedging phrases.\n"
+        "- Include enough factual specificity that a follow-up story can be recognised as a continuation on the next run.\n\n"
+        "## Output format\n\n"
+        'Return a JSON object with exactly two top-level keys:\n'
+        '- "items": array where each element is {"id": <integer>, "pass": true/false, "reason": "<explanation>"}. Include ALL input items, both passing and failing.\n'
+        '- "memory": string — the news briefing from Step 3.\n\n'
         + (
-            'For items that PASS: write the "reason" as a clear 2-3 sentence plain-language explanation of what the story is about and why it is relevant — explain it as if to someone with no prior context on the topic (ELI5 style). '
-            'For items that FAIL: one short sentence saying why it was excluded. '
+            'Reason format — PASSING items: 2–3 sentence plain-language explanation of what the story is about and why it is relevant, written for someone with no prior context (ELI5 style).\n'
+            'Reason format — FAILING items: one short sentence explaining why it was excluded.\n'
             if explain else
-            'The "reason" field is one short sentence. '
+            'Keep the "reason" field to one short sentence for all items.\n'
         )
-        + "Return ONLY a valid JSON object, no other text."
+        + "\nReturn ONLY a valid JSON object, no other text."
     )
     payload = json.dumps(items, ensure_ascii=False)
     total = sum(len(g.get("items", [])) for g in items)
