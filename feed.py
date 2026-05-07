@@ -78,7 +78,9 @@ def _apply_regex(cfg, text: str) -> str:
         if cfg.get("remove_phrases_with_urls"):
             return _remove_phrases_with_urls(text)
         if needle := cfg.get("remove_phrases_containing"):
-            text = re.sub(r'[^.!?\n]*?' + re.escape(needle) + r'[^.!?\n]*', '', text)
+            needles = needle if isinstance(needle, list) else [needle]
+            for n in needles:
+                text = re.sub(r'[^.!?\n]*?' + re.escape(n) + r'[^.!?\n]*', '', text)
             return re.sub(r'[ \t]+', ' ', text).strip()
         if key := cfg.get("extract"):
             m = re.search(key, text)
