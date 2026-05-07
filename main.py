@@ -254,11 +254,33 @@ def main():
         action="store_true",
         help="Migrate state.json to the current schema version, then exit",
     )
+    mode.add_argument(
+        "--validate",
+        action="store_true",
+        help="Validate the config file and exit",
+    )
     args = parser.parse_args()
 
     if args.verbose:
         for name in ("__main__", "feed", "llm", "discord"):
             logging.getLogger(name).setLevel(logging.DEBUG)
+
+    if args.validate:
+        config_path = (
+            _xdg_config_path() if args.config is None
+            else pathlib.Path(args.config).expanduser().resolve()
+        )
+        if not config_path.exists():
+            log.error("Config file not found: %s", config_path)
+            sys.exit(1)
+        config = load_config(config_path)
+        errors = validate_config(config)
+        if errors:
+            for err in errors:
+                log.error("Config error: %s", err)
+            sys.exit(1)
+        log.info("Config is valid: %s", config_path)
+        return
 
     asyncio.run(_async_main(args))
 
