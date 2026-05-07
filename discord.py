@@ -170,7 +170,7 @@ def _apply_cite_map(text: str, cite_map: dict[int, tuple[str, str | None]]) -> s
         if item is None:
             return m.group(0)
         name, url = item
-        return f"[{name}](<{url}>)" if url else f"[{name}]"
+        return f"[[{name}]](<{url}>)" if url else f"[{name}]"
 
     return _CITE_RE.sub(replace, text)
 
