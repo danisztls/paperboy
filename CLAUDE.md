@@ -15,7 +15,7 @@ Intended to be run on a cron, not as a long-lived process.
 The project uses `uv` (see `uv.lock`, `.python-version` pinning Python 3.14).
 
 - Run: `uv run claudinho` (reads `~/.config/claudinho/config.yaml`, writes state to `~/.local/share/claudinho/state.json`)
-- Run with explicit config: `uv run claudinho config.yaml` (state defaults to `<config_dir>/state.json`)
+- Run with explicit config: `uv run claudinho --config config.yaml` (state defaults to `<config_dir>/state.json`)
 - Run one task by name, ignoring period/last_run: `uv run claudinho --task "world-news"`
 - Verbose output: add `--verbose` to any invocation
 - Sync deps: `uv sync`

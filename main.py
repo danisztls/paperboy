@@ -219,8 +219,7 @@ async def _async_main(args: argparse.Namespace) -> None:
 def main():
     parser = argparse.ArgumentParser(description="RSS to Discord webhook notifier")
     parser.add_argument(
-        "config",
-        nargs="?",
+        "--config", "-c",
         default=None,
         help="Path to config file (YAML or JSON). Default: $XDG_CONFIG_HOME/claudinho/config.yaml",
     )
