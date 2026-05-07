@@ -78,16 +78,18 @@ def _apply_regex(cfg, text: str) -> str:
         if cfg.get("clear"):
             return ""
         if cfg.get("remove_phrases_with_urls"):
-            return _remove_phrases_with_urls(text)
+            text = _remove_phrases_with_urls(text)
         if needle := cfg.get("remove_phrases_containing"):
             needles = needle if isinstance(needle, list) else [needle]
             for n in needles:
                 text = re.sub(r'[^.!?\n]*?' + re.escape(n) + r'[^.!?\n]*', '', text)
-            return re.sub(r'[ \t]+', ' ', text).strip()
+            text = re.sub(r'[ \t]+', ' ', text).strip()
         if key := cfg.get("extract"):
             m = re.search(key, text)
-            return (m.group(1) if m.lastindex else m.group(0)) if m else text
-        return re.sub(cfg["replace"], cfg.get("with", ""), text)
+            text = (m.group(1) if m.lastindex else m.group(0)) if m else text
+        if "replace" in cfg:
+            text = re.sub(cfg["replace"], cfg.get("with", ""), text)
+        return text
 
 
 def _best_srcset_url(srcset: str) -> str | None:
