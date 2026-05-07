@@ -86,6 +86,11 @@ tasks:
       model: gpt-4o-mini             # optional, falls back to global llm.model then default
       language: "PT-BR"              # optional, falls back to global llm.language then EN-US
       web_search: true               # optional — let LLM search for context/fact-check (default: false)
+    filter:                          # optional — heuristic cleanup for all feeds; per-feed filter overrides field-by-field
+      title:
+        extract: "\\d+ de \\w+"
+      description:
+        - remove_phrases_with_urls: true
     og_image: false                  # optional — skip OG image fetching entirely (default: true)
     og_image_download: true          # optional — download+optimize OG images as WebP attachments (default: false, uses URL directly)
     feeds:
@@ -94,6 +99,14 @@ tasks:
         discord:
           color: "#FF0000"           # optional — overrides task discord.color for this feed
         og_image_download: true      # optional — overrides task/global og_image_download for this feed
+        filter:                      # optional — heuristic cleanup applied per entry, before LLM filter
+          title:
+            extract: "pattern"       # extract match (group 1 if captured, else group 0)
+          description:               # dict or list applied after HTML-stripping, before truncation/markdown-escaping
+            - remove_phrases_with_urls: true      # drop phrases containing https:// URLs
+            - remove_phrases_containing: "Subscribe"  # drop the clause containing this string
+            - replace: "(?s)\nCheck out my merch.*"  # re.sub(replace, with, text)
+              with: ""
 
   # LLM task — detected by absence of 'feeds' key and presence of 'llm' key
   # Skipped with a warning if llm.web_search is not set (no input source)

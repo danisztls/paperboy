@@ -21,6 +21,11 @@ tasks:
     #   model: gpt-4o-mini       # optional; falls back to global llm.model, then default model
     #   language: "PT-BR"        # optional; language for memory briefings; falls back to llm.language then EN-US
     #   web_search: true         # optional — let the LLM search for context / fact-check items (default: false)
+    # filter:                    # optional — heuristic cleanup applied to all feeds in this task
+    #   title:
+    #     extract: "\\d+ de \\w+"
+    #   description:
+    #     - remove_phrases_with_urls: true
     # og_image: false           # optional — set to false to skip OG image fetching entirely (default: true)
     # og_image_download: true    # optional — download+optimize OG images as WebP; overrides global (default: false)
     feeds:
@@ -29,10 +34,14 @@ tasks:
         # discord:
         #   color: "#FF0000" # optional — overrides task discord.color for this feed
         # og_image_download: true  # optional — overrides task/global og_image_download for this feed
-        # regex_title: "\\d+ de \\w+"           # string → extract: title becomes the match (group 1 if captured, else group 0)
-        # regex_description:                  # dict → substitute: re.sub(pattern, sub, description)
-        #   pattern: "Imagem do dia\\s*"
-        #   sub: ""
+        # filter:
+        #   title:
+        #     extract: "\\d+ de \\w+"          # extract match (group 1 if captured, else group 0)
+        #   description:                       # dict or list applied after HTML-stripping
+        #     - remove_phrases_with_urls: true # drop phrases containing https:// URLs
+        #     - remove_phrases_containing: "Subscribe"  # drop the clause containing this string
+        #     - replace: "Imagem do dia\\s*"   # re.sub(replace, with, description)
+        #       with: ""
 
   # Digest task: like RSS task but all passing entries from all feeds are collected
   # and posted as a single embed (splits into multiple if the 4096-char limit is hit).

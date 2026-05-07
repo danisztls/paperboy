@@ -51,6 +51,7 @@ def _strip_html(text: str) -> str:
 
 _MD_ESCAPE_RE = re.compile(r'(?m)(^[>#]+|[*_`~])')
 _CDATA_RE = re.compile(r'<!\[CDATA\[(.*?)\]\]>', re.DOTALL)
+_PHRASE_URL_RE = re.compile(r'[^.!?\n]*?https?://\S+')
 
 
 def _entry_title(entry) -> str:
@@ -63,11 +64,26 @@ def _escape_markdown(text: str) -> str:
     return _MD_ESCAPE_RE.sub(r'\\\1', text)
 
 
+def _remove_phrases_with_urls(text: str) -> str:
+    text = _PHRASE_URL_RE.sub("", text)
+    return re.sub(r"[ \t]+", " ", text).strip()
+
+
 def _apply_regex(cfg, text: str) -> str:
+    if isinstance(cfg, list):
+        for item in cfg:
+            text = _apply_regex(item, text)
+        return text
     if isinstance(cfg, dict):
-        return re.sub(cfg["pattern"], cfg.get("sub", ""), text)
-    m = re.search(cfg, text)
-    return (m.group(1) if m.lastindex else m.group(0)) if m else text
+        if cfg.get("remove_phrases_with_urls"):
+            return _remove_phrases_with_urls(text)
+        if needle := cfg.get("remove_phrases_containing"):
+            text = re.sub(r'[^.!?\n]*?' + re.escape(needle) + r'[^.!?\n]*', '', text)
+            return re.sub(r'[ \t]+', ' ', text).strip()
+        if key := cfg.get("extract"):
+            m = re.search(key, text)
+            return (m.group(1) if m.lastindex else m.group(0)) if m else text
+        return re.sub(cfg["replace"], cfg.get("with", ""), text)
 
 
 def _best_srcset_url(srcset: str) -> str | None:
@@ -176,8 +192,9 @@ async def get_new_entries(
 
     ordered = list(reversed(unseen_raw))
 
-    regex_title = feed_cfg.get("regex_title")
-    regex_description = feed_cfg.get("regex_description")
+    feed_filter = feed_cfg.get("filter", {})
+    filter_title = feed_filter.get("title")
+    filter_description = feed_filter.get("description")
 
     new_entries = []
     for eid, entry in ordered:
@@ -189,8 +206,8 @@ async def get_new_entries(
             or ""
         )
         description = _strip_html(raw_desc).strip()
-        if regex_description:
-            description = _apply_regex(regex_description, description)
+        if filter_description:
+            description = _apply_regex(filter_description, description)
         if len(description) > DESCRIPTION_MAX:
             description = description[:DESCRIPTION_MAX].rstrip() + "…"
         description = _escape_markdown(description)
@@ -207,8 +224,8 @@ async def get_new_entries(
             image=_entry_image(entry),
             published=published,
         )
-        if regex_title:
-            fe.title = _apply_regex(regex_title, fe.title)
+        if filter_title:
+            fe.title = _apply_regex(filter_title, fe.title)
         new_entries.append(fe)
 
     return current_items, new_entries
