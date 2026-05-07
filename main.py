@@ -182,11 +182,13 @@ async def _process_task(
     # Fetch all feeds concurrently
     fetch_og = task_cfg.get("og_image", True)
     task_og_download = task_cfg.get("og_image_download")
+    task_filter = task_cfg.get("filter", {})
 
     async def _fetch_one(fc: dict):
         url = fc["url"]
         seen = {item["url"] for item in feeds_state.get(url, {}).get("items", [])}
-        return fc, await get_new_entries(fc, seen, session)
+        effective_fc = {**fc, "filter": {**task_filter, **fc.get("filter", {})}} if task_filter else fc
+        return fc, await get_new_entries(effective_fc, seen, session)
 
     fetch_results = await asyncio.gather(*[_fetch_one(fc) for fc in feed_cfgs], return_exceptions=True)
 
