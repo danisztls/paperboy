@@ -212,21 +212,25 @@ async def _process_task(
     cite_map: dict[int, tuple[str, str | None]] = {gid: (entry.feed_title, entry.link) for gid, entry in id_map.items()}
     if filter_cfg and payload_groups:
         language = filter_cfg.get("language") or global_language
-        llm_return = await filter_entries(
-            payload_groups, filter_cfg, llm_model,
+        _filter_kwargs = dict(
             language=language,
             context_items=_recent_passed_items(task_state),
             memory_history=memory_history,
         )
+        llm_return = await filter_entries(payload_groups, filter_cfg, llm_model, **_filter_kwargs)
         if llm_return is None:
-            log.warning("[%s] Filter failed, posting all entries", task_name)
-        else:
-            raw_results, memory_text = llm_return
-            filter_result = {
-                id_map[int(gid)].id: v
-                for gid, v in raw_results.items()
-                if gid.isdigit() and int(gid) in id_map
-            }
+            log.warning("[%s] Filter failed, retrying in 10s", task_name)
+            await asyncio.sleep(10)
+            llm_return = await filter_entries(payload_groups, filter_cfg, llm_model, **_filter_kwargs)
+        if llm_return is None:
+            log.error("[%s] Filter failed twice — skipping task", task_name)
+            return {}
+        raw_results, memory_text = llm_return
+        filter_result = {
+            id_map[int(gid)].id: v
+            for gid, v in raw_results.items()
+            if gid.isdigit() and int(gid) in id_map
+        }
 
     task_type = _task_type(task_cfg)
     all_entries_to_post: list = []
