@@ -105,6 +105,7 @@ tasks:
           title:
             extract: "pattern"       # extract match (group 1 if captured, else group 0)
           description:               # dict or list applied after HTML-stripping, before truncation/markdown-escaping
+            - clear: true                             # discard the description entirely (no embed description field)
             - remove_phrases_with_urls: true      # drop phrases containing https:// URLs
             - remove_phrases_containing: "Subscribe"  # drop the clause containing this string
             - replace: "(?s)\nCheck out my merch.*"  # re.sub(replace, with, text)

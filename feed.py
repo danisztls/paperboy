@@ -75,6 +75,8 @@ def _apply_regex(cfg, text: str) -> str:
             text = _apply_regex(item, text)
         return text
     if isinstance(cfg, dict):
+        if cfg.get("clear"):
+            return ""
         if cfg.get("remove_phrases_with_urls"):
             return _remove_phrases_with_urls(text)
         if needle := cfg.get("remove_phrases_containing"):
