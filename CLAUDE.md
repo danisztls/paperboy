@@ -74,6 +74,8 @@ State is keyed by task name at the top level, matching the config structure:
 
 See `config.yaml.template` — it is the canonical reference for all supported keys and their defaults.
 
+Any change that adds, removes, or renames a config key must also update the corresponding `_VALID_*_KEYS` set in `config.py` so validation stays in sync.
+
 ## Conventions worth preserving
 
 - Errors posting one entry must not kill the run — `main.py` catches per-entry, the gather uses `return_exceptions=True` per-feed.
