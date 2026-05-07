@@ -119,6 +119,10 @@ class _ImgSrcParser(html.parser.HTMLParser):
 
 
 def _entry_image(entry) -> str | None:
+    for thumb in entry.get("media_thumbnail", []):
+        url = thumb.get("url", "")
+        if url:
+            return url
     for enc in entry.get("enclosures", []):
         if enc.get("type", "").startswith("image/"):
             url = enc.get("url", "")
