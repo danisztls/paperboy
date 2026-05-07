@@ -161,33 +161,23 @@ async def post_text_to_discord(
 
 _CONTENT_LIMIT = 2000
 _CITE_RE = re.compile(r'\[(\d+)\]')
-_CONSEC_CITE_RE = re.compile(r'\)\s*(\[\[)')
 _SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?])\s+')
 
 
-def _apply_cite_map(text: str, cite_map: dict[int, str]) -> str:
-    seen: list[int] = []
-    seen_set: set[int] = set()
-    for m in _CITE_RE.finditer(text):
-        n = int(m.group(1))
-        if n not in seen_set:
-            seen.append(n)
-            seen_set.add(n)
-    renumber = {orig: idx + 1 for idx, orig in enumerate(seen)}
-
+def _apply_cite_map(text: str, cite_map: dict[int, tuple[str, str | None]]) -> str:
     def replace(m: re.Match) -> str:
-        n = int(m.group(1))
-        new_n = renumber.get(n, n)
-        url = cite_map.get(n)
-        return f"[[{new_n}]](<{url}>)" if url else f"[{new_n}]"
+        item = cite_map.get(int(m.group(1)))
+        if item is None:
+            return m.group(0)
+        name, url = item
+        return f"[{name}](<{url}>)" if url else f"[{name}]"
 
-    text = _CITE_RE.sub(replace, text)
-    return _CONSEC_CITE_RE.sub(r') \1', text)
+    return _CITE_RE.sub(replace, text)
 
 
 def _build_digest_chunks(
     memory_text: str | None,
-    cite_map: dict[int, str] | None = None,
+    cite_map: dict[int, tuple[str, str | None]] | None = None,
 ) -> list[str]:
     if not memory_text:
         return []
@@ -217,7 +207,7 @@ async def post_digest_to_discord(
     session: aiohttp.ClientSession,
     *,
     memory_text: str | None = None,
-    cite_map: dict[int, str] | None = None,
+    cite_map: dict[int, tuple[str, str | None]] | None = None,
 ) -> None:
     if not memory_text:
         return
