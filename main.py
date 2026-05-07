@@ -64,6 +64,16 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+_LOG_FORMAT = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+
+
+def _setup_log_file(logs_dir: pathlib.Path, ts: datetime) -> None:
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    stamp = ts.strftime("%Y-%m-%dT%H-%M-%S")
+    handler = logging.FileHandler(logs_dir / f"{stamp}.log", encoding="utf-8")
+    handler.setFormatter(_LOG_FORMAT)
+    logging.getLogger().addHandler(handler)
+
 
 def load_config(path: pathlib.Path) -> dict:
     text = path.read_text()
@@ -422,6 +432,9 @@ async def _async_main(args: argparse.Namespace) -> None:
     if not config_path.exists():
         log.error("Config file not found: %s", config_path)
         sys.exit(1)
+
+    _run_ts = datetime.now(timezone.utc).replace(microsecond=0)
+    _setup_log_file(state_path.parent / "logs", _run_ts)
 
     log.info("Config: %s", config_path)
     log.info("State:  %s", state_path)
