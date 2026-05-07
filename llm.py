@@ -16,6 +16,7 @@ async def filter_entries(
     language: str = "EN-US",
     context_items: list[dict] | None = None,
     memory_history: list[tuple[str, str]] | None = None,
+    api_key: str | None = None,
 ) -> tuple[dict[str, dict], str | None] | None:
     """Filter feed entries through LLM and optionally update memory.
 
@@ -25,7 +26,7 @@ async def filter_entries(
     memory_history: chronological list of prior memory entries (oldest first) passed as
     context so the model can build continuity across runs.
     """
-    client = AsyncOpenAI()
+    client = AsyncOpenAI(api_key=api_key) if api_key else AsyncOpenAI()
     model = filter_cfg.get("model") or global_model or DEFAULT_MODEL
     explain = filter_cfg.get("explain", False)
     criteria = filter_cfg.get("prompt", "")
@@ -119,9 +120,9 @@ async def filter_entries(
         return None
 
 
-async def run_llm_task(task_cfg: dict, instructions: str | None = None, global_model: str | None = None) -> str | None:
+async def run_llm_task(task_cfg: dict, instructions: str | None = None, global_model: str | None = None, *, api_key: str | None = None) -> str | None:
     """Call OpenAI Responses API with web_search_preview. Returns response text or None on failure."""
-    client = AsyncOpenAI()
+    client = AsyncOpenAI(api_key=api_key) if api_key else AsyncOpenAI()
     name = task_cfg.get("name")
     llm_cfg = task_cfg.get("llm", {})
     model = llm_cfg.get("model") or global_model or DEFAULT_MODEL
