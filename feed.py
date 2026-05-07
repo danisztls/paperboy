@@ -214,6 +214,7 @@ async def get_new_entries(
         description = _strip_html(raw_desc).strip()
         if filter_description:
             description = _apply_regex(filter_description, description)
+        description = "\n".join(line for line in description.splitlines() if line.strip())
         if len(description) > DESCRIPTION_MAX:
             description = description[:DESCRIPTION_MAX].rstrip() + "…"
         description = _escape_markdown(description)
