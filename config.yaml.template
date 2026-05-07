@@ -39,7 +39,8 @@ tasks:
         #     extract: "\\d+ de \\w+"          # extract match (group 1 if captured, else group 0)
         #   description:                       # dict or list applied after HTML-stripping
         #     - remove_phrases_with_urls: true # drop phrases containing https:// URLs
-        #     - remove_phrases_containing: "Subscribe"  # drop the clause containing this string
+        #     - remove_phrases_containing: "Subscribe"           # drop the clause containing this string
+        #     - remove_phrases_containing: ["Subscribe", "Merch"] # also accepts an inline array
         #     - replace: "Imagem do dia\\s*"   # re.sub(replace, with, description)
         #       with: ""
 
