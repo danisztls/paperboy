@@ -209,7 +209,7 @@ async def _process_task(
     # One LLM filter call for the whole task
     filter_result: dict | None = None
     memory_text: str | None = None
-    cite_map: dict[int, str] = {gid: entry.link for gid, entry in id_map.items() if entry.link}
+    cite_map: dict[int, tuple[str, str | None]] = {gid: (entry.feed_title, entry.link) for gid, entry in id_map.items()}
     if filter_cfg and payload_groups:
         language = filter_cfg.get("language") or global_language
         llm_return = await filter_entries(
