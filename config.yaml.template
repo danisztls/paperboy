@@ -4,6 +4,7 @@ discord:                    # optional — global defaults for Discord posting
 
 llm:                        # optional — global defaults for all LLM tasks
   model: gpt-5.4-mini      # default model (per-task 'model' overrides this)
+  # api_key: "sk-..."         # optional — overrides $OPENAI_API_KEY env var
   # instructions: "..."      # system prompt
   # language: "EN-US"        # language for filter memory briefings (default: EN-US; per-filter 'language' overrides)
 

@@ -133,10 +133,11 @@ async def _process_llm_task(
     *,
     instructions: str | None = None,
     llm_model: str | None = None,
+    llm_api_key: str | None = None,
 ) -> dict:
     """Run one LLM task, post the response, return {name: task_state} on success or {} on failure."""
     name = task_cfg["name"]
-    text = await run_llm_task(task_cfg, instructions, llm_model)
+    text = await run_llm_task(task_cfg, instructions, llm_model, api_key=llm_api_key)
     if text is None:
         return {}
     webhook = task_cfg.get("discord", {}).get("webhook")
@@ -155,6 +156,7 @@ async def _process_task(
     session: aiohttp.ClientSession,
     *,
     llm_model: str | None = None,
+    llm_api_key: str | None = None,
     global_color: int | None = None,
     global_language: str = "EN-US",
     global_og_download: bool = False,
@@ -226,6 +228,7 @@ async def _process_task(
             language=language,
             context_items=_recent_passed_items(task_state),
             memory_history=memory_history,
+            api_key=llm_api_key,
         )
         llm_return = await filter_entries(payload_groups, filter_cfg, llm_model, **_filter_kwargs)
         if llm_return is None:
@@ -461,6 +464,7 @@ async def _async_main(args: argparse.Namespace) -> None:
     llm_cfg = config.get("llm", {})
     instructions = llm_cfg.get("instructions") or None
     llm_model = llm_cfg.get("model") or None
+    llm_api_key = llm_cfg.get("api_key") or None
     global_language = llm_cfg.get("language") or "EN-US"
     discord_cfg = config.get("discord", {})
     global_color = _parse_color(discord_cfg.get("color"))
@@ -542,7 +546,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                             name, mins, period,
                         )
                         continue
-                    feed_tasks.append(_process_llm_task(task_cfg, state, session, instructions=instructions, llm_model=llm_model))
+                    feed_tasks.append(_process_llm_task(task_cfg, state, session, instructions=instructions, llm_model=llm_model, llm_api_key=llm_api_key))
                 else:
                     task_name = task_cfg.get("name")
                     if not task_name:
@@ -555,7 +559,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     ):
                         log.info("[%s] Skipping — no feeds are due", task_name)
                         continue
-                    feed_tasks.append(_process_task(task_cfg, state, session, llm_model=llm_model, global_color=global_color, global_language=global_language, global_og_download=global_og_download))
+                    feed_tasks.append(_process_task(task_cfg, state, session, llm_model=llm_model, llm_api_key=llm_api_key, global_color=global_color, global_language=global_language, global_og_download=global_og_download))
 
             results = await asyncio.gather(*feed_tasks, return_exceptions=True)
             for result in results:
