@@ -26,11 +26,13 @@ Config is read from `$XDG_CONFIG_HOME/claudinho/config.yaml` (default `~/.config
 
 ## Architecture
 
-Four modules, no package, flat layout:
+Seven modules, no package, flat layout:
 
-- `main.py` — CLI entry point and orchestration. Loads config + state, opens a single shared `aiohttp.ClientSession`, then dispatches to one of three modes:
-  - **Normal mode**: filters tasks by `_is_due` (period with 60s grace), then gathers all due tasks in parallel. Task type is inferred from config shape: `feeds` key → RSS task, `llm` key without `feeds` → LLM task.
-  - `feed.py` — feed fetching, dedup, and entry enrichment. `get_new_entries(feed_cfg, seen, session)` returns `(current_ids, new_entries)` on success or `None` on parse failure (so the caller can skip the `last_run` update and retry on the next cron tick):
+- `main.py` — CLI entry point and orchestration. Resolves config/state paths, manages a lock file, loads config + state, opens a single shared `aiohttp.ClientSession`, then dispatches to one of three modes: normal (run due tasks in parallel), `--regenerate-state`, or `--clean`/`--migrate`.
+- `config.py` — config loading and validation. `load_config(path)` reads YAML or JSON. `validate_config(config)` returns a list of error strings. Also houses `_parse_color`, `_parse_period`, and `_task_type` (infers task type from config shape: `feeds` key → RSS/digest task, `llm` key without `feeds` → LLM task).
+- `state.py` — state I/O and maintenance. `load_state`, `save_state` (writes `.old` backup), and `_auto_clean` (removes malformed/expired entries, runs every 30 days).
+- `tasks.py` — task execution. `_process_task` handles RSS tasks (with optional LLM filter); `_process_llm_task` handles standalone LLM tasks. `_is_due` checks period with 60s grace. **Normal mode**: filters tasks by `_is_due`, then gathers all due tasks in parallel.
+- `feed.py` — feed fetching, dedup, and entry enrichment. `get_new_entries(feed_cfg, seen, session)` returns `(current_ids, new_entries)` on success or `None` on parse failure (so the caller can skip the `last_run` update and retry on the next cron tick):
   - `current_ids` is *all* IDs currently in the feed (used to overwrite state — old IDs that fall off the feed are forgotten, which keeps `state.json` from growing forever).
   - Entry ID is `entry.link`; entries with no link are skipped.
   - Unseen entries are reversed into chronological order, then OG images are fetched concurrently (only the first 32KB of each article page is read — the parser stops at `<body>`).
