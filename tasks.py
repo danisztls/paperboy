@@ -18,6 +18,23 @@ _CITE_STRIP_RE = re.compile(r'\s*\[\d+\]')
 log = logging.getLogger(__name__)
 
 
+def _merge_filter(task_f: dict, feed_f: dict) -> dict:
+    """Combine task-level and feed-level filter dicts, concatenating rules for shared keys."""
+    merged = {}
+    for key in set(task_f) | set(feed_f):
+        task_val = task_f.get(key)
+        feed_val = feed_f.get(key)
+        if task_val is None:
+            merged[key] = feed_val
+        elif feed_val is None:
+            merged[key] = task_val
+        else:
+            task_list = task_val if isinstance(task_val, list) else [task_val]
+            feed_list = feed_val if isinstance(feed_val, list) else [feed_val]
+            merged[key] = task_list + feed_list
+    return merged
+
+
 def _recent_passed_items(task_state: dict, n: int = 7) -> list[dict]:
     """Return the n most recent filter_pass=True items across all feeds in this task's state."""
     passed = []
@@ -100,7 +117,9 @@ async def _process_task(
     async def _fetch_one(fc: dict):
         url = fc["url"]
         seen = {item["url"] for item in feeds_state.get(url, {}).get("items", [])}
-        effective_fc = {**fc, "filter": {**task_filter, **fc.get("filter", {})}} if task_filter else fc
+        feed_filter = fc.get("filter", {})
+        merged_filter = _merge_filter(task_filter, feed_filter) if (task_filter or feed_filter) else {}
+        effective_fc = {**fc, "filter": merged_filter} if merged_filter else fc
         return fc, await get_new_entries(effective_fc, seen, session)
 
     fetch_results = await asyncio.gather(*[_fetch_one(fc) for fc in feed_cfgs], return_exceptions=True)
