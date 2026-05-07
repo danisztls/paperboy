@@ -72,64 +72,7 @@ State is keyed by task name at the top level, matching the config structure:
 
 ### Config shape
 
-```yaml
-discord:                             # optional — global defaults for Discord posting
-  color: "#5865F2"                   # default embed color for RSS embeds
-
-tasks:
-  # RSS task — detected by presence of 'feeds' key
-  - name: my-feeds                   # required for all tasks
-    discord:
-      webhook: "https://discord.com/api/webhooks/.../..."
-      color: "#5865F2"               # optional — overrides global discord.color for this task
-    period: "30m"                    # optional, number (hours) or string with m/h/d suffix. Default: 1h
-    llm:                             # optional — LLM pre-post filter for all feeds in this task
-      prompt: "Only keep items about AI and machine learning"
-      model: gpt-4o-mini             # optional, falls back to global llm.model then default
-      language: "PT-BR"              # optional, falls back to global llm.language then EN-US
-      web_search: true               # optional — let LLM search for context/fact-check (default: false)
-    filter:                          # optional — heuristic cleanup for all feeds; per-feed filter overrides field-by-field
-      title:
-        extract: "\\d+ de \\w+"
-      description:
-        - remove_phrases_with_urls: true
-    og_image: false                  # optional — skip OG image fetching entirely (default: true)
-    og_image_download: true          # optional — download+optimize OG images as WebP attachments (default: false, uses URL directly)
-    feeds:
-      - name: "Display name"         # optional, used as embed footer
-        url: "https://example.com/feed.xml"
-        discord:
-          color: "#FF0000"           # optional — overrides task discord.color for this feed
-        og_image_download: true      # optional — overrides task/global og_image_download for this feed
-        filter:                      # optional — heuristic cleanup applied per entry, before LLM filter
-          title:
-            extract: "pattern"       # extract match (group 1 if captured, else group 0)
-          description:               # dict or list applied after HTML-stripping, before truncation/markdown-escaping
-            - clear: true                             # discard the description entirely (no embed description field)
-            - remove_phrases_with_urls: true      # drop phrases containing https:// URLs
-            - remove_phrases_containing: "Subscribe"  # drop the clause containing this string
-            - replace: "(?s)\nCheck out my merch.*"  # re.sub(replace, with, text)
-              with: ""
-
-  # LLM task — detected by absence of 'feeds' key and presence of 'llm' key
-  # Skipped with a warning if llm.web_search is not set (no input source)
-  - name: world-news
-    discord:
-      webhook: "https://discord.com/api/webhooks/.../..."
-    period: "24h"
-    llm:
-      prompt: "Today news. World. Filter for signal > noise."
-      model: gpt-5.4-mini            # optional, default: gpt-5.4-mini
-      web_search: true               # required; dict = options merged into web_search_preview config
-      # web_search:
-      #   allowed_domains:
-      #     - reuters.com
-      #   user_location:
-      #     type: approximate
-      #     country: US
-```
-
-Embed color resolution order: feed `discord.color` → task `discord.color` → global `discord.color` → hardcoded default (`#5865F2`). Values are CSS-style hex strings (e.g. `"#FF0000"`). Color only applies to RSS embed tasks; LLM and digest tasks post plain text. Multiple `tasks` entries let different groups go to different webhooks. `period` is per-task only; accepts a plain number (hours, for backward compat) or a string with suffix `m` (minutes), `h` (hours), or `d` (days) — e.g. `"30m"`, `"6h"`, `"1d"`. The threshold check subtracts `PERIOD_GRACE` (60s) so a 1h cron firing every ~60min doesn't skip every other tick due to clock jitter. Both YAML and JSON are accepted (dispatched by file suffix in `load_config`).
+See `config.yaml.template` — it is the canonical reference for all supported keys and their defaults.
 
 ## Conventions worth preserving
 

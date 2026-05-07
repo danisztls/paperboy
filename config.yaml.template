@@ -14,7 +14,8 @@ tasks:
     discord:
       webhook: "https://discordapp.com/api/webhooks/<NUMBER>/<TOKEN>"
       # color: "#5865F2"   # optional — overrides global discord.color for this task
-    # Minimum hours between processing this task's feeds. Default: 1.
+    # Minimum time between processing this task's feeds. Default: 1 (hour).
+    # Accepts a plain number (hours) or a string with suffix: "30m", "6h", "1d".
     period: 1
     # llm:                       # optional — LLM pre-post filter applied to all feeds in this task
     #   prompt: "Only keep items about AI and machine learning"
@@ -38,6 +39,7 @@ tasks:
         #   title:
         #     extract: "\\d+ de \\w+"          # extract match (group 1 if captured, else group 0)
         #   description:                       # dict or list applied after HTML-stripping
+        #     - clear: true                    # discard the description entirely (no embed description field)
         #     - remove_phrases_with_urls: true # drop phrases containing https:// URLs
         #     - remove_phrases_containing: "Subscribe"           # drop the clause containing this string
         #     - remove_phrases_containing: ["Subscribe", "Merch"] # also accepts an inline array
