@@ -52,7 +52,7 @@ _VALID_TASK_LLM_KEYS = {"prompt", "model", "language", "web_search", "explain"}
 _VALID_FEED_KEYS = {"name", "url", "discord", "og_image_download", "filter"}
 _VALID_FEED_DISCORD_KEYS = {"color"}
 _VALID_FILTER_KEYS = {"title", "description"}
-_VALID_FILTER_OPS = {"remove_phrases_with_urls", "remove_phrases_containing", "extract", "replace", "with"}
+_VALID_FILTER_OPS = {"remove_phrases_with_urls", "remove_phrases_containing", "extract", "replace", "with", "clear"}
 _VALID_TASK_TYPES = {"feeds", "llm", "digest"}
 
 
@@ -84,7 +84,7 @@ def _validate_filter_op(op, path: str) -> list[str]:
     if not isinstance(op, dict):
         return [f"{path}: expected a dict, got {type(op).__name__}"]
     errors = _check_keys(op, _VALID_FILTER_OPS, path)
-    if not any(k in op for k in ("remove_phrases_with_urls", "remove_phrases_containing", "extract", "replace")):
+    if not any(k in op for k in ("remove_phrases_with_urls", "remove_phrases_containing", "extract", "replace", "clear")):
         errors.append(f"{path}: no recognized operation key")
     for regex_key in ("extract", "replace"):
         if regex_key in op and isinstance(op[regex_key], str):
