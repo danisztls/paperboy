@@ -14,7 +14,6 @@ async def filter_entries(
     global_model: str | None = None,
     *,
     language: str = "EN-US",
-    context_items: list[dict] | None = None,
     memory_history: list[tuple[str, str]] | None = None,
     api_key: str | None = None,
 ) -> tuple[dict[str, dict], str | None] | None:
@@ -38,18 +37,9 @@ async def filter_entries(
             + entries
             + "\n\n"
         )
-    context_block = ""
-    if context_items:
-        context_block = (
-            "Recently posted items (most recent first) — use these to detect repetition "
-            "and recognise ongoing events:\n"
-            + json.dumps(context_items, ensure_ascii=False)
-            + "\n\n"
-        )
     instructions = (
         f"## Filter criteria\n{criteria}\n\n"
         f"{memory_block}"
-        f"{context_block}"
         "## Input\n\n"
         "You will receive a JSON array of source groups, each with a 'source' name and an 'items' array. "
         "Each item has an integer 'id', a 'title', and an optional 'description'.\n\n"
@@ -57,7 +47,7 @@ async def filter_entries(
         "**Step 1 — Filter.** For each item, decide whether it matches the filter criteria above. "
         "Mark it pass: true if it does, pass: false otherwise.\n\n"
         "**Step 2 — Deduplicate.**\n"
-        "- Fail any item that covers a story already present in the context above without adding a significant new development. Use reason: 'already covered'.\n"
+        "- Fail any item that covers a story already present in the memory log above without adding a significant new development. Use reason: 'already covered'.\n"
         "- Within this batch, if multiple items cover the same event, keep only the one(s) that contribute the most relevant information; fail the rest with reason: 'duplicate within batch'.\n\n"
         f"**Step 3 — Write memory.** Write a factual news briefing in {language} covering every item that passed the filter. Rules:\n"
         "- Include ALL passing items — do not omit any.\n"

@@ -35,15 +35,6 @@ def _merge_filter(task_f: dict, feed_f: dict) -> dict:
     return merged
 
 
-def _recent_passed_items(task_state: dict, n: int = 7) -> list[dict]:
-    """Return the n most recent filter_pass=True items across all feeds in this task's state."""
-    passed = []
-    for feed_state in task_state.get("feeds", {}).values():
-        for item in feed_state.get("items", []):
-            if item.get("filter_pass") is True:
-                passed.append({"title": item.get("title", ""), "url": item.get("url", "")})
-    return passed[:n]
-
 
 def _is_due(feed_state: dict, period: timedelta, now: datetime) -> bool:
     last_run = feed_state.get("last_run")
@@ -160,7 +151,6 @@ async def _process_task(
         language = filter_cfg.get("language") or global_language
         _filter_kwargs = dict(
             language=language,
-            context_items=_recent_passed_items(task_state),
             memory_history=memory_history,
             api_key=llm_api_key,
         )
