@@ -90,8 +90,6 @@ async def _async_main(args: argparse.Namespace) -> None:
         sys.exit(1)
     state = load_state(state_path)
 
-    _auto_clean(state)
-
     if args.migrate:
         if not needs_migration(state):
             log.info("State is already at version %d, nothing to do.", CURRENT_VERSION)
@@ -102,6 +100,7 @@ async def _async_main(args: argparse.Namespace) -> None:
         return
 
     if args.clean:
+        _auto_clean(state)
         save_state(state_path, state)
         log.info("Done. State saved to %s", state_path)
         return
