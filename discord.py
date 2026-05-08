@@ -1,11 +1,11 @@
 import asyncio
-import html.parser
 import io
 import json
 import logging
 import re
 
 import aiohttp
+from bs4 import BeautifulSoup
 
 from feed import FeedEntry
 
@@ -13,24 +13,6 @@ log = logging.getLogger(__name__)
 
 _BOT_DETECTION_THRESHOLD = 2048
 _OG_FETCH_DELAY = 2.0
-
-
-class _OGImageParser(html.parser.HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.og_image: str | None = None
-        self._done = False
-
-    def handle_starttag(self, tag, attrs):
-        if self._done:
-            return
-        if tag == "body":
-            self._done = True
-        elif tag == "meta":
-            d = dict(attrs)
-            if d.get("property") == "og:image" and d.get("content"):
-                self.og_image = d["content"]
-                self._done = True
 
 
 async def _fetch_og_image_once(url: str, session: aiohttp.ClientSession) -> tuple[str | None, bool]:
@@ -50,13 +32,13 @@ async def _fetch_og_image_once(url: str, session: aiohttp.ClientSession) -> tupl
             return None, True
         text = chunk.decode("utf-8", errors="replace")
         log.debug("OG image: fetched %d bytes (status=%d, ct=%s) from %s", len(chunk), status, content_type, url)
-        p = _OGImageParser()
-        p.feed(text)
-        if p.og_image:
-            log.debug("OG image: found %s", p.og_image)
+        meta = BeautifulSoup(text, "html.parser").find("meta", property="og:image")
+        og_image = meta.get("content") if meta else None
+        if og_image:
+            log.debug("OG image: found %s", og_image)
         else:
             log.debug("OG image: no og:image tag found in first %d bytes of %s", len(chunk), url)
-        return p.og_image, False
+        return og_image, False
     except Exception as exc:
         log.debug("OG image: exception fetching %s: %s: %s", url, type(exc).__name__, exc)
         return None, False
