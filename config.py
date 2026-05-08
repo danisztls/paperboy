@@ -163,6 +163,7 @@ class _TaskLLM(BaseModel):
     prompt: str
     model: str | None = None
     language: str | None = None
+    instructions: str | None = None
     web_search: bool | dict | None = None
     explain: bool | None = None
 
