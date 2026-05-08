@@ -24,13 +24,13 @@ def _parse_color(value) -> int | None:
 
 
 def _parse_period(value) -> timedelta:
-    if isinstance(value, str):
-        value = value.strip()
-        suffix = value[-1].lower() if value else ""
-        if suffix in _PERIOD_UNITS:
-            return timedelta(**{_PERIOD_UNITS[suffix]: float(value[:-1])})
-        return timedelta(hours=float(value))
-    return timedelta(hours=float(value))
+    s = str(value).strip() if not isinstance(value, str) else value.strip()
+    if not s:
+        raise ValueError("empty period")
+    suffix = s[-1].lower()
+    if suffix not in _PERIOD_UNITS:
+        raise ValueError(f"missing suffix in {value!r} — use e.g. '30m', '6h', '1d'")
+    return timedelta(**{_PERIOD_UNITS[suffix]: float(s[:-1])})
 
 
 def _task_type(task_cfg: dict) -> str:
@@ -63,13 +63,13 @@ def _period_validator(v):
             _parse_period(v)
         except (ValueError, TypeError):
             raise ValueError(
-                f"invalid value {v!r} — expected a number (hours) or e.g. '30m', '6h', '1d'"
+                f"invalid value {v!r} — expected e.g. '30m', '6h', '1d'"
             )
     return v
 
 
 _Color = Annotated[int | None, BeforeValidator(_color_validator)]
-_Period = Annotated[str | int | float | None, AfterValidator(_period_validator)]
+_Period = Annotated[str | None, AfterValidator(_period_validator)]
 
 
 # --- Models ---
