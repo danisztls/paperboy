@@ -183,6 +183,9 @@ async def _process_task(
             continue  # failed fetch — leave existing state untouched
         current_items, new_entries = fetch
 
+        prev_items = feeds_state.get(url, {}).get("items", [])
+        prev_by_url = {item["url"]: item for item in prev_items}
+
         if filter_cfg:
             if filter_result is None:
                 passing_ids = {e.id for e in new_entries}
@@ -192,30 +195,21 @@ async def _process_task(
         else:
             entries_to_post = new_entries
 
-        # Build annotated state items
+        # Preserve all old items; append new ones not already in state
         if filter_cfg:
             new_entry_by_link = {e.link: e for e in new_entries}
-            prev_by_url = {item["url"]: item for item in feeds_state.get(url, {}).get("items", [])}
-            final_items = []
+            final_items = list(prev_items)
             for item in current_items:
                 item_url = item["url"]
-                if item_url in new_entry_by_link:
-                    e = new_entry_by_link[item_url]
-                    if filter_result is not None and e.id in filter_result:
+                if item_url not in prev_by_url:
+                    e = new_entry_by_link.get(item_url)
+                    if e is not None and filter_result is not None and e.id in filter_result:
                         v = filter_result[e.id]
                         final_items.append({**item, "filter_pass": v["pass"], "filter_reason": v["reason"]})
                     else:
                         final_items.append({**item, "filter_pass": True})
-                elif "filter_pass" in prev_by_url.get(item_url, {}):
-                    prev = prev_by_url[item_url]
-                    extra = {"filter_pass": prev["filter_pass"]}
-                    if "filter_reason" in prev:
-                        extra["filter_reason"] = prev["filter_reason"]
-                    final_items.append({**item, **extra})
-                else:
-                    final_items.append(item)
         else:
-            final_items = current_items
+            final_items = list(prev_items) + [item for item in current_items if item["url"] not in prev_by_url]
 
         if task_type != "digest":
             feed_og_download = (fc.get("og_image") or {}).get("download")
@@ -232,14 +226,9 @@ async def _process_task(
                         e = dc_replace(e, description=v["reason"])
                 all_entries_to_post.append((feed_color, download_og, e))
 
-        prev_access = {
-            item["url"]: item["access_date"]
-            for item in feeds_state.get(url, {}).get("items", [])
-            if "access_date" in item
-        }
         for item in final_items:
             if "access_date" not in item:
-                item["access_date"] = prev_access.get(item["url"], now_iso)
+                item["access_date"] = now_iso
 
         new_feeds_state[url] = {"items": final_items, "last_run": now_iso}
 

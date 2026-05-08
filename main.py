@@ -213,11 +213,16 @@ async def _async_main(args: argparse.Namespace) -> None:
                     feed_tasks.append(_process_task(task_cfg, state, session, llm_model=llm_model, llm_api_key=llm_api_key, global_color=global_color, global_language=global_language, global_og_download=global_og_download))
 
             results = await asyncio.gather(*feed_tasks, return_exceptions=True)
+            tasks_state = state.setdefault("tasks", {})
             for result in results:
                 if isinstance(result, Exception):
                     log.error("Feed task failed: %s", result)
                 elif result:
-                    state.setdefault("tasks", {}).update(result)
+                    for task_name, task_state in result.items():
+                        if task_name in tasks_state:
+                            tasks_state[task_name] = {**tasks_state[task_name], **task_state}
+                        else:
+                            tasks_state[task_name] = task_state
             save_state(state_path, state)
             log.info("Done. State saved to %s", state_path)
 
