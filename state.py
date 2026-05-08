@@ -14,12 +14,31 @@ def load_state(path: pathlib.Path) -> dict:
     return json.loads(path.read_text())
 
 
+def _sort_state(state: dict) -> dict:
+    tasks = state.get("tasks", {})
+    sorted_tasks = {}
+    for task_name in sorted(tasks):
+        task = tasks[task_name]
+        feeds = task.get("feeds")
+        if feeds:
+            sorted_feeds = {}
+            for url in sorted(feeds):
+                feed = feeds[url]
+                items = feed.get("items")
+                if items:
+                    feed = {**feed, "items": sorted(items, key=lambda i: i.get("access_date", ""))}
+                sorted_feeds[url] = feed
+            task = {**task, "feeds": sorted_feeds}
+        sorted_tasks[task_name] = task
+    return {**state, "tasks": sorted_tasks}
+
+
 def save_state(path: pathlib.Path, state: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     state["_last_run"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     state["_version"] = CURRENT_VERSION
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False))
+    tmp.write_text(json.dumps(_sort_state(state), indent=2, ensure_ascii=False))
     tmp.replace(path)  # atomic on POSIX
 
 
