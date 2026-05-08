@@ -112,6 +112,28 @@ async def filter_entries(
         return None
 
 
+async def summarize_transcript(title: str, transcript: str, api_key: str | None = None, model: str | None = None, language: str = "EN-US") -> str | None:
+    """Summarize a video transcript. Returns summary text or None on failure."""
+    client = AsyncOpenAI(api_key=api_key) if api_key else AsyncOpenAI()
+    model = model or DEFAULT_MODEL
+    instructions = (
+        f"You are a precise, concise summarizer. Write in {language}. "
+        "Given the title and transcript of a YouTube video, write a clear summary covering the main topics and key takeaways. "
+        "Use a few short paragraphs. No filler phrases or meta-commentary about the summarization process."
+    )
+    log.info("Summarizing transcript (model=%s, language=%s, %d chars)", model, language, len(transcript))
+    try:
+        response = await client.responses.create(
+            model=model,
+            instructions=instructions,
+            input=f"Title: {title}\n\nTranscript:\n{transcript[:12000]}",
+        )
+        return (response.output_text or "").strip() or None
+    except Exception as exc:
+        log.error("Summarize failed: %s", exc)
+        return None
+
+
 async def run_llm_task(task_cfg: dict, instructions: str | None = None, global_model: str | None = None, *, api_key: str | None = None) -> str | None:
     """Call OpenAI Responses API with web_search_preview. Returns response text or None on failure."""
     client = AsyncOpenAI(api_key=api_key) if api_key else AsyncOpenAI()

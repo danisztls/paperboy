@@ -6,6 +6,7 @@ import atexit
 import logging
 import os
 import pathlib
+import re
 import sys
 import argparse
 from datetime import datetime, timezone
@@ -16,6 +17,7 @@ from config import _parse_color, _parse_period, _task_type, load_config, validat
 from state import _auto_clean, _remove_unknown, load_state, save_state
 from tasks import DEFAULT_PERIOD, _is_due, _process_llm_search_task, _process_llm_evaluate_task
 from feed import get_new_entries
+from llm import summarize_transcript
 from migrate import CURRENT_VERSION, needs_migration, migrate
 
 logging.basicConfig(
@@ -44,6 +46,104 @@ def _xdg_config_path() -> pathlib.Path:
 def _xdg_state_path() -> pathlib.Path:
     xdg_data = pathlib.Path(os.environ.get("XDG_DATA_HOME", "~/.local/share")).expanduser()
     return xdg_data / "claudinho" / "state.json"
+
+
+_VTT_TIMESTAMP_RE = re.compile(r'^\d{2}:\d{2}:\d{2}[.,]\d{3}\s*-->')
+_VTT_TAGS_RE = re.compile(r'<[^>]+>')
+_VTT_META_RE = re.compile(r'^(WEBVTT|Kind:|Language:)')
+
+
+def _parse_vtt(content: str) -> str:
+    """Extract clean text from a WebVTT subtitle file.
+
+    Strips cue timestamps, HTML tags, numeric identifiers, and position
+    metadata, then deduplicates consecutive identical lines (YouTube
+    auto-captions emit overlapping cues with the same text).
+    """
+    lines = []
+    for raw in content.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if _VTT_META_RE.match(line) or _VTT_TIMESTAMP_RE.match(line):
+            continue
+        if line.isdigit():
+            continue
+        line = _VTT_TAGS_RE.sub('', line).strip()
+        if line:
+            lines.append(line)
+    deduped: list[str] = []
+    for line in lines:
+        if not deduped or line != deduped[-1]:
+            deduped.append(line)
+    return ' '.join(deduped)
+
+
+async def _async_summarize(url: str, api_key: str | None, model: str | None, language: str = "EN-US") -> None:
+    try:
+        import yt_dlp
+    except ImportError:
+        log.error("yt-dlp is not installed — run: uv sync")
+        sys.exit(1)
+
+    def _extract():
+        with yt_dlp.YoutubeDL({'skip_download': True, 'quiet': True, 'no_warnings': True}) as ydl:
+            return ydl.extract_info(url, download=False)
+
+    log.info("Fetching video info: %s", url)
+    try:
+        info = await asyncio.to_thread(_extract)
+    except Exception as exc:
+        log.error("yt-dlp failed: %s", exc)
+        sys.exit(1)
+
+    title = info.get('title', '')
+    subs = info.get('subtitles') or {}
+    auto = info.get('automatic_captions') or {}
+
+    lang_track = None
+    for src in (subs, auto):
+        for lang in ('en', 'en-orig', *src.keys()):
+            if lang in src:
+                lang_track = src[lang]
+                break
+        if lang_track:
+            break
+
+    if not lang_track:
+        log.error("No subtitles or captions found for this video")
+        sys.exit(1)
+
+    vtt_entry = next((e for e in lang_track if e.get('ext') == 'vtt'), lang_track[0])
+    sub_url = vtt_entry.get('url')
+    if not sub_url:
+        log.error("No subtitle URL found")
+        sys.exit(1)
+
+    log.info("Fetching captions for %r", title)
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=15),
+        headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"},
+    ) as session:
+        try:
+            async with session.get(sub_url) as resp:
+                vtt_content = await resp.text()
+        except aiohttp.ClientError as exc:
+            log.error("Failed to fetch captions: %s", exc)
+            sys.exit(1)
+
+    transcript = _parse_vtt(vtt_content)
+    if not transcript:
+        log.error("No text could be extracted from captions")
+        sys.exit(1)
+
+    log.info("Transcript length: %d chars", len(transcript))
+    summary = await summarize_transcript(title, transcript, api_key=api_key, model=model, language=language)
+    if summary:
+        print(summary)
+    else:
+        log.error("Summarization failed")
+        sys.exit(1)
 
 
 async def _async_main(args: argparse.Namespace) -> None:
@@ -272,6 +372,11 @@ def main():
         action="store_true",
         help="Validate the config file and exit",
     )
+    mode.add_argument(
+        "--summarize",
+        metavar="URL",
+        help="Fetch transcript from a YouTube video and print a summary to stdout",
+    )
     args = parser.parse_args()
 
     if args.verbose:
@@ -293,6 +398,27 @@ def main():
                 log.error("Config error: %s", err)
             sys.exit(1)
         log.info("Config is valid: %s", config_path)
+        return
+
+    if args.summarize:
+        api_key = None
+        model = None
+        language = "EN-US"
+        config_path = (
+            _xdg_config_path() if args.config is None
+            else pathlib.Path(args.config).expanduser().resolve()
+        )
+        if config_path.exists():
+            try:
+                cfg = load_config(config_path)
+                llm_cfg = cfg.get("llm") or {}
+                api_key = llm_cfg.get("api_key") or None
+                language = llm_cfg.get("language") or "EN-US"
+                models_cfg = llm_cfg.get("models") or {}
+                model = models_cfg.get("topic") or None
+            except Exception:
+                pass
+        asyncio.run(_async_summarize(args.summarize, api_key=api_key, model=model, language=language))
         return
 
     asyncio.run(_async_main(args))
