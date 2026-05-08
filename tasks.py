@@ -232,6 +232,7 @@ async def _process_task(
 
         new_feeds_state[url] = {"items": final_items, "last_run": now_iso}
 
+    failed_links: set[str] = set()
     if task_type != "digest" and all_entries_to_post:
         _far_future = datetime.max.replace(tzinfo=timezone.utc)
         all_entries_to_post.sort(key=lambda c_e: c_e[2].published or _far_future)
@@ -243,6 +244,12 @@ async def _process_task(
                     await asyncio.sleep(2)
             except Exception:
                 log.error("Skipping entry %s due to post failure", entry.id)
+                if entry.link:
+                    failed_links.add(entry.link)
+
+    if failed_links:
+        for feed_state in new_feeds_state.values():
+            feed_state["items"] = [item for item in feed_state["items"] if item["url"] not in failed_links]
 
     if task_type == "digest" and memory_text:
         try:
