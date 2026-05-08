@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 import aiohttp
 
 from config import _parse_color, _parse_period, _task_type, load_config, validate_config
-from state import _auto_clean, load_state, save_state
+from state import _auto_clean, _remove_unknown, load_state, save_state
 from tasks import DEFAULT_PERIOD, _is_due, _process_llm_task, _process_task
 from feed import get_new_entries
 from migrate import CURRENT_VERSION, needs_migration, migrate
@@ -101,6 +101,13 @@ async def _async_main(args: argparse.Namespace) -> None:
 
     if args.clean:
         _auto_clean(state)
+        known_tasks = {t["name"] for t in config.get("tasks", []) if t.get("name")}
+        known_feeds = {
+            t["name"]: {f["url"] for f in t.get("feeds", []) if f.get("url")}
+            for t in config.get("tasks", [])
+            if t.get("name") and t.get("feeds")
+        }
+        _remove_unknown(state, known_tasks, known_feeds)
         save_state(state_path, state)
         log.info("Done. State saved to %s", state_path)
         return

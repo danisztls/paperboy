@@ -61,3 +61,20 @@ def _auto_clean(state: dict) -> None:
             feed_state["items"] = kept
 
     log.info("Clean: removed %d malformed entries", removed)
+
+
+def _remove_unknown(state: dict, known_tasks: set, known_feeds: dict) -> None:
+    """Remove state for tasks/feeds no longer present in config."""
+    tasks_state = state.get("tasks", {})
+
+    stale_tasks = [name for name in list(tasks_state) if name not in known_tasks]
+    for name in stale_tasks:
+        log.warning("Clean: removing state for unknown task %r", name)
+        del tasks_state[name]
+
+    for task_name, feed_urls in known_feeds.items():
+        feeds_state = tasks_state.get(task_name, {}).get("feeds", {})
+        stale_feeds = [url for url in list(feeds_state) if url not in feed_urls]
+        for url in stale_feeds:
+            log.warning("Clean: removing state for unknown feed %s in task %r", url[:80], task_name)
+            del feeds_state[url]
