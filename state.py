@@ -16,11 +16,11 @@ def load_state(path: pathlib.Path) -> dict:
 
 def save_state(path: pathlib.Path, state: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        path.replace(path.parent / (path.name + ".old"))
     state["_last_run"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     state["_version"] = CURRENT_VERSION
-    path.write_text(json.dumps(state, indent=2, ensure_ascii=False))
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False))
+    tmp.replace(path)  # atomic on POSIX
 
 
 def _auto_clean(state: dict) -> None:
