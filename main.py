@@ -112,7 +112,7 @@ async def _async_main(args: argparse.Namespace) -> None:
     global_language = llm_cfg.get("language") or "EN-US"
     discord_cfg = config.get("discord", {})
     global_color = _parse_color(discord_cfg.get("color"))
-    global_og_download: bool = config.get("og_image_download", False)
+    global_og_download: bool = (config.get("og_image") or {}).get("download", False)
 
     tasks = config.get("tasks", [])
     if not tasks:
