@@ -14,7 +14,7 @@ import aiohttp
 
 from config import _parse_color, _parse_period, _task_type, load_config, validate_config
 from state import _auto_clean, _remove_unknown, load_state, save_state
-from tasks import DEFAULT_PERIOD, _is_due, _process_llm_task, _process_task
+from tasks import DEFAULT_PERIOD, _is_due, _process_llm_search_task, _process_llm_evaluate_task
 from feed import get_new_entries
 from migrate import CURRENT_VERSION, needs_migration, migrate
 
@@ -114,7 +114,9 @@ async def _async_main(args: argparse.Namespace) -> None:
 
     llm_cfg = config.get("llm", {})
     instructions = llm_cfg.get("instructions") or None
-    llm_model = llm_cfg.get("model") or None
+    llm_models = llm_cfg.get("models") or {}
+    evaluate_model = llm_models.get("reasoning") or None
+    search_model = llm_models.get("topic") or None
     llm_api_key = llm_cfg.get("api_key") or None
     global_language = llm_cfg.get("language") or "EN-US"
     discord_cfg = config.get("discord", {})
@@ -197,7 +199,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                             name, mins, period,
                         )
                         continue
-                    feed_tasks.append(_process_llm_task(task_cfg, state, session, instructions=instructions, llm_model=llm_model, llm_api_key=llm_api_key))
+                    feed_tasks.append(_process_llm_search_task(task_cfg, state, session, instructions=instructions, search_model=search_model, llm_api_key=llm_api_key))
                 else:
                     task_name = task_cfg.get("name")
                     if not task_name:
@@ -210,7 +212,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     ):
                         log.info("[%s] Skipping — no feeds are due", task_name)
                         continue
-                    feed_tasks.append(_process_task(task_cfg, state, session, llm_model=llm_model, llm_api_key=llm_api_key, global_color=global_color, global_language=global_language, global_og_download=global_og_download))
+                    feed_tasks.append(_process_llm_evaluate_task(task_cfg, state, session, evaluate_model=evaluate_model, llm_api_key=llm_api_key, global_color=global_color, global_language=global_language, global_og_download=global_og_download))
 
             results = await asyncio.gather(*feed_tasks, return_exceptions=True)
             tasks_state = state.setdefault("tasks", {})

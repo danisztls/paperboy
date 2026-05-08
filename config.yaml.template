@@ -4,7 +4,9 @@ discord:                    # optional — global defaults for Discord posting
 #   download: false         # download+optimize OG images as WebP attachments (default: false, uses URL directly)
 
 llm:                        # optional — global defaults for all LLM tasks
-  model: gpt-5.4-mini      # default model (per-task 'model' overrides this)
+  models:
+    reasoning: gpt-5.4-mini  # used for RSS/digest LLM filter (per-task 'model' overrides this)
+    topic: gpt-5.4-nano      # used for standalone LLM tasks (per-task 'model' overrides this)
   # api_key: "sk-..."         # optional — overrides $OPENAI_API_KEY env var
   # instructions: "..."      # additional instructions appended to the built-in system prompt for LLM tasks
   # language: "EN-US"        # language for filter memory briefings (default: EN-US; per-filter 'language' overrides)
@@ -20,7 +22,7 @@ tasks:
     period: 1h
     # llm:                       # optional — LLM pre-post filter applied to all feeds in this task
     #   prompt: "Only keep items about AI and machine learning"
-    #   model: gpt-4o-mini       # optional; falls back to global llm.model, then default model
+    #   model: gpt-4o-mini       # optional; overrides llm.models.reasoning
     #   language: "PT-BR"        # optional; language for memory briefings; falls back to llm.language then EN-US
     #   instructions: "..."     # optional; extra instructions appended after the filter criteria in the built-in prompt
     #   web_search: true         # optional — let the LLM search for context / fact-check items (default: false)
@@ -75,7 +77,7 @@ tasks:
     period: 24h
     llm:
       prompt: "Today news. World. Filter for signal > noise."
-      model: gpt-5.4-mini  # optional, default: gpt-5.4-mini
+      model: gpt-5.4-mini  # optional, overrides llm.models.topic
       web_search: true      # required for LLM tasks; dict = options for web_search_preview
       # web_search:
       #   allowed_domains:
