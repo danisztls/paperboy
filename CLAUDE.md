@@ -35,7 +35,7 @@ Eight modules, no package, flat layout:
 
 - `main.py` — CLI entry point and orchestration. Resolves config/state paths, manages a lock file, loads config + state, opens a single shared `aiohttp.ClientSession`, then dispatches to one of four modes: normal (run due tasks in parallel), `--regenerate-state`, `--clean`/`--migrate`, or `--validate`.
 - `config.py` — config loading and validation. `load_config(path)` reads YAML or JSON. `validate_config(config)` uses Pydantic models to validate the full config and returns a list of error strings. Also houses `_parse_color`, `_parse_period`, and `_task_type` (returns the explicit `type:` key if present; otherwise infers: `feeds` key → RSS/digest task, `llm` key without `feeds` → LLM task).
-- `state.py` — state I/O and maintenance. `load_state`, `save_state` (writes `.old` backup, stamps `_version` and `_last_run`), and `_auto_clean` (removes malformed/expired items, runs every 30 days).
+- `state.py` — state I/O and maintenance. `load_state`, `save_state` (writes `.old` backup, stamps `_version` and `_last_run`), and `_auto_clean` (removes malformed items; only runs when `--clean` is explicitly invoked).
 - `migrate.py` — state schema migrations. `needs_migration(state)` checks `state["_version"]` against `CURRENT_VERSION` (2). `migrate(state)` steps through `_STEPS` until current. The v2 migration nests all task keys under a top-level `"tasks"` key.
 - `tasks.py` — task execution. `_process_task` handles RSS and digest tasks (with optional LLM filter); `_process_llm_task` handles standalone LLM tasks. `_is_due` checks period with 60s grace. `_merge_filter` combines task-level and feed-level heuristic filter dicts. `_recent_passed_items` pulls the last 7 `filter_pass=True` items across all feeds for LLM context. **Normal mode**: filters tasks by `_is_due`, then gathers all due tasks in parallel.
 - `feed.py` — feed fetching, dedup, and entry enrichment. `get_new_entries(feed_cfg, seen, session)` returns `(current_items, new_entries)` on success or `None` on parse failure:
@@ -54,7 +54,6 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
 {
   "_version": 2,
   "_last_run": "<iso8601 utc>",
-  "_last_clean": "<iso8601 utc>",
   "tasks": {
     "my-feeds": {
       "feeds": {

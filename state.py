@@ -1,7 +1,7 @@
 import json
 import logging
 import pathlib
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from migrate import CURRENT_VERSION
 
@@ -24,18 +24,8 @@ def save_state(path: pathlib.Path, state: dict) -> None:
 
 
 def _auto_clean(state: dict) -> None:
-    """Remove malformed or expired entries from state. Runs automatically when due."""
-    now = datetime.now(timezone.utc)
-    last_clean = state.get("_last_clean")
-    if last_clean:
-        try:
-            if (now - datetime.fromisoformat(last_clean)).days < 30:
-                return
-        except ValueError:
-            pass
-
-    cutoff = now - timedelta(days=30)
-    removed = expired = 0
+    """Remove malformed entries from state. Run manually via --clean."""
+    removed = 0
     for task_name, task_state in state.get("tasks", {}).items():
         if not isinstance(task_state, dict):
             continue
@@ -61,17 +51,13 @@ def _auto_clean(state: dict) -> None:
                     removed += 1
                     continue
                 try:
-                    dt = datetime.fromisoformat(ad)
+                    datetime.fromisoformat(ad)
                 except ValueError:
                     log.warning("%s: removing item %s: invalid access_date %r", label, url[:80], ad)
                     removed += 1
-                    continue
-                if dt < cutoff:
-                    expired += 1
                     continue
 
                 kept.append(item)
             feed_state["items"] = kept
 
-    state["_last_clean"] = now.replace(microsecond=0).isoformat()
-    log.info("Auto-clean: removed %d malformed + %d expired entries", removed, expired)
+    log.info("Clean: removed %d malformed entries", removed)
