@@ -79,9 +79,15 @@ class _GlobalDiscord(BaseModel):
     color: _Color = None
 
 
+class _GlobalModels(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    reasoning: str | None = None
+    topic: str | None = None
+
+
 class _GlobalLLM(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    model: str | None = None
+    models: _GlobalModels | None = None
     language: str | None = None
     api_key: str | None = None
     instructions: str | None = None

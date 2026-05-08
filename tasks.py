@@ -47,18 +47,18 @@ def _is_due(feed_state: dict, period: timedelta, now: datetime) -> bool:
     return (now - last) >= period - PERIOD_GRACE
 
 
-async def _process_llm_task(
+async def _process_llm_search_task(
     task_cfg: dict,
     state: dict,
     session: aiohttp.ClientSession,
     *,
     instructions: str | None = None,
-    llm_model: str | None = None,
+    search_model: str | None = None,
     llm_api_key: str | None = None,
 ) -> dict:
     """Run one LLM task, post the response, return {name: task_state} on success or {} on failure."""
     name = task_cfg["name"]
-    text = await run_llm_task(task_cfg, instructions, llm_model, api_key=llm_api_key)
+    text = await run_llm_task(task_cfg, instructions, search_model, api_key=llm_api_key)
     if text is None:
         return {}
     webhook = task_cfg.get("discord", {}).get("webhook")
@@ -71,12 +71,12 @@ async def _process_llm_task(
     return {name: {"last_run": datetime.now(timezone.utc).replace(microsecond=0).isoformat()}}
 
 
-async def _process_task(
+async def _process_llm_evaluate_task(
     task_cfg: dict,
     state: dict,
     session: aiohttp.ClientSession,
     *,
-    llm_model: str | None = None,
+    evaluate_model: str | None = None,
     llm_api_key: str | None = None,
     global_color: int | None = None,
     global_language: str = "EN-US",
@@ -156,11 +156,11 @@ async def _process_task(
             api_key=llm_api_key,
             extra_instructions=filter_cfg.get("instructions") or None,
         )
-        llm_return = await filter_entries(payload_groups, filter_cfg, llm_model, **_filter_kwargs)
+        llm_return = await filter_entries(payload_groups, filter_cfg, evaluate_model, **_filter_kwargs)
         if llm_return is None:
             log.warning("[%s] Filter failed, retrying in 10s", task_name)
             await asyncio.sleep(10)
-            llm_return = await filter_entries(payload_groups, filter_cfg, llm_model, **_filter_kwargs)
+            llm_return = await filter_entries(payload_groups, filter_cfg, evaluate_model, **_filter_kwargs)
         if llm_return is None:
             log.error("[%s] Filter failed twice — skipping task", task_name)
             return {}
