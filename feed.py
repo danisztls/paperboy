@@ -53,6 +53,20 @@ def _remove_phrases_with_urls(text: str) -> str:
     return re.sub(r"[ \t]+", " ", text).strip()
 
 
+def _url_filtered(url: str, cfg) -> bool:
+    """Return True if the URL should be excluded by the url filter config."""
+    if not cfg:
+        return False
+    if isinstance(cfg, list):
+        return any(_url_filtered(url, item) for item in cfg)
+    needles = cfg.get("skip_containing")
+    if not needles:
+        return False
+    if isinstance(needles, str):
+        needles = [needles]
+    return any(n in url for n in needles)
+
+
 def _apply_regex(cfg, text: str) -> str:
     if isinstance(cfg, list):
         for item in cfg:
@@ -163,8 +177,11 @@ async def get_new_entries(
             continue
         current_items.append({"url": entry.get("link", ""), "title": _entry_title(entry)})
         if eid not in seen:
-            unseen_raw.append((eid, entry))
-            log.debug("[%s] New entry: %s", feed_title, eid[:120])
+            if _url_filtered(eid, filter_url):
+                log.debug("[%s] URL-filtered: %s", feed_title, eid[:120])
+            else:
+                unseen_raw.append((eid, entry))
+                log.debug("[%s] New entry: %s", feed_title, eid[:120])
 
     log.info("[%s] New entries to post: %d", feed_title, len(unseen_raw))
 
@@ -173,6 +190,7 @@ async def get_new_entries(
     feed_filter = feed_cfg.get("filter", {})
     filter_title = feed_filter.get("title")
     filter_description = feed_filter.get("description")
+    filter_url = feed_filter.get("url")
 
     new_entries = []
     for eid, entry in ordered:
