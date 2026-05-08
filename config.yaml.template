@@ -6,7 +6,7 @@ discord:                    # optional — global defaults for Discord posting
 llm:                        # optional — global defaults for all LLM tasks
   model: gpt-5.4-mini      # default model (per-task 'model' overrides this)
   # api_key: "sk-..."         # optional — overrides $OPENAI_API_KEY env var
-  # instructions: "..."      # system prompt
+  # instructions: "..."      # additional instructions appended to the built-in system prompt for LLM tasks
   # language: "EN-US"        # language for filter memory briefings (default: EN-US; per-filter 'language' overrides)
 
 tasks:
@@ -22,6 +22,7 @@ tasks:
     #   prompt: "Only keep items about AI and machine learning"
     #   model: gpt-4o-mini       # optional; falls back to global llm.model, then default model
     #   language: "PT-BR"        # optional; language for memory briefings; falls back to llm.language then EN-US
+    #   instructions: "..."     # optional; extra instructions appended after the filter criteria in the built-in prompt
     #   web_search: true         # optional — let the LLM search for context / fact-check items (default: false)
     # filter:                    # optional — heuristic cleanup applied to all feeds in this task
     #   title:

@@ -16,6 +16,7 @@ async def filter_entries(
     language: str = "EN-US",
     memory_history: list[tuple[str, str]] | None = None,
     api_key: str | None = None,
+    extra_instructions: str | None = None,
 ) -> tuple[dict[str, dict], str | None] | None:
     """Filter feed entries through LLM and optionally update memory.
 
@@ -39,7 +40,8 @@ async def filter_entries(
         )
     instructions = (
         f"## Filter criteria\n{criteria}\n\n"
-        f"{memory_block}"
+        + (f"## Additional instructions\n{extra_instructions}\n\n" if extra_instructions else "")
+        + f"{memory_block}"
         "## Input\n\n"
         "You will receive a JSON array of source groups, each with a 'source' name and an 'items' array. "
         "Each item has an integer 'id', a 'title', and an optional 'description'.\n\n"
@@ -121,16 +123,18 @@ async def run_llm_task(task_cfg: dict, instructions: str | None = None, global_m
     tool: dict = {"type": "web_search_preview"}
     if isinstance(web_search, dict):
         tool.update(web_search)
+    task_instructions = llm_cfg.get("instructions")
+    combined_instructions = "\n\n".join(filter(None, [instructions, task_instructions])) or None
     log.info("[%s] Calling LLM (model=%s): %s", name, model, prompt[:120])
     log.debug("[%s] Full prompt: %s", name, prompt)
-    if instructions:
-        log.debug("[%s] Instructions: %s", name, instructions[:200])
+    if combined_instructions:
+        log.debug("[%s] Instructions: %s", name, combined_instructions[:200])
     try:
         response = await client.responses.create(
             model=model,
             tools=[tool],
             input=prompt,
-            **({"instructions": instructions} if instructions else {}),
+            **({"instructions": combined_instructions} if combined_instructions else {}),
         )
         text = response.output_text or None
         if text:

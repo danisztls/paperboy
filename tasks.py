@@ -154,6 +154,7 @@ async def _process_task(
             language=language,
             memory_history=memory_history,
             api_key=llm_api_key,
+            extra_instructions=filter_cfg.get("instructions") or None,
         )
         llm_return = await filter_entries(payload_groups, filter_cfg, llm_model, **_filter_kwargs)
         if llm_return is None:
