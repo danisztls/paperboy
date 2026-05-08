@@ -114,10 +114,22 @@ class _FilterOp(BaseModel):
         return v
 
 
+class _UrlFilter(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    skip_containing: str | list[str] | None = None
+
+    @model_validator(mode='after')
+    def _has_op(self):
+        if not self.model_fields_set:
+            raise ValueError("no recognized operation key")
+        return self
+
+
 class _FilterDict(BaseModel):
     model_config = ConfigDict(extra='forbid')
     title: list[_FilterOp] | _FilterOp | None = None
     description: list[_FilterOp] | _FilterOp | None = None
+    url: _UrlFilter | None = None
 
 
 class _FeedDiscord(BaseModel):
