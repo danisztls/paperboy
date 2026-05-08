@@ -1,5 +1,4 @@
 import asyncio
-import html.parser
 import re
 import logging
 from dataclasses import dataclass
@@ -8,6 +7,7 @@ from datetime import datetime, timezone
 import aiohttp
 import feedparser
 import feedparser.sanitizer
+from bs4 import BeautifulSoup
 
 feedparser.sanitizer._HTMLSanitizer.acceptable_attributes.add("srcset")
 
@@ -28,25 +28,9 @@ class FeedEntry:
     published: datetime | None = None
 
 
-class _TagStripper(html.parser.HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self._parts = []
-
-    def handle_data(self, data):
-        self._parts.append(data)
-
-    def get_text(self) -> str:
-        return "".join(self._parts)
-
 
 def _strip_html(text: str) -> str:
-    p = _TagStripper()
-    try:
-        p.feed(text)
-    except Exception:
-        pass
-    return p.get_text()
+    return BeautifulSoup(text, "html.parser").get_text()
 
 
 _MD_ESCAPE_RE = re.compile(r'(?m)(^[>#]+|[*_`~])')
@@ -110,20 +94,6 @@ def _best_srcset_url(srcset: str) -> str | None:
     return best_url
 
 
-class _ImgSrcParser(html.parser.HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.src: str | None = None
-
-    def handle_starttag(self, tag, attrs):
-        if self.src or tag != "img":
-            return
-        d = dict(attrs)
-        src = _best_srcset_url(d.get("srcset", "")) or d.get("src", "")
-        if src.startswith("http"):
-            self.src = src
-
-
 def _entry_image(entry) -> str | None:
     for thumb in entry.get("media_thumbnail", []):
         url = thumb.get("url", "")
@@ -136,13 +106,11 @@ def _entry_image(entry) -> str | None:
                 return url
     raw = entry.get("summary") or entry.get("description", "")
     if raw:
-        p = _ImgSrcParser()
-        try:
-            p.feed(raw)
-        except Exception:
-            pass
-        if p.src:
-            return p.src
+        img = BeautifulSoup(raw, "html.parser").find("img")
+        if img:
+            src = _best_srcset_url(img.get("srcset", "")) or img.get("src", "")
+            if src and src.startswith("http"):
+                return src
     return None
 
 
