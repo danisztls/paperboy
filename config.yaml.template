@@ -14,9 +14,9 @@ tasks:
     discord:
       webhook: "https://discordapp.com/api/webhooks/<NUMBER>/<TOKEN>"
       # color: "#5865F2"   # optional — overrides global discord.color for this task
-    # Minimum time between processing this task's feeds. Default: 1 (hour).
-    # Accepts a plain number (hours) or a string with suffix: "30m", "6h", "1d".
-    period: 1
+    # Minimum time between processing this task's feeds. Default: 1h.
+    # Requires a suffix: "30m", "6h", "1d".
+    period: 1h
     # llm:                       # optional — LLM pre-post filter applied to all feeds in this task
     #   prompt: "Only keep items about AI and machine learning"
     #   model: gpt-4o-mini       # optional; falls back to global llm.model, then default model
@@ -56,7 +56,7 @@ tasks:
   #   type: digest
   #   discord:
   #     webhook: "https://discordapp.com/api/webhooks/<NUMBER>/<TOKEN>"
-  #   period: 24
+  #   period: 24h
   #   llm:
   #     prompt: "Only keep items about AI and machine learning"
   #   feeds:
@@ -68,7 +68,7 @@ tasks:
   - name: world-news
     discord:
       webhook: "https://discordapp.com/api/webhooks/<NUMBER>/<TOKEN>"
-    period: 24
+    period: 24h
     llm:
       prompt: "Today news. World. Filter for signal > noise."
       model: gpt-5.4-mini  # optional, default: gpt-5.4-mini
