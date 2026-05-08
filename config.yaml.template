@@ -1,6 +1,7 @@
 discord:                    # optional — global defaults for Discord posting
   # color: "#5865F2"       # default embed color for RSS embeds
-# og_image_download: false  # optional — download+optimize OG images as WebP attachments (default: false, uses URL directly)
+# og_image:                 # optional — global OG image settings
+#   download: false         # download+optimize OG images as WebP attachments (default: false, uses URL directly)
 
 llm:                        # optional — global defaults for all LLM tasks
   model: gpt-5.4-mini      # default model (per-task 'model' overrides this)
@@ -27,14 +28,16 @@ tasks:
     #     extract: "\\d+ de \\w+"
     #   description:
     #     - remove_phrases_with_urls: true
-    # og_image: false           # optional — set to false to skip OG image fetching entirely (default: true)
-    # og_image_download: true    # optional — download+optimize OG images as WebP; overrides global (default: false)
+    # og_image:                  # optional — OG image settings for this task
+    #   skip: true              # skip OG image fetching entirely (default: false)
+    #   download: true          # download+optimize as WebP; overrides global og_image.download (default: false)
     feeds:
       - name:
         url:
         # discord:
         #   color: "#FF0000" # optional — overrides task discord.color for this feed
-        # og_image_download: true  # optional — overrides task/global og_image_download for this feed
+        # og_image:
+        #   download: true        # optional — overrides task/global og_image.download for this feed
         # filter:
         #   title:
         #     extract: "\\d+ de \\w+"          # extract match (group 1 if captured, else group 0)

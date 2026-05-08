@@ -101,8 +101,9 @@ async def _process_task(
         memory_history = [(k, raw_history[k]) for k in keys] or None
 
     # Fetch all feeds concurrently
-    fetch_og = task_cfg.get("og_image", True)
-    task_og_download = task_cfg.get("og_image_download")
+    task_og_cfg = task_cfg.get("og_image") or {}
+    fetch_og = not task_og_cfg.get("skip", False)
+    task_og_download = task_og_cfg.get("download")
     task_filter = task_cfg.get("filter", {})
 
     async def _fetch_one(fc: dict):
@@ -216,7 +217,7 @@ async def _process_task(
             final_items = current_items
 
         if task_type != "digest":
-            feed_og_download = fc.get("og_image_download")
+            feed_og_download = (fc.get("og_image") or {}).get("download")
             download_og = (
                 feed_og_download if feed_og_download is not None
                 else task_og_download if task_og_download is not None
