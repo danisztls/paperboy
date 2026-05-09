@@ -20,17 +20,43 @@ from feed import get_new_entries
 from llm import summarize_transcript
 from migrate import CURRENT_VERSION, needs_migration, migrate
 
-logging.basicConfig(
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    level=logging.INFO,
-)
+def _under_systemd() -> bool:
+    # JOURNAL_STREAM is set when stdout/stderr is captured by journald
+    return "JOURNAL_STREAM" in os.environ
+
+
+_SYSLOG_PREFIX = {
+    logging.CRITICAL: "<2>",
+    logging.ERROR:    "<3>",
+    logging.WARNING:  "<4>",
+    logging.INFO:     "<6>",
+    logging.DEBUG:    "<7>",
+}
+
+
+class _JournaldFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        return _SYSLOG_PREFIX.get(record.levelno, "<6>") + super().format(record)
+
+
+if _under_systemd():
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(_JournaldFormatter("[%(name)s] %(message)s"))
+    logging.basicConfig(handlers=[_handler], level=logging.INFO)
+else:
+    logging.basicConfig(
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        level=logging.INFO,
+    )
 log = logging.getLogger(__name__)
 
 _LOG_FORMAT = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 
 
 def _setup_log_file(logs_dir: pathlib.Path, ts: datetime) -> None:
+    if _under_systemd():
+        return
     logs_dir.mkdir(parents=True, exist_ok=True)
     stamp = ts.strftime("%Y-%m-%dT%H-%M-%S")
     handler = logging.FileHandler(logs_dir / f"{stamp}.log", encoding="utf-8")
