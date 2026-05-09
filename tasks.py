@@ -9,7 +9,7 @@ import aiohttp
 from config import _parse_color, _task_type
 from feed import get_new_entries
 from discord import post_to_discord, post_text_to_discord, post_digest_to_discord
-from llm import run_llm_task, filter_entries
+from llm import run_llm_task, filter_entries, summarize_entry
 
 DEFAULT_PERIOD = timedelta(hours=1)
 PERIOD_GRACE = timedelta(seconds=60)
@@ -116,12 +116,8 @@ async def _process_llm_evaluate_task(
 
     fetch_results = await asyncio.gather(*[_fetch_one(fc) for fc in feed_cfgs], return_exceptions=True)
 
-    # Build global-ID payload for LLM filter
-    global_id = 0
-    id_map: dict[int, object] = {}
+    # Phase 1: build feed_fetch_map
     feed_fetch_map: dict[str, tuple | None] = {}
-    payload_groups: list[dict] = []
-
     for item in fetch_results:
         if isinstance(item, Exception):
             log.error("[%s] Feed fetch failed: %s", task_name, item)
@@ -133,12 +129,57 @@ async def _process_llm_evaluate_task(
             continue
         current_items, new_entries = result
         feed_fetch_map[url] = (current_items, new_entries)
+
+    # Phase 2: summarize entries concurrently where enabled
+    task_summarize = task_cfg.get("summarize", False)
+    entries_to_summarize: list = []
+    for fc in feed_cfgs:
+        url = fc["url"]
+        fetch = feed_fetch_map.get(url)
+        if fetch is None:
+            continue
+        feed_summarize = fc.get("summarize")
+        should_summarize = feed_summarize if feed_summarize is not None else task_summarize
+        if should_summarize:
+            _, new_entries = fetch
+            entries_to_summarize.extend(e for e in new_entries if e.description)
+
+    if entries_to_summarize:
+        sum_results = await asyncio.gather(
+            *[summarize_entry(e.title, e.description, api_key=llm_api_key, model=evaluate_model, language=global_language)
+              for e in entries_to_summarize],
+            return_exceptions=True,
+        )
+        updated = {
+            e.id: dc_replace(e, summary=s)
+            for e, s in zip(entries_to_summarize, sum_results)
+            if not isinstance(s, Exception) and s
+        }
+        if updated:
+            for url in list(feed_fetch_map.keys()):
+                fetch = feed_fetch_map[url]
+                if fetch is None:
+                    continue
+                cur, entries = fetch
+                feed_fetch_map[url] = (cur, [updated.get(e.id, e) for e in entries])
+
+    # Phase 3: build LLM payload from (possibly updated) feed_fetch_map
+    global_id = 0
+    id_map: dict[int, object] = {}
+    payload_groups: list[dict] = []
+    for fc in feed_cfgs:
+        url = fc["url"]
+        fetch = feed_fetch_map.get(url)
+        if fetch is None:
+            continue
+        _, new_entries = fetch
         if filter_cfg and new_entries:
             group = {"source": new_entries[0].feed_title, "items": []}
             for entry in new_entries:
                 item_payload: dict = {"id": global_id, "title": entry.title}
-                if entry.description:
-                    item_payload["description"] = entry.description
+                desc = entry.summary or entry.description
+                if desc:
+                    item_payload["description"] = desc
                 group["items"].append(item_payload)
                 id_map[global_id] = entry
                 global_id += 1
@@ -196,20 +237,32 @@ async def _process_llm_evaluate_task(
             entries_to_post = new_entries
 
         # Preserve all old items; append new ones not already in state
+        new_entry_by_link = {e.link: e for e in new_entries}
         if filter_cfg:
-            new_entry_by_link = {e.link: e for e in new_entries}
             final_items = list(prev_items)
             for item in current_items:
                 item_url = item["url"]
                 if item_url not in prev_by_url:
                     e = new_entry_by_link.get(item_url)
+                    state_item = dict(item)
+                    if e is not None and e.summary:
+                        state_item["summary"] = e.summary
                     if e is not None and filter_result is not None and e.id in filter_result:
                         v = filter_result[e.id]
-                        final_items.append({**item, "filter_pass": v["pass"], "filter_reason": v["reason"]})
+                        state_item.update({"filter_pass": v["pass"], "filter_reason": v["reason"]})
                     else:
-                        final_items.append({**item, "filter_pass": True})
+                        state_item["filter_pass"] = True
+                    final_items.append(state_item)
         else:
-            final_items = list(prev_items) + [item for item in current_items if item["url"] not in prev_by_url]
+            new_items = []
+            for item in current_items:
+                if item["url"] not in prev_by_url:
+                    e = new_entry_by_link.get(item["url"])
+                    state_item = dict(item)
+                    if e is not None and e.summary:
+                        state_item["summary"] = e.summary
+                    new_items.append(state_item)
+            final_items = list(prev_items) + new_items
 
         if task_type != "digest":
             feed_og_download = (fc.get("og_image") or {}).get("download")
@@ -224,6 +277,10 @@ async def _process_llm_evaluate_task(
                     v = filter_result.get(e.id)
                     if v and v.get("reason"):
                         e = dc_replace(e, description=v["reason"])
+                    elif e.summary:
+                        e = dc_replace(e, description=e.summary)
+                elif e.summary:
+                    e = dc_replace(e, description=e.summary)
                 all_entries_to_post.append((feed_color, download_og, e))
 
         for item in final_items:

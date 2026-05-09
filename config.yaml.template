@@ -34,6 +34,8 @@ tasks:
     # og_image:                  # optional — OG image settings for this task
     #   skip: true              # skip OG image fetching entirely (default: false)
     #   download: true          # download+optimize as WebP; overrides global og_image.download (default: false)
+    # summarize: true           # optional — LLM-summarize each entry's description before filtering/posting (default: false)
+    #                           # per-feed 'summarize' overrides this task-level default
     feeds:
       - name:
         url:
@@ -41,6 +43,7 @@ tasks:
         #   color: "#FF0000" # optional — overrides task discord.color for this feed
         # og_image:
         #   download: true        # optional — overrides task/global og_image.download for this feed
+        # summarize: true         # optional — override task-level summarize for this feed
         # filter:
         #   title:
         #     extract: "\\d+ de \\w+"          # extract match (group 1 if captured, else group 0)
