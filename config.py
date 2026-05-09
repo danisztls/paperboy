@@ -61,6 +61,10 @@ def _get_scraper_cfg(task_cfg: dict) -> dict:
     return next((item["scraper"] for item in task_cfg.get("pull", []) if "scraper" in item), {})
 
 
+def _get_file_path(task_cfg: dict) -> str | None:
+    return next((item["file"] for item in task_cfg.get("push", []) if "file" in item), None)
+
+
 def _make_secret_loader(secrets: dict | None, secrets_path: pathlib.Path) -> type:
     import yaml
 
@@ -242,11 +246,12 @@ class _PushDiscordItem(BaseModel):
 class _PushItem(BaseModel):
     model_config = ConfigDict(extra='forbid')
     discord: _PushDiscordItem | None = None
+    file: str | None = None
 
     @model_validator(mode='after')
     def _has_target(self):
         if not self.model_fields_set:
-            raise ValueError("each push item must have a target key (e.g. 'discord')")
+            raise ValueError("each push item must have a target key (e.g. 'discord', 'file')")
         return self
 
 
@@ -278,8 +283,9 @@ class _Task(BaseModel):
         has_feed_pull = any(item.feed is not None for item in self.pull)
         has_scraper_pull = any(item.scraper is not None for item in self.pull)
         has_discord_push = any(item.discord is not None for item in self.push)
-        if not has_discord_push:
-            raise ValueError("push must contain at least one discord target")
+        has_file_push = any(item.file is not None for item in self.push)
+        if not (has_discord_push or has_file_push):
+            raise ValueError("push must contain at least one target (discord or file)")
         if has_scraper_pull and (has_llm_pull or has_feed_pull):
             raise ValueError("pull cannot mix scraper with feed or llm items")
         if has_scraper_pull and sum(1 for item in self.pull if item.scraper is not None) > 1:

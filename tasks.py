@@ -6,13 +6,14 @@ from datetime import datetime, timedelta, timezone
 
 import aiohttp
 
-from config import _parse_color, _task_type, _get_feeds, _get_discord_cfg
+from config import _parse_color, _task_type, _get_feeds, _get_discord_cfg, _get_file_path
 from pipeline import Item, FilterResult, PushContext
 from feed import RSSSource, get_new_entries
 from discord import (
     DiscordEmbedTarget, DiscordDigestTarget, DiscordTextTarget,
     post_text_to_discord,
 )
+from file import FileEmbedTarget, FileDigestTarget
 from llm import LLMSearchSource, run_llm_task, filter_entries, summarize_entry
 from scraper import ScraperSource
 
@@ -203,6 +204,9 @@ async def _process_llm_search_task(
         log.error("Skipping LLM task %s due to post failure", name)
         return {}
 
+    if _get_file_path(task_cfg):
+        await FileEmbedTarget().push(ctx, task_cfg, session)
+
     return {name: {"last_run": datetime.now(timezone.utc).replace(microsecond=0).isoformat()}}
 
 
@@ -329,10 +333,14 @@ async def _process_llm_evaluate_task(
             log.error("[%s] Failed to post digest — state not saved", task_name)
             return {}
         log.info("[%s] Posted digest", task_name)
+        if _get_file_path(task_cfg):
+            await FileDigestTarget().push(ctx, task_cfg, session)
     else:
         target = DiscordEmbedTarget(fetch_og=fetch_og)
         ctx = PushContext(items=passing, memory=memory_text, cite_map=cite_map)
         failed_ids = await target.push(ctx, task_cfg, session)
+        if _get_file_path(task_cfg):
+            await FileEmbedTarget().push(ctx, task_cfg, session)
 
     # --- State update ---
     now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -432,6 +440,8 @@ async def _process_scraper_task(
     target = DiscordEmbedTarget(fetch_og=False)
     ctx = PushContext(items=colored_items)
     failed_ids = await target.push(ctx, task_cfg, session)
+    if _get_file_path(task_cfg):
+        await FileEmbedTarget().push(ctx, task_cfg, session)
 
     prev_by_url = {item["url"]: item for item in prev_items}
     merged = list(prev_items)

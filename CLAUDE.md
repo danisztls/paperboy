@@ -9,6 +9,8 @@ A personal notifier that posts to Discord webhooks on a cron schedule. Supports 
 - **Digest tasks**: like RSS tasks but all passing entries are collected and posted as a single text message (splits on 2000-char limit). No OG image fetching. Uses `[Title](<url>)` to suppress Discord link previews.
 - **LLM tasks**: calls OpenAI Responses API with a prompt + `web_search_preview` tool, posts the plain-text response. Good for scheduled digests ("today's news, filter for signal > noise").
 
+Each task can push to any combination of targets. Supported targets: `discord` (webhook), `file` (local markdown file).
+
 Intended to be run on a cron, not as a long-lived process.
 
 ## Commands
@@ -31,7 +33,7 @@ Logs are written to `<state_dir>/logs/<timestamp>.log` on every run.
 
 ## Architecture
 
-Nine modules, no package, flat layout. The execution model follows a **pull → process → push** pipeline:
+Ten modules, no package, flat layout. The execution model follows a **pull → process → push** pipeline:
 
 ```
 Source.pull()  →  _summarize_items() + _apply_llm_filter()  →  Target.push()
@@ -53,15 +55,15 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
 ### Module overview
 
 - `main.py` — CLI entry point and orchestration. Resolves config/state paths, manages a lock file, loads config + state, opens a single shared `aiohttp.ClientSession`, then dispatches to one of four modes: normal (run due tasks in parallel), `--regenerate-state`, `--clean`/`--migrate`, or `--validate`.
-- `config.py` — config loading and validation. `load_config(path)` reads YAML or JSON. `validate_config(config)` uses Pydantic models to validate the full config and returns a list of error strings. Also houses `_parse_color`, `_parse_period`, `_task_type` (returns the explicit `type:` key if present; otherwise infers from `pull` list: any `llm` item → LLM task, else feeds), and three helpers: `_get_feeds(task_cfg)` (extracts feed dicts from pull list), `_get_discord_cfg(task_cfg)` (extracts first discord push config), `_get_llm_pull_cfg(task_cfg)` (extracts llm pull source config).
+- `config.py` — config loading and validation. `load_config(path)` reads YAML or JSON. `validate_config(config)` uses Pydantic models to validate the full config and returns a list of error strings. Also houses `_parse_color`, `_parse_period`, `_task_type` (returns the explicit `type:` key if present; otherwise infers from `pull` list: any `llm` item → LLM task, else feeds), and helpers: `_get_feeds(task_cfg)` (extracts feed dicts from pull list), `_get_discord_cfg(task_cfg)` (extracts first discord push config), `_get_llm_pull_cfg(task_cfg)` (extracts llm pull source config), `_get_file_path(task_cfg)` (extracts file push path string, or `None`).
 - `state.py` — state I/O and maintenance. `load_state`, `save_state` (writes `.old` backup, stamps `_version` and `_last_run`), and `_auto_clean` (removes malformed items; only runs when `--clean` is explicitly invoked).
 - `migrate.py` — state schema migrations. `needs_migration(state)` checks `state["_version"]` against `CURRENT_VERSION` (2). `migrate(state)` steps through `_STEPS` until current. The v2 migration nests all task keys under a top-level `"tasks"` key.
 - `tasks.py` — task orchestration. Implements the pipeline stages:
   - `_pull_feeds(source, feed_cfgs, feeds_state, task_filter, session)` — fetches all feeds concurrently via `RSSSource`, merges heuristic filters, returns `{url: PullResult | None}`.
   - `_summarize_items(items, ...)` — concurrently summarizes item bodies via LLM; sets `item.summary`.
   - `_apply_llm_filter(items, filter_cfg, ...)` — groups items by source, calls `filter_entries`, maps results back onto items as `filter_pass`/`filter_reason`, retries once on failure; returns `FilterResult`.
-  - `_process_llm_search_task` — LLM web-search pipeline: `LLMSearchSource.pull()` → `DiscordTextTarget.push()`.
-  - `_process_llm_evaluate_task` — RSS/digest pipeline: pull → summarize → filter → `DiscordEmbedTarget` or `DiscordDigestTarget` → state update.
+  - `_process_llm_search_task` — LLM web-search pipeline: `LLMSearchSource.pull()` → `DiscordTextTarget.push()` (+ `FileEmbedTarget` if configured).
+  - `_process_llm_evaluate_task` — RSS/digest pipeline: pull → summarize → filter → `DiscordEmbedTarget` or `DiscordDigestTarget` (+ `FileEmbedTarget` or `FileDigestTarget` if configured) → state update.
   - `_is_due` checks period with 60s grace. `_merge_filter` combines task-level and feed-level heuristic filter dicts.
 - `feed.py` — feed fetching, dedup, and entry enrichment.
   - `RSSSource(Source)` — concrete source; wraps `get_new_entries`.
@@ -76,6 +78,9 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
   - `DiscordTextTarget(Target)` — posts each item's body as a plain text message (truncated to 2000 chars).
   - `DiscordDigestTarget(Target)` — posts `ctx.memory` as ≤2000-char chunks with `[n]` citation markers replaced by `[[Source]](<url>)` Discord masked links.
   - Underlying functions `post_to_discord`, `post_text_to_discord`, `post_digest_to_discord` remain exported. All use `_post_webhook` which retries once on 429. OG image fetching retries once after 2s on bot-detection (response < 2 KB).
+- `file.py` — file-based target implementations. Path is expanded (`~`, env vars) and parent dirs are created on first write.
+  - `FileEmbedTarget(Target)` — appends each item as `## [Title](url)\n*source · date*\n\nbody\n\n---` blocks to the configured file. Used for RSS, scraper, and LLM search tasks.
+  - `FileDigestTarget(Target)` — appends `## YYYY-MM-DD\n\ndigest text\n\n---` to the configured file, with `[n]` citation markers resolved to standard markdown `[Source](url)` links. Used for digest tasks.
 
 ### State shape
 
