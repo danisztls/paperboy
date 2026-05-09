@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import aiohttp
 
-from config import _parse_color, _task_type
+from config import _parse_color, _task_type, _get_feeds, _get_discord_cfg
 from pipeline import Item, FilterResult, PushContext
 from feed import RSSSource, get_new_entries
 from discord import (
@@ -218,7 +218,7 @@ async def _process_llm_evaluate_task(
 ) -> dict:
     """Pull RSS feeds, optionally filter/summarize, push to Discord. Returns {task_name: task_state}."""
     task_name = task_cfg["name"]
-    task_discord = task_cfg.get("discord", {})
+    task_discord = _get_discord_cfg(task_cfg)
     task_color = _parse_color(task_discord.get("color"))
     filter_cfg = task_cfg.get("llm") or None
     explain = bool(filter_cfg.get("explain")) if filter_cfg else False
@@ -229,7 +229,7 @@ async def _process_llm_evaluate_task(
     task_summarize = task_cfg.get("summarize", False)
     task_type = _task_type(task_cfg)
 
-    feed_cfgs = [fc for fc in task_cfg.get("feeds", []) if fc.get("url")]
+    feed_cfgs = [fc for fc in _get_feeds(task_cfg) if fc.get("url")]
     task_state = state.get("tasks", {}).get(task_name, {})
     feeds_state = task_state.get("feeds", {})
 

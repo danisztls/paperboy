@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 import aiohttp
 
-from config import _parse_color, _parse_period, _task_type, load_config, validate_config
+from config import _parse_color, _parse_period, _task_type, _get_feeds, _get_discord_cfg, _get_llm_pull_cfg, load_config, validate_config
 from state import _auto_clean, _remove_unknown, load_state, save_state
 from tasks import DEFAULT_PERIOD, _is_due, _process_llm_search_task, _process_llm_evaluate_task
 from feed import RSSSource
@@ -229,9 +229,9 @@ async def _async_main(args: argparse.Namespace) -> None:
         _auto_clean(state)
         known_tasks = {t["name"] for t in config.get("tasks", []) if t.get("name")}
         known_feeds = {
-            t["name"]: {f["url"] for f in t.get("feeds", []) if f.get("url")}
+            t["name"]: {f["url"] for f in _get_feeds(t) if f.get("url")}
             for t in config.get("tasks", [])
-            if t.get("name") and t.get("feeds")
+            if t.get("name") and t.get("pull")
         }
         _remove_unknown(state, known_tasks, known_feeds)
         save_state(state_path, state)
@@ -271,7 +271,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                 task_state = state.setdefault("tasks", {}).setdefault(task_name, {})
                 feeds_state = task_state.setdefault("feeds", {})
                 source = RSSSource()
-                for feed_cfg in task_cfg.get("feeds", []):
+                for feed_cfg in _get_feeds(task_cfg):
                     url = feed_cfg.get("url")
                     if not url:
                         continue
@@ -304,7 +304,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     sys.exit(1)
 
             for task_cfg in task_list:
-                webhook = task_cfg.get("discord", {}).get("webhook")
+                webhook = _get_discord_cfg(task_cfg).get("webhook")
                 if not webhook:
                     continue
                 period = _parse_period(task_cfg.get("period", DEFAULT_PERIOD))
@@ -313,7 +313,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     if not name:
                         log.warning("Skipping LLM task with no name")
                         continue
-                    if not task_cfg.get("llm", {}).get("web_search"):
+                    if not _get_llm_pull_cfg(task_cfg).get("web_search"):
                         log.warning("[%s] Skipping LLM task: llm.web_search not configured (no input source)", name)
                         continue
                     task_state = state.get("tasks", {}).get(name, {"last_run": None})
@@ -332,7 +332,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                         log.warning("Skipping feeds task with no name")
                         continue
                     feeds_state = state.get("tasks", {}).get(task_name, {}).get("feeds", {})
-                    feed_urls = [f["url"] for f in task_cfg.get("feeds", []) if f.get("url")]
+                    feed_urls = [f["url"] for f in _get_feeds(task_cfg) if f.get("url")]
                     if not force_task and not any(
                         _is_due(feeds_state.get(u, {"last_run": None}), period, now) for u in feed_urls
                     ):

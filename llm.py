@@ -3,6 +3,7 @@ import logging
 
 from openai import AsyncOpenAI
 
+from config import _get_llm_pull_cfg
 from pipeline import Item, PullResult, Source
 
 DEFAULT_MODEL = "gpt-5.4-mini"
@@ -192,7 +193,7 @@ async def run_llm_task(task_cfg: dict, instructions: str | None = None, global_m
     """Call OpenAI Responses API with web_search_preview. Returns response text or None on failure."""
     client = AsyncOpenAI(api_key=api_key) if api_key else AsyncOpenAI()
     name = task_cfg.get("name")
-    llm_cfg = task_cfg.get("llm", {})
+    llm_cfg = _get_llm_pull_cfg(task_cfg)
     model = llm_cfg.get("model") or global_model or DEFAULT_MODEL
     prompt = llm_cfg["prompt"]
     web_search = llm_cfg.get("web_search", {})
