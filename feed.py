@@ -26,6 +26,7 @@ class FeedEntry:
     feed_title: str
     image: str | None = None
     published: datetime | None = None
+    summary: str | None = None
 
 
 

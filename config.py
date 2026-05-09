@@ -156,6 +156,7 @@ class _Feed(BaseModel):
     discord: _FeedDiscord = Field(default_factory=_FeedDiscord)
     og_image: _OgImage | None = None
     filter: _FilterDict | None = None
+    summarize: bool | None = None
 
 
 class _TaskDiscord(BaseModel):
@@ -184,6 +185,7 @@ class _Task(BaseModel):
     filter: _FilterDict | None = None
     llm: _TaskLLM | None = None
     feeds: list[_Feed] = []
+    summarize: bool | None = None
 
     @model_validator(mode='after')
     def _check_llm_task(self):

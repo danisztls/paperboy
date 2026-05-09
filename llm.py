@@ -112,6 +112,34 @@ async def filter_entries(
         return None
 
 
+async def summarize_entry(
+    title: str,
+    description: str,
+    api_key: str | None = None,
+    model: str | None = None,
+    language: str = "EN-US",
+) -> str | None:
+    """Summarize a feed entry description. Returns 2-3 sentence summary or None on failure."""
+    client = AsyncOpenAI(api_key=api_key) if api_key else AsyncOpenAI()
+    model = model or DEFAULT_MODEL
+    instructions = (
+        f"You are a precise, concise summarizer. Write in {language}. "
+        "Given the title and description of a news article or feed entry, write a brief summary "
+        "in 2-3 sentences covering the main point and key details. No filler phrases."
+    )
+    log.info("Summarizing entry (model=%s): %s", model, title[:80])
+    try:
+        response = await client.responses.create(
+            model=model,
+            instructions=instructions,
+            input=f"Title: {title}\n\nDescription:\n{description}",
+        )
+        return (response.output_text or "").strip() or None
+    except Exception as exc:
+        log.error("Summarize entry failed: %s", exc)
+        return None
+
+
 async def summarize_transcript(title: str, transcript: str, api_key: str | None = None, model: str | None = None, language: str = "EN-US") -> str | None:
     """Summarize a video transcript. Returns summary text or None on failure."""
     client = AsyncOpenAI(api_key=api_key) if api_key else AsyncOpenAI()
