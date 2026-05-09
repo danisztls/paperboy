@@ -15,12 +15,12 @@ Intended to be run on a cron, not as a long-lived process.
 
 The project uses `uv` (see `uv.lock`, `.python-version` pinning Python 3.14).
 
-- Run: `uv run claudinho` (reads `~/.config/claudinho/config.yaml`, writes state to `~/.local/share/claudinho/state.json`)
-- Run with explicit config: `uv run claudinho --config config.yaml` (state defaults to `<config_dir>/state.json`)
-- Run one task by name, ignoring period/last_run: `uv run claudinho --task "world-news"`
+- Run: `uv run main.py` (reads `~/.config/claudinho/config.yaml`, writes state to `~/.local/share/claudinho/state.json`)
+- Run with explicit config: `uv run main.py --config config.yaml` (state defaults to `<config_dir>/state.json`)
+- Run one task by name, ignoring period/last_run: `uv run main.py --task "world-news"`
 - Verbose output: add `--verbose` to any invocation
-- Validate config and exit: `uv run claudinho --validate`
-- Migrate state to current schema version: `uv run claudinho --migrate`
+- Validate config and exit: `uv run main.py --validate`
+- Migrate state to current schema version: `uv run main.py --migrate`
 - Sync deps: `uv sync`
 
 There is no test suite, linter, or formatter configured.
