@@ -14,7 +14,7 @@ import aiohttp
 
 from config import _parse_color, _parse_period, _task_type, _get_feeds, _get_discord_cfg, _get_llm_pull_cfg, load_config, validate_config
 from state import _auto_clean, _remove_unknown, load_state, save_state
-from tasks import DEFAULT_PERIOD, _is_due, _process_llm_search_task, _process_llm_evaluate_task
+from tasks import DEFAULT_PERIOD, _is_due, _process_llm_search_task, _process_llm_evaluate_task, _process_scraper_task
 from feed import RSSSource
 from summarize import run_summarize
 from migrate import CURRENT_VERSION, needs_migration, migrate
@@ -227,6 +227,18 @@ async def _async_main(args: argparse.Namespace) -> None:
                         )
                         continue
                     feed_tasks.append(_process_llm_search_task(task_cfg, state, session, instructions=instructions, search_model=search_model, llm_api_key=llm_api_key))
+                elif _task_type(task_cfg) == "scraper":
+                    task_name = task_cfg.get("name")
+                    if not task_name:
+                        log.warning("Skipping scraper task with no name")
+                        continue
+                    task_state = state.get("tasks", {}).get(task_name, {"last_run": None})
+                    if not force_task and not _is_due(task_state, period, now):
+                        last = datetime.fromisoformat(task_state["last_run"])
+                        mins = int((now - last).total_seconds() // 60)
+                        log.info("[%s] Skipping — last run %d min ago, period is %s", task_name, mins, period)
+                        continue
+                    feed_tasks.append(_process_scraper_task(task_cfg, state, session, global_color=global_color))
                 else:
                     task_name = task_cfg.get("name")
                     if not task_name:
@@ -307,7 +319,7 @@ def main():
     args = parser.parse_args()
 
     if args.verbose:
-        for name in ("__main__", "feed", "llm", "discord"):
+        for name in ("__main__", "feed", "llm", "discord", "scraper", "adapters.vivareal"):
             logging.getLogger(name).setLevel(logging.DEBUG)
 
     if args.validate:
