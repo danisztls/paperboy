@@ -37,7 +37,22 @@ def _task_type(task_cfg: dict) -> str:
     explicit = task_cfg.get("type")
     if explicit:
         return explicit
-    return "llm" if "feeds" not in task_cfg and "llm" in task_cfg else "feeds"
+    pull = task_cfg.get("pull", [])
+    if any("llm" in item for item in pull):
+        return "llm"
+    return "feeds"
+
+
+def _get_feeds(task_cfg: dict) -> list[dict]:
+    return [item["feed"] for item in task_cfg.get("pull", []) if "feed" in item]
+
+
+def _get_discord_cfg(task_cfg: dict) -> dict:
+    return next((item["discord"] for item in task_cfg.get("push", []) if "discord" in item), {})
+
+
+def _get_llm_pull_cfg(task_cfg: dict) -> dict:
+    return next((item["llm"] for item in task_cfg.get("pull", []) if "llm" in item), {})
 
 
 def _make_secret_loader(secrets: dict | None, secrets_path: pathlib.Path) -> type:
@@ -173,7 +188,7 @@ class _OgImage(BaseModel):
     download: bool | None = None
 
 
-class _Feed(BaseModel):
+class _PullFeedItem(BaseModel):
     model_config = ConfigDict(extra='forbid')
     name: str | None = None
     url: str
@@ -183,10 +198,42 @@ class _Feed(BaseModel):
     summarize: bool | None = None
 
 
-class _TaskDiscord(BaseModel):
+class _PullLLMItem(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    prompt: str
+    model: str | None = None
+    web_search: bool | dict
+    instructions: str | None = None
+
+
+class _PullItem(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    feed: _PullFeedItem | None = None
+    llm: _PullLLMItem | None = None
+
+    @model_validator(mode='after')
+    def _exactly_one(self):
+        present = [k for k in ('feed', 'llm') if k in self.model_fields_set]
+        if len(present) != 1:
+            raise ValueError("each pull item must have exactly one key: 'feed' or 'llm'")
+        return self
+
+
+class _PushDiscordItem(BaseModel):
     model_config = ConfigDict(extra='forbid')
     webhook: str
     color: _Color = None
+
+
+class _PushItem(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    discord: _PushDiscordItem | None = None
+
+    @model_validator(mode='after')
+    def _has_target(self):
+        if not self.model_fields_set:
+            raise ValueError("each push item must have a target key (e.g. 'discord')")
+        return self
 
 
 class _TaskLLM(BaseModel):
@@ -202,25 +249,24 @@ class _TaskLLM(BaseModel):
 class _Task(BaseModel):
     model_config = ConfigDict(extra='forbid')
     name: str
-    type: Literal['feeds', 'llm', 'digest'] | None = None
-    discord: _TaskDiscord
+    type: Literal['digest'] | None = None
     period: _Period = None
+    pull: list[_PullItem]
+    push: list[_PushItem]
     og_image: _OgImage | None = None
     filter: _FilterDict | None = None
     llm: _TaskLLM | None = None
-    feeds: list[_Feed] = []
     summarize: bool | None = None
 
     @model_validator(mode='after')
-    def _check_llm_task(self):
-        task_type = self.type or (
-            "llm" if "feeds" not in self.model_fields_set and self.llm is not None else "feeds"
-        )
-        if task_type == "llm":
-            if self.llm is None:
-                raise ValueError("LLM task (no 'feeds' key) requires an 'llm' key")
-            if not self.llm.web_search:
-                raise ValueError("'web_search' is required for LLM tasks (no 'feeds' configured)")
+    def _check_task(self):
+        has_llm_pull = any(item.llm is not None for item in self.pull)
+        has_feed_pull = any(item.feed is not None for item in self.pull)
+        has_discord_push = any(item.discord is not None for item in self.push)
+        if not has_discord_push:
+            raise ValueError("push must contain at least one discord target")
+        if has_llm_pull and has_feed_pull:
+            raise ValueError("pull cannot mix feed and llm items")
         return self
 
 
