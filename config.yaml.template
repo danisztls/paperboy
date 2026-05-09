@@ -7,7 +7,7 @@ llm:                        # optional — global defaults for all LLM tasks
   models:
     reasoning: gpt-5.4-mini  # used for RSS/digest LLM filter (per-task 'model' overrides this)
     topic: gpt-5.4-nano      # used for standalone LLM tasks (per-task 'model' overrides this)
-  # api_key: "sk-..."         # optional — overrides $OPENAI_API_KEY env var
+  # api_key: !secret openai_api_key  # optional — or use $OPENAI_API_KEY env var
   # instructions: "..."      # additional instructions appended to the built-in system prompt for LLM tasks
   # language: "EN-US"        # language for filter memory briefings (default: EN-US; per-filter 'language' overrides)
 
@@ -15,7 +15,7 @@ tasks:
   # RSS task: fetches feeds and posts new entries as Discord embeds.
   - name: my-feeds
     discord:
-      webhook: "https://discordapp.com/api/webhooks/<NUMBER>/<TOKEN>"
+      webhook: !secret discord_webhook_my_feeds  # or a literal URL string
       # color: "#5865F2"   # optional — overrides global discord.color for this task
     # Minimum time between processing this task's feeds. Default: 1h.
     # Requires a suffix: "30m", "6h", "1d".
@@ -64,7 +64,7 @@ tasks:
   # - name: my-digest
   #   type: digest
   #   discord:
-  #     webhook: "https://discordapp.com/api/webhooks/<NUMBER>/<TOKEN>"
+  #     webhook: !secret discord_webhook_my_digest  # or a literal URL string
   #   period: 24h
   #   llm:
   #     prompt: "Only keep items about AI and machine learning"
@@ -76,7 +76,7 @@ tasks:
   # Detected by absence of 'feeds' key and presence of 'llm' key. Requires llm.web_search.
   - name: world-news
     discord:
-      webhook: "https://discordapp.com/api/webhooks/<NUMBER>/<TOKEN>"
+      webhook: !secret discord_webhook_world_news  # or a literal URL string
     period: 24h
     llm:
       prompt: "Today news. World. Filter for signal > noise."
