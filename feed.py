@@ -166,6 +166,11 @@ async def get_new_entries(
     current_items = []
     unseen_raw = []
 
+    feed_filter = feed_cfg.get("filter", {})
+    filter_title = feed_filter.get("title")
+    filter_description = feed_filter.get("description")
+    filter_url = feed_filter.get("url")
+
     now = datetime.now(timezone.utc)
     for entry in parsed.entries:
         eid = entry.get("link")
@@ -187,11 +192,6 @@ async def get_new_entries(
     log.info("[%s] New entries to post: %d", feed_title, len(unseen_raw))
 
     ordered = list(reversed(unseen_raw))
-
-    feed_filter = feed_cfg.get("filter", {})
-    filter_title = feed_filter.get("title")
-    filter_description = feed_filter.get("description")
-    filter_url = feed_filter.get("url")
 
     new_entries = []
     for eid, entry in ordered:
