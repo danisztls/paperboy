@@ -209,7 +209,7 @@ async def _async_main(args: argparse.Namespace) -> None:
     log.info("State:  %s", state_path)
 
     config = load_config(config_path)
-    config_errors = validate_config(config)
+    config_errors = validate_config(config, config_path)
     if config_errors:
         for err in config_errors:
             log.error("Config error: %s", err)
@@ -418,7 +418,7 @@ def main():
             log.error("Config file not found: %s", config_path)
             sys.exit(1)
         config = load_config(config_path)
-        errors = validate_config(config)
+        errors = validate_config(config, config_path)
         if errors:
             for err in errors:
                 log.error("Config error: %s", err)
