@@ -1,7 +1,6 @@
 import asyncio
 import re
 import logging
-from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import aiohttp
@@ -9,25 +8,14 @@ import feedparser
 import feedparser.sanitizer
 from bs4 import BeautifulSoup
 
+from pipeline import Item, PullResult, Source
+
 feedparser.sanitizer._HTMLSanitizer.acceptable_attributes.add("srcset")
 
-DESCRIPTION_MAX = 512 
+DESCRIPTION_MAX = 512
 ENTRY_MAX_AGE_SECONDS = 7 * 86400
 
 log = logging.getLogger(__name__)
-
-
-@dataclass
-class FeedEntry:
-    id: str
-    title: str
-    link: str
-    description: str
-    feed_title: str
-    image: str | None = None
-    published: datetime | None = None
-    summary: str | None = None
-
 
 
 def _strip_html(text: str) -> str:
@@ -101,7 +89,7 @@ def _best_srcset_url(srcset: str) -> str | None:
         val = 1.0
         if len(tokens) > 1:
             try:
-                val = float(tokens[-1][:-1])  # strip trailing 'x' or 'w'
+                val = float(tokens[-1][:-1])
             except ValueError:
                 pass
         if val > best_val:
@@ -133,13 +121,12 @@ async def get_new_entries(
     feed_cfg: dict,
     seen: set[str],
     session: aiohttp.ClientSession,
-) -> tuple[list[dict], list[FeedEntry]] | None:
-    """Fetch feed, return (current_ids, new_entries) or None on failure.
+) -> tuple[list[dict], list[Item]] | None:
+    """Fetch feed, return (current_items, new_entries) or None on failure.
 
-    current_ids: all entry IDs currently in the feed (for state update).
-    new_entries: fully enriched FeedEntry list for unseen entries, chronological order.
-    Returns None if the feed could not be parsed, so the caller can avoid
-    overwriting state (including the last_run timestamp) for a broken fetch.
+    current_items: all entries currently in the feed (url+title dicts, for state).
+    new_entries: fully enriched Item list for unseen entries, chronological order.
+    Returns None if the feed could not be parsed so callers skip the state write.
     """
     url = feed_cfg["url"]
     log.info("Fetching feed: %s", url)
@@ -193,7 +180,7 @@ async def get_new_entries(
 
     ordered = list(reversed(unseen_raw))
 
-    new_entries = []
+    new_entries: list[Item] = []
     for eid, entry in ordered:
         link = entry.get("link", "")
         raw_desc = (
@@ -202,28 +189,45 @@ async def get_new_entries(
             or next((c.get("value", "") for c in entry.get("content", [])), "")
             or ""
         )
-        description = _strip_html(raw_desc).strip()
+        body = _strip_html(raw_desc).strip()
         if filter_description:
-            description = _apply_regex(filter_description, description)
-        description = "\n".join(line for line in description.splitlines() if line.strip())
-        if len(description) > DESCRIPTION_MAX:
-            description = description[:DESCRIPTION_MAX].rstrip() + "…"
-        description = _escape_markdown(description)
+            body = _apply_regex(filter_description, body)
+        body = "\n".join(line for line in body.splitlines() if line.strip())
+        if len(body) > DESCRIPTION_MAX:
+            body = body[:DESCRIPTION_MAX].rstrip() + "…"
+        body = _escape_markdown(body)
 
         pt = entry.get("published_parsed") or entry.get("updated_parsed")
         published = datetime(*pt[:6], tzinfo=timezone.utc) if pt else None
 
-        fe = FeedEntry(
+        title = (_entry_title(entry) or "(no title)")[:256]
+        if filter_title:
+            title = _apply_regex(filter_title, title)
+
+        new_entries.append(Item(
             id=eid,
-            title=(_entry_title(entry) or "(no title)")[:256],
-            link=link,
-            description=description,
-            feed_title=feed_title,
+            title=title,
+            source=feed_title,
+            url=link,
+            body=body,
             image=_entry_image(entry),
             published=published,
-        )
-        if filter_title:
-            fe.title = _apply_regex(filter_title, fe.title)
-        new_entries.append(fe)
+        ))
 
     return current_items, new_entries
+
+
+class RSSSource(Source):
+    """Pulls items from an RSS/Atom feed."""
+
+    async def pull(
+        self,
+        cfg: dict,
+        seen: set[str],
+        session,
+    ) -> PullResult | None:
+        result = await get_new_entries(cfg, seen, session)
+        if result is None:
+            return None
+        current_items, new_items = result
+        return PullResult(new_items=new_items, current_items=current_items)
