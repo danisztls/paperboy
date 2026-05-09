@@ -16,7 +16,7 @@ import aiohttp
 from config import _parse_color, _parse_period, _task_type, load_config, validate_config
 from state import _auto_clean, _remove_unknown, load_state, save_state
 from tasks import DEFAULT_PERIOD, _is_due, _process_llm_search_task, _process_llm_evaluate_task
-from feed import get_new_entries
+from feed import RSSSource
 from llm import summarize_transcript
 from migrate import CURRENT_VERSION, needs_migration, migrate
 
@@ -270,24 +270,24 @@ async def _async_main(args: argparse.Namespace) -> None:
                     continue
                 task_state = state.setdefault("tasks", {}).setdefault(task_name, {})
                 feeds_state = task_state.setdefault("feeds", {})
+                source = RSSSource()
                 for feed_cfg in task_cfg.get("feeds", []):
                     url = feed_cfg.get("url")
                     if not url:
                         continue
-                    result = await get_new_entries(feed_cfg, set(), session)
-                    if result is None:
+                    pull_result = await source.pull(feed_cfg, set(), session)
+                    if pull_result is None:
                         log.warning("Failed to fetch %s, skipping", url)
                         continue
-                    current_items, _ = result
                     prev_access = {
                         item["url"]: item["access_date"]
                         for item in feeds_state.get(url, {}).get("items", [])
                         if "access_date" in item
                     }
-                    for item in current_items:
+                    for item in pull_result.current_items:
                         item["access_date"] = prev_access.get(item["url"], now)
-                    feeds_state[url] = {"items": current_items, "last_run": now}
-                    log.info("Regenerated %d items for %s", len(current_items), url)
+                    feeds_state[url] = {"items": pull_result.current_items, "last_run": now}
+                    log.info("Regenerated %d items for %s", len(pull_result.current_items), url)
             save_state(state_path, state)
             log.info("Done. State regenerated and saved to %s", state_path)
         else:

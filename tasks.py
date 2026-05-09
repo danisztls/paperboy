@@ -7,9 +7,13 @@ from datetime import datetime, timedelta, timezone
 import aiohttp
 
 from config import _parse_color, _task_type
-from feed import get_new_entries
-from discord import post_to_discord, post_text_to_discord, post_digest_to_discord
-from llm import run_llm_task, filter_entries, summarize_entry
+from pipeline import Item, FilterResult, PushContext
+from feed import RSSSource, get_new_entries
+from discord import (
+    DiscordEmbedTarget, DiscordDigestTarget, DiscordTextTarget,
+    post_text_to_discord,
+)
+from llm import LLMSearchSource, run_llm_task, filter_entries, summarize_entry
 
 DEFAULT_PERIOD = timedelta(hours=1)
 PERIOD_GRACE = timedelta(seconds=60)
@@ -35,7 +39,6 @@ def _merge_filter(task_f: dict, feed_f: dict) -> dict:
     return merged
 
 
-
 def _is_due(feed_state: dict, period: timedelta, now: datetime) -> bool:
     last_run = feed_state.get("last_run")
     if not last_run:
@@ -47,6 +50,134 @@ def _is_due(feed_state: dict, period: timedelta, now: datetime) -> bool:
     return (now - last) >= period - PERIOD_GRACE
 
 
+async def _pull_feeds(
+    source: RSSSource,
+    feed_cfgs: list[dict],
+    feeds_state: dict,
+    task_filter: dict,
+    session: aiohttp.ClientSession,
+) -> dict[str, object]:
+    """Fetch all feeds concurrently. Returns {url: PullResult | None}."""
+    task_filter = task_filter or {}
+
+    async def _fetch_one(fc: dict):
+        url = fc["url"]
+        seen = {item["url"] for item in feeds_state.get(url, {}).get("items", [])}
+        feed_filter = fc.get("filter", {})
+        merged_filter = _merge_filter(task_filter, feed_filter) if (task_filter or feed_filter) else {}
+        effective_fc = {**fc, "filter": merged_filter} if merged_filter else fc
+        return fc, await source.pull(effective_fc, seen, session)
+
+    results = await asyncio.gather(*[_fetch_one(fc) for fc in feed_cfgs], return_exceptions=True)
+
+    fetch_map: dict[str, object] = {}
+    for item in results:
+        if isinstance(item, Exception):
+            log.error("Feed fetch failed: %s", item)
+            continue
+        fc, pull_result = item
+        fetch_map[fc["url"]] = pull_result  # None means fetch failed
+
+    return fetch_map
+
+
+async def _summarize_items(
+    items: list[Item],
+    api_key: str | None,
+    model: str | None,
+    language: str,
+) -> list[Item]:
+    """Replace .summary on items that have a body, concurrently."""
+    to_summarize = [e for e in items if e.body]
+    if not to_summarize:
+        return items
+    results = await asyncio.gather(
+        *[summarize_entry(e.title, e.body, api_key=api_key, model=model, language=language)
+          for e in to_summarize],
+        return_exceptions=True,
+    )
+    updated = {
+        e.id: dc_replace(e, summary=s)
+        for e, s in zip(to_summarize, results)
+        if not isinstance(s, Exception) and s
+    }
+    return [updated.get(e.id, e) for e in items]
+
+
+async def _apply_llm_filter(
+    all_items: list[Item],
+    filter_cfg: dict,
+    model: str | None,
+    language: str,
+    memory_history: list[tuple[str, str]] | None,
+    api_key: str | None,
+) -> FilterResult:
+    """Run LLM filter on items. Returns FilterResult with filter_pass set on each item."""
+    # Build grouped payload for the LLM (grouped by source)
+    global_id = 0
+    id_map: dict[int, Item] = {}
+    payload_groups: list[dict] = []
+
+    # Group by source, preserving order
+    seen_sources: dict[str, list] = {}
+    for item in all_items:
+        seen_sources.setdefault(item.source, []).append(item)
+
+    for source_name, items in seen_sources.items():
+        group: dict = {"source": source_name, "items": []}
+        for item in items:
+            payload_item: dict = {"id": global_id, "title": item.title}
+            desc = item.summary or item.body
+            if desc:
+                payload_item["description"] = desc
+            group["items"].append(payload_item)
+            id_map[global_id] = item
+            global_id += 1
+        payload_groups.append(group)
+
+    cite_map: dict[int, tuple[str, str | None]] = {
+        gid: (item.source, item.url) for gid, item in id_map.items()
+    }
+
+    if not payload_groups:
+        return FilterResult(items=all_items, memory=None, cite_map=cite_map)
+
+    _filter_kwargs = dict(
+        language=language,
+        memory_history=memory_history,
+        api_key=api_key,
+        extra_instructions=filter_cfg.get("instructions") or None,
+    )
+    llm_return = await filter_entries(payload_groups, filter_cfg, model, **_filter_kwargs)
+    if llm_return is None:
+        log.warning("Filter failed, retrying in 10s")
+        await asyncio.sleep(10)
+        llm_return = await filter_entries(payload_groups, filter_cfg, model, **_filter_kwargs)
+    if llm_return is None:
+        log.error("Filter failed twice — treating all items as passing")
+        return FilterResult(items=all_items, memory=None, cite_map=cite_map)
+
+    raw_results, memory_text = llm_return
+
+    # Map LLM results back to Items
+    result_by_item_id: dict[str, dict] = {
+        id_map[int(gid)].id: v
+        for gid, v in raw_results.items()
+        if gid.isdigit() and int(gid) in id_map
+    }
+
+    annotated = [
+        dc_replace(
+            item,
+            filter_pass=result_by_item_id[item.id]["pass"] if item.id in result_by_item_id else True,
+            filter_reason=result_by_item_id[item.id]["reason"] if item.id in result_by_item_id else "",
+        )
+        for item in all_items
+    ]
+
+    return FilterResult(items=annotated, memory=memory_text, cite_map=cite_map)
+
+
 async def _process_llm_search_task(
     task_cfg: dict,
     state: dict,
@@ -56,18 +187,21 @@ async def _process_llm_search_task(
     search_model: str | None = None,
     llm_api_key: str | None = None,
 ) -> dict:
-    """Run one LLM task, post the response, return {name: task_state} on success or {} on failure."""
+    """Pull from LLM web search, post as plain text. Returns {name: task_state} or {}."""
     name = task_cfg["name"]
-    text = await run_llm_task(task_cfg, instructions, search_model, api_key=llm_api_key)
-    if text is None:
+    source = LLMSearchSource(instructions=instructions, global_model=search_model, api_key=llm_api_key)
+    pull_result = await source.pull(task_cfg, set(), session)
+    if pull_result is None or not pull_result.new_items:
         return {}
-    webhook = task_cfg.get("discord", {}).get("webhook")
+
+    target = DiscordTextTarget()
+    ctx = PushContext(items=pull_result.new_items)
     try:
-        await post_text_to_discord(webhook, text, session)
-        log.info("[%s] Posted LLM response (%d chars)", name, len(text))
+        await target.push(ctx, task_cfg, session)
     except Exception:
         log.error("Skipping LLM task %s due to post failure", name)
         return {}
+
     return {name: {"last_run": datetime.now(timezone.utc).replace(microsecond=0).isoformat()}}
 
 
@@ -82,239 +216,171 @@ async def _process_llm_evaluate_task(
     global_language: str = "EN-US",
     global_og_download: bool = False,
 ) -> dict:
-    """Run one RSS task (filtered or not), return {task_name: task_state}."""
+    """Pull RSS feeds, optionally filter/summarize, push to Discord. Returns {task_name: task_state}."""
     task_name = task_cfg["name"]
     task_discord = task_cfg.get("discord", {})
-    webhook = task_discord.get("webhook")
     task_color = _parse_color(task_discord.get("color"))
     filter_cfg = task_cfg.get("llm") or None
     explain = bool(filter_cfg.get("explain")) if filter_cfg else False
+    task_og_cfg = task_cfg.get("og_image") or {}
+    fetch_og = not task_og_cfg.get("skip", False)
+    task_og_download = task_og_cfg.get("download")
+    task_filter = task_cfg.get("filter", {})
+    task_summarize = task_cfg.get("summarize", False)
+    task_type = _task_type(task_cfg)
+
     feed_cfgs = [fc for fc in task_cfg.get("feeds", []) if fc.get("url")]
     task_state = state.get("tasks", {}).get(task_name, {})
     feeds_state = task_state.get("feeds", {})
 
     # Memory history (filtered tasks only)
     raw_history = task_state.get("memory", {}) if filter_cfg else {}
-    memory_history: list[str] | None = None
+    memory_history: list[tuple[str, str]] | None = None
     if raw_history:
         keys = sorted(raw_history)[-7:]
         memory_history = [(k, raw_history[k]) for k in keys] or None
 
-    # Fetch all feeds concurrently
-    task_og_cfg = task_cfg.get("og_image") or {}
-    fetch_og = not task_og_cfg.get("skip", False)
-    task_og_download = task_og_cfg.get("download")
-    task_filter = task_cfg.get("filter", {})
+    # --- Pull ---
+    source = RSSSource()
+    fetch_map = await _pull_feeds(source, feed_cfgs, feeds_state, task_filter, session)
 
-    async def _fetch_one(fc: dict):
-        url = fc["url"]
-        seen = {item["url"] for item in feeds_state.get(url, {}).get("items", [])}
-        feed_filter = fc.get("filter", {})
-        merged_filter = _merge_filter(task_filter, feed_filter) if (task_filter or feed_filter) else {}
-        effective_fc = {**fc, "filter": merged_filter} if merged_filter else fc
-        return fc, await get_new_entries(effective_fc, seen, session)
-
-    fetch_results = await asyncio.gather(*[_fetch_one(fc) for fc in feed_cfgs], return_exceptions=True)
-
-    # Phase 1: build feed_fetch_map
-    feed_fetch_map: dict[str, tuple | None] = {}
-    for item in fetch_results:
-        if isinstance(item, Exception):
-            log.error("[%s] Feed fetch failed: %s", task_name, item)
-            continue
-        fc, result = item
-        url = fc["url"]
-        if result is None:
-            feed_fetch_map[url] = None
-            continue
-        current_items, new_entries = result
-        feed_fetch_map[url] = (current_items, new_entries)
-
-    # Phase 2: summarize entries concurrently where enabled
-    task_summarize = task_cfg.get("summarize", False)
-    entries_to_summarize: list = []
+    # Collect all new items, tagged with per-feed display metadata
+    all_new_items: list[Item] = []
     for fc in feed_cfgs:
         url = fc["url"]
-        fetch = feed_fetch_map.get(url)
-        if fetch is None:
+        pull_result = fetch_map.get(url)
+        if pull_result is None:
             continue
-        feed_summarize = fc.get("summarize")
-        should_summarize = feed_summarize if feed_summarize is not None else task_summarize
-        if should_summarize:
-            _, new_entries = fetch
-            entries_to_summarize.extend(e for e in new_entries if e.description)
-
-    if entries_to_summarize:
-        sum_results = await asyncio.gather(
-            *[summarize_entry(e.title, e.description, api_key=llm_api_key, model=evaluate_model, language=global_language)
-              for e in entries_to_summarize],
-            return_exceptions=True,
+        feed_og_download = (fc.get("og_image") or {}).get("download")
+        download_og = (
+            feed_og_download if feed_og_download is not None
+            else task_og_download if task_og_download is not None
+            else global_og_download
         )
-        updated = {
-            e.id: dc_replace(e, summary=s)
-            for e, s in zip(entries_to_summarize, sum_results)
-            if not isinstance(s, Exception) and s
-        }
-        if updated:
-            for url in list(feed_fetch_map.keys()):
-                fetch = feed_fetch_map[url]
-                if fetch is None:
-                    continue
-                cur, entries = fetch
-                feed_fetch_map[url] = (cur, [updated.get(e.id, e) for e in entries])
+        feed_color = _parse_color(fc.get("discord", {}).get("color")) or task_color or global_color
+        items_with_meta = [
+            dc_replace(item, meta={**item.meta, "color": feed_color, "download_og": download_og})
+            for item in pull_result.new_items
+        ]
+        all_new_items.extend(items_with_meta)
 
-    # Phase 3: build LLM payload from (possibly updated) feed_fetch_map
-    global_id = 0
-    id_map: dict[int, object] = {}
-    payload_groups: list[dict] = []
-    for fc in feed_cfgs:
-        url = fc["url"]
-        fetch = feed_fetch_map.get(url)
-        if fetch is None:
-            continue
-        _, new_entries = fetch
-        if filter_cfg and new_entries:
-            group = {"source": new_entries[0].feed_title, "items": []}
-            for entry in new_entries:
-                item_payload: dict = {"id": global_id, "title": entry.title}
-                desc = entry.summary or entry.description
-                if desc:
-                    item_payload["description"] = desc
-                group["items"].append(item_payload)
-                id_map[global_id] = entry
-                global_id += 1
-            payload_groups.append(group)
+    # --- Process: summarize ---
+    if all_new_items:
+        # Determine which items need summarization
+        summarize_set: set[str] = set()
+        for fc in feed_cfgs:
+            url = fc["url"]
+            if fetch_map.get(url) is None:
+                continue
+            feed_summarize = fc.get("summarize")
+            should = feed_summarize if feed_summarize is not None else task_summarize
+            if should:
+                pull_result = fetch_map[url]
+                for item in pull_result.new_items:
+                    summarize_set.add(item.id)
 
-    # One LLM filter call for the whole task
-    filter_result: dict | None = None
-    memory_text: str | None = None
-    cite_map: dict[int, tuple[str, str | None]] = {gid: (entry.feed_title, entry.link) for gid, entry in id_map.items()}
-    if filter_cfg and payload_groups:
+        if summarize_set:
+            to_summarize = [it for it in all_new_items if it.id in summarize_set and it.body]
+            not_summarized = [it for it in all_new_items if it.id not in summarize_set or not it.body]
+            if to_summarize:
+                language = (filter_cfg or {}).get("language") or global_language
+                summarized = await _summarize_items(to_summarize, llm_api_key, evaluate_model, language)
+                by_id = {it.id: it for it in summarized}
+                all_new_items = [by_id.get(it.id, it) for it in all_new_items]
+
+    # --- Process: LLM filter ---
+    filter_result: FilterResult | None = None
+    if filter_cfg and all_new_items:
         language = filter_cfg.get("language") or global_language
-        _filter_kwargs = dict(
-            language=language,
-            memory_history=memory_history,
-            api_key=llm_api_key,
-            extra_instructions=filter_cfg.get("instructions") or None,
+        filter_result = await _apply_llm_filter(
+            all_new_items, filter_cfg, evaluate_model, language, memory_history, llm_api_key
         )
-        llm_return = await filter_entries(payload_groups, filter_cfg, evaluate_model, **_filter_kwargs)
-        if llm_return is None:
-            log.warning("[%s] Filter failed, retrying in 10s", task_name)
-            await asyncio.sleep(10)
-            llm_return = await filter_entries(payload_groups, filter_cfg, evaluate_model, **_filter_kwargs)
-        if llm_return is None:
-            log.error("[%s] Filter failed twice — skipping task", task_name)
-            return {}
-        raw_results, memory_text = llm_return
-        filter_result = {
-            id_map[int(gid)].id: v
-            for gid, v in raw_results.items()
-            if gid.isdigit() and int(gid) in id_map
-        }
 
-    task_type = _task_type(task_cfg)
-    all_entries_to_post: list = []
+    # Determine passing items and apply explain mode
+    if filter_result is not None:
+        passing = [it for it in filter_result.items if it.filter_pass is not False]
+        if explain:
+            passing = [
+                dc_replace(it, body=it.filter_reason or it.summary or it.body)
+                for it in passing
+            ]
+        elif all(it.summary is None for it in passing):
+            pass  # no summaries to apply
+        else:
+            passing = [dc_replace(it, body=it.summary or it.body) for it in passing]
+        all_annotated = filter_result.items
+        memory_text = filter_result.memory
+        cite_map = filter_result.cite_map
+    else:
+        # No filter: apply summaries if present
+        passing = [dc_replace(it, body=it.summary or it.body) for it in all_new_items]
+        all_annotated = all_new_items
+        memory_text = None
+        cite_map = {}
+
+    # --- Push ---
+    if task_type == "digest":
+        target: DiscordEmbedTarget | DiscordDigestTarget | DiscordTextTarget = DiscordDigestTarget()
+        ctx = PushContext(items=passing, memory=memory_text, cite_map=cite_map)
+        try:
+            failed_ids = await target.push(ctx, task_cfg, session)
+        except Exception:
+            log.error("[%s] Failed to post digest — state not saved", task_name)
+            return {}
+        log.info("[%s] Posted digest", task_name)
+    else:
+        target = DiscordEmbedTarget(fetch_og=fetch_og)
+        ctx = PushContext(items=passing, memory=memory_text, cite_map=cite_map)
+        failed_ids = await target.push(ctx, task_cfg, session)
+
+    # --- State update ---
     now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-    new_feeds_state = dict(feeds_state)  # carry forward state for feeds not fetched this run
+    new_feeds_state = dict(feeds_state)
 
     for fc in feed_cfgs:
         url = fc["url"]
-        fetch = feed_fetch_map.get(url)
-        if fetch is None:
+        pull_result = fetch_map.get(url)
+        if pull_result is None:
             continue  # failed fetch — leave existing state untouched
-        current_items, new_entries = fetch
 
         prev_items = feeds_state.get(url, {}).get("items", [])
         prev_by_url = {item["url"]: item for item in prev_items}
+        annotated_by_link = {it.id: it for it in all_annotated}
 
-        if filter_cfg:
-            if filter_result is None:
-                passing_ids = {e.id for e in new_entries}
-            else:
-                passing_ids = {eid for eid, v in filter_result.items() if v["pass"]}
-            entries_to_post = [e for e in new_entries if e.id in passing_ids]
-        else:
-            entries_to_post = new_entries
-
-        # Preserve all old items; append new ones not already in state
-        new_entry_by_link = {e.link: e for e in new_entries}
         if filter_cfg:
             final_items = list(prev_items)
-            for item in current_items:
-                item_url = item["url"]
+            for ci in pull_result.current_items:
+                item_url = ci["url"]
                 if item_url not in prev_by_url:
-                    e = new_entry_by_link.get(item_url)
-                    state_item = dict(item)
-                    if e is not None and e.summary:
-                        state_item["summary"] = e.summary
-                    if e is not None and filter_result is not None and e.id in filter_result:
-                        v = filter_result[e.id]
-                        state_item.update({"filter_pass": v["pass"], "filter_reason": v["reason"]})
+                    state_item = dict(ci)
+                    it = annotated_by_link.get(item_url)
+                    if it is not None and it.summary:
+                        state_item["summary"] = it.summary
+                    if it is not None and it.filter_pass is not None:
+                        state_item.update({"filter_pass": it.filter_pass, "filter_reason": it.filter_reason or ""})
                     else:
                         state_item["filter_pass"] = True
                     final_items.append(state_item)
         else:
-            new_items = []
-            for item in current_items:
-                if item["url"] not in prev_by_url:
-                    e = new_entry_by_link.get(item["url"])
-                    state_item = dict(item)
-                    if e is not None and e.summary:
-                        state_item["summary"] = e.summary
-                    new_items.append(state_item)
-            final_items = list(prev_items) + new_items
+            new_items_state = []
+            for ci in pull_result.current_items:
+                if ci["url"] not in prev_by_url:
+                    state_item = dict(ci)
+                    it = annotated_by_link.get(ci["url"])
+                    if it is not None and it.summary:
+                        state_item["summary"] = it.summary
+                    new_items_state.append(state_item)
+            final_items = list(prev_items) + new_items_state
 
-        if task_type != "digest":
-            feed_og_download = (fc.get("og_image") or {}).get("download")
-            download_og = (
-                feed_og_download if feed_og_download is not None
-                else task_og_download if task_og_download is not None
-                else global_og_download
-            )
-            feed_color = _parse_color(fc.get("discord", {}).get("color")) or task_color or global_color
-            for e in entries_to_post:
-                if explain and filter_result is not None:
-                    v = filter_result.get(e.id)
-                    if v and v.get("reason"):
-                        e = dc_replace(e, description=v["reason"])
-                    elif e.summary:
-                        e = dc_replace(e, description=e.summary)
-                elif e.summary:
-                    e = dc_replace(e, description=e.summary)
-                all_entries_to_post.append((feed_color, download_og, e))
+        # Remove any items that failed to post
+        if failed_ids:
+            final_items = [item for item in final_items if item["url"] not in failed_ids]
 
         for item in final_items:
             if "access_date" not in item:
                 item["access_date"] = now_iso
 
         new_feeds_state[url] = {"items": final_items, "last_run": now_iso}
-
-    failed_links: set[str] = set()
-    if task_type != "digest" and all_entries_to_post:
-        _far_future = datetime.max.replace(tzinfo=timezone.utc)
-        all_entries_to_post.sort(key=lambda c_e: c_e[2].published or _far_future)
-        for i, (entry_color, entry_download_og, entry) in enumerate(all_entries_to_post):
-            try:
-                await post_to_discord(webhook, entry, session, fetch_og=fetch_og, download_og=entry_download_og, color=entry_color)
-                log.info("[%s] Posted: %s", entry.feed_title, entry.title[:80])
-                if i < len(all_entries_to_post) - 1:
-                    await asyncio.sleep(2)
-            except Exception:
-                log.error("Skipping entry %s due to post failure", entry.id)
-                if entry.link:
-                    failed_links.add(entry.link)
-
-    if failed_links:
-        for feed_state in new_feeds_state.values():
-            feed_state["items"] = [item for item in feed_state["items"] if item["url"] not in failed_links]
-
-    if task_type == "digest" and memory_text:
-        try:
-            await post_digest_to_discord(webhook, session, memory_text=memory_text, cite_map=cite_map)
-            log.info("[%s] Posted digest", task_name)
-        except Exception:
-            log.error("[%s] Failed to post digest — state not saved", task_name)
-            return {}
 
     new_task_state: dict = {"feeds": new_feeds_state}
     if filter_cfg:

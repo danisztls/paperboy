@@ -7,7 +7,7 @@ import re
 import aiohttp
 from bs4 import BeautifulSoup
 
-from feed import FeedEntry
+from pipeline import Item, PushContext, Target
 
 log = logging.getLogger(__name__)
 
@@ -202,7 +202,7 @@ async def post_digest_to_discord(
 
 async def post_to_discord(
     webhook_url: str,
-    entry: FeedEntry,
+    entry: Item,
     session: aiohttp.ClientSession,
     fetch_og: bool = True,
     download_og: bool = False,
@@ -210,17 +210,17 @@ async def post_to_discord(
 ) -> None:
     embed = {
         "title": entry.title,
-        "url": entry.link or None,
+        "url": entry.url or None,
         "color": color if color is not None else 0x5865F2,
     }
-    if entry.description:
-        embed["description"] = entry.description
-    if entry.feed_title:
-        embed["footer"] = {"text": entry.feed_title}
+    if entry.body:
+        embed["description"] = entry.body
+    if entry.source:
+        embed["footer"] = {"text": entry.source}
 
     og_image_url: str | None = entry.image
-    if not og_image_url and fetch_og and entry.link:
-        og_image_url = await _fetch_og_image(entry.link, session)
+    if not og_image_url and fetch_og and entry.url:
+        og_image_url = await _fetch_og_image(entry.url, session)
 
     image_bytes: bytes | None = None
     if og_image_url and download_og:
@@ -230,7 +230,6 @@ async def post_to_discord(
 
     log.debug("Posting embed to Discord: %s", embed.get("title", ""))
     try:
-        # FormData cannot be reused across attempts, so build kwargs inside the loop.
         def _build_kwargs() -> dict:
             if image_bytes is not None:
                 embed["image"] = {"url": "attachment://og_image.webp"}
@@ -267,3 +266,77 @@ async def post_to_discord(
     except aiohttp.ClientError as e:
         log.error("Discord webhook connection error: %s", e)
         raise
+
+
+class DiscordEmbedTarget(Target):
+    """Posts each item as a Discord embed."""
+
+    def __init__(
+        self,
+        *,
+        fetch_og: bool = True,
+        color: int | None = None,
+    ) -> None:
+        self._fetch_og = fetch_og
+        self._color = color
+
+    async def push(self, ctx: PushContext, cfg: dict, session) -> set[str]:
+        webhook = cfg.get("discord", {}).get("webhook", "")
+        failed: set[str] = set()
+        items = sorted(ctx.items, key=lambda e: e.published or _FAR_FUTURE)
+        for i, item in enumerate(items):
+            color = item.meta.get("color") or self._color
+            download_og = item.meta.get("download_og", False)
+            try:
+                await post_to_discord(
+                    webhook, item, session,
+                    fetch_og=self._fetch_og,
+                    download_og=download_og,
+                    color=color,
+                )
+                log.info("[%s] Posted: %s", item.source, item.title[:80])
+                if i < len(items) - 1:
+                    await asyncio.sleep(2)
+            except Exception:
+                log.error("Skipping entry %s due to post failure", item.id)
+                if item.url:
+                    failed.add(item.url)
+        return failed
+
+
+class DiscordTextTarget(Target):
+    """Posts each item's body as a plain Discord text message."""
+
+    async def push(self, ctx: PushContext, cfg: dict, session) -> set[str]:
+        webhook = cfg.get("discord", {}).get("webhook", "")
+        failed: set[str] = set()
+        for item in ctx.items:
+            if not item.body:
+                continue
+            try:
+                await post_text_to_discord(webhook, item.body, session)
+                log.info("[%s] Posted text (%d chars)", item.source, len(item.body))
+            except Exception:
+                log.error("Skipping item %s due to post failure", item.id)
+                if item.url:
+                    failed.add(item.url)
+        return failed
+
+
+class DiscordDigestTarget(Target):
+    """Posts the memory briefing as chunked Discord text messages."""
+
+    async def push(self, ctx: PushContext, cfg: dict, session) -> set[str]:
+        webhook = cfg.get("discord", {}).get("webhook", "")
+        if not ctx.memory:
+            return set()
+        try:
+            await post_digest_to_discord(webhook, session, memory_text=ctx.memory, cite_map=ctx.cite_map)
+        except Exception:
+            log.error("Failed to post digest")
+            raise
+        return set()
+
+
+from datetime import datetime, timezone
+_FAR_FUTURE = datetime.max.replace(tzinfo=timezone.utc)

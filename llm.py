@@ -3,6 +3,8 @@ import logging
 
 from openai import AsyncOpenAI
 
+from pipeline import Item, PullResult, Source
+
 DEFAULT_MODEL = "gpt-5.4-mini"
 
 log = logging.getLogger(__name__)
@@ -161,6 +163,29 @@ async def summarize_transcript(title: str, transcript: str, api_key: str | None 
     except Exception as exc:
         log.error("Summarize failed: %s", exc)
         return None
+
+
+class LLMSearchSource(Source):
+    """Pulls content from the web via an LLM web-search call."""
+
+    def __init__(
+        self,
+        *,
+        instructions: str | None = None,
+        global_model: str | None = None,
+        api_key: str | None = None,
+    ) -> None:
+        self._instructions = instructions
+        self._global_model = global_model
+        self._api_key = api_key
+
+    async def pull(self, cfg: dict, seen: set[str], session) -> PullResult | None:
+        text = await run_llm_task(cfg, self._instructions, self._global_model, api_key=self._api_key)
+        if not text:
+            return None
+        name = cfg.get("name", "llm")
+        item = Item(id=f"{name}:llm_result", title=name, source=name, body=text)
+        return PullResult(new_items=[item], current_items=[])
 
 
 async def run_llm_task(task_cfg: dict, instructions: str | None = None, global_model: str | None = None, *, api_key: str | None = None) -> str | None:

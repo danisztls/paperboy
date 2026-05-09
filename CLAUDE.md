@@ -31,20 +31,51 @@ Logs are written to `<state_dir>/logs/<timestamp>.log` on every run.
 
 ## Architecture
 
-Eight modules, no package, flat layout:
+Nine modules, no package, flat layout. The execution model follows a **pull → process → push** pipeline:
+
+```
+Source.pull()  →  _summarize_items() + _apply_llm_filter()  →  Target.push()
+```
+
+### Pipeline abstractions (`pipeline.py`)
+
+Defines the interfaces that all sources and targets implement:
+
+- **`Item`** — generic content item produced by any source. Fields: `id`, `title`, `source` (display name), `url`, `body` (sanitized text), `image`, `published`, `summary`, `filter_pass`, `filter_reason`, `meta` (dict for source-specific extras).
+- **`PullResult`** — output of `Source.pull()`: `new_items: list[Item]` + `current_items: list[dict]` (url+title dicts for state).
+- **`FilterResult`** — output of the LLM filter step: `items` (all items with filter_pass set), `memory` (new briefing text), `cite_map` (LLM int ID → (source, url)).
+- **`PushContext`** — input to `Target.push()`: `items`, optional `memory`, optional `cite_map`.
+- **`Source(ABC)`** — one abstract method: `pull(cfg, seen, session) → PullResult | None`. Return `None` on failure; the caller must not update state.
+- **`Target(ABC)`** — one abstract method: `push(ctx, cfg, session) → set[str]`. Returns IDs of items that failed to publish.
+
+To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new target (Telegram, email), implement `Target` — no changes to task orchestration needed.
+
+### Module overview
 
 - `main.py` — CLI entry point and orchestration. Resolves config/state paths, manages a lock file, loads config + state, opens a single shared `aiohttp.ClientSession`, then dispatches to one of four modes: normal (run due tasks in parallel), `--regenerate-state`, `--clean`/`--migrate`, or `--validate`.
 - `config.py` — config loading and validation. `load_config(path)` reads YAML or JSON. `validate_config(config)` uses Pydantic models to validate the full config and returns a list of error strings. Also houses `_parse_color`, `_parse_period`, and `_task_type` (returns the explicit `type:` key if present; otherwise infers: `feeds` key → RSS/digest task, `llm` key without `feeds` → LLM task).
 - `state.py` — state I/O and maintenance. `load_state`, `save_state` (writes `.old` backup, stamps `_version` and `_last_run`), and `_auto_clean` (removes malformed items; only runs when `--clean` is explicitly invoked).
 - `migrate.py` — state schema migrations. `needs_migration(state)` checks `state["_version"]` against `CURRENT_VERSION` (2). `migrate(state)` steps through `_STEPS` until current. The v2 migration nests all task keys under a top-level `"tasks"` key.
-- `tasks.py` — task execution. `_process_task` handles RSS and digest tasks (with optional LLM filter); `_process_llm_task` handles standalone LLM tasks. `_is_due` checks period with 60s grace. `_merge_filter` combines task-level and feed-level heuristic filter dicts. `_recent_passed_items` pulls the last 7 `filter_pass=True` items across all feeds for LLM context. **Normal mode**: filters tasks by `_is_due`, then gathers all due tasks in parallel.
-- `feed.py` — feed fetching, dedup, and entry enrichment. `get_new_entries(feed_cfg, seen, session)` returns `(current_items, new_entries)` on success or `None` on parse failure:
-  - `current_items` is a list of `{"url": ..., "title": ...}` dicts for all entries currently in the feed (used to overwrite state — old entries that fall off the feed are forgotten).
-  - Entry ID is `entry.link`; entries with no link, or older than 7 days, are skipped.
-  - Unseen entries are reversed into chronological order. Descriptions are HTML-stripped, truncated to 2048 chars (Discord embed description max is 4096), and Markdown-escaped.
-  - Heuristic filters (`filter.title`, `filter.description`) are applied via `_apply_regex` before enrichment. Supported ops: `extract` (regex), `replace`/`with`, `remove_phrases_with_urls`, `remove_phrases_containing`, `clear`.
-- `llm.py` — two functions: `run_llm_task(task_cfg, instructions, global_model)` calls the OpenAI Responses API with `web_search_preview` and returns the plain-text response; `filter_entries(items, filter_cfg, global_model, *, language, context_items, memory_history, api_key)` classifies feed items and returns `(results_dict, memory_text) | None`. `items` is a list of source-group dicts `[{"source": ..., "items": [{"id": int, "title": ..., "description": ...}]}]`. `results_dict` maps `str(id)` → `{"pass": bool, "reason": str}`; `memory_text` is the new memory log entry or `None`. When `explain: true`, passing-item reasons are ELI5-style (2–3 sentences). `web_search` in `filter_cfg` can be `true` or a dict of options. Requires `$OPENAI_API_KEY` in env (or `api_key` in config). Default model: `gpt-5.4-mini`.
-- `discord.py` — three posting functions: `post_to_discord` (embed from a `FeedEntry`, with optional OG image fetch and download/optimize as WebP attachment), `post_text_to_discord` (plain `content` message, truncated to 2000 chars), and `post_digest_to_discord` (splits memory text into ≤2000-char chunks, replaces `[n]` citation markers with `[[Source]](<url>)` Discord masked links). All use `_post_webhook` which retries once on 429. OG image fetching retries once after 2s on bot-detection (response < 2 KB).
+- `tasks.py` — task orchestration. Implements the pipeline stages:
+  - `_pull_feeds(source, feed_cfgs, feeds_state, task_filter, session)` — fetches all feeds concurrently via `RSSSource`, merges heuristic filters, returns `{url: PullResult | None}`.
+  - `_summarize_items(items, ...)` — concurrently summarizes item bodies via LLM; sets `item.summary`.
+  - `_apply_llm_filter(items, filter_cfg, ...)` — groups items by source, calls `filter_entries`, maps results back onto items as `filter_pass`/`filter_reason`, retries once on failure; returns `FilterResult`.
+  - `_process_llm_search_task` — LLM web-search pipeline: `LLMSearchSource.pull()` → `DiscordTextTarget.push()`.
+  - `_process_llm_evaluate_task` — RSS/digest pipeline: pull → summarize → filter → `DiscordEmbedTarget` or `DiscordDigestTarget` → state update.
+  - `_is_due` checks period with 60s grace. `_merge_filter` combines task-level and feed-level heuristic filter dicts.
+- `feed.py` — feed fetching, dedup, and entry enrichment.
+  - `RSSSource(Source)` — concrete source; wraps `get_new_entries`.
+  - `get_new_entries(feed_cfg, seen, session)` — fetches and parses the feed, returns `(current_items, new_entries: list[Item])` or `None` on parse failure. Entry ID is `entry.link`; entries with no link or older than 7 days are skipped. Bodies are HTML-stripped, truncated to 512 chars, and Markdown-escaped. Heuristic filters (`filter.title`, `filter.description`) are applied via `_apply_regex`. Supported ops: `extract` (regex), `replace`/`with`, `remove_phrases_with_urls`, `remove_phrases_containing`, `clear`.
+- `llm.py` — LLM calls and source.
+  - `LLMSearchSource(Source)` — concrete source; calls `run_llm_task` and wraps the response as a single `Item`.
+  - `run_llm_task(task_cfg, instructions, global_model)` — calls the OpenAI Responses API with `web_search_preview`, returns plain-text response or `None`.
+  - `filter_entries(items, filter_cfg, global_model, ...)` — classifies feed items grouped by source; returns `(results_dict, memory_text) | None`. `results_dict` maps `str(id)` → `{"pass": bool, "reason": str}`; `memory_text` is the new memory log entry. When `explain: true`, passing-item reasons are ELI5-style (2–3 sentences). Requires `$OPENAI_API_KEY` in env (or `api_key` in config). Default model: `gpt-5.4-mini`.
+  - `summarize_entry`, `summarize_transcript` — LLM summarization helpers.
+- `discord.py` — posting functions and target implementations.
+  - `DiscordEmbedTarget(Target)` — posts each item as a Discord embed with optional OG image fetch/download.
+  - `DiscordTextTarget(Target)` — posts each item's body as a plain text message (truncated to 2000 chars).
+  - `DiscordDigestTarget(Target)` — posts `ctx.memory` as ≤2000-char chunks with `[n]` citation markers replaced by `[[Source]](<url>)` Discord masked links.
+  - Underlying functions `post_to_discord`, `post_text_to_discord`, `post_digest_to_discord` remain exported. All use `_post_webhook` which retries once on 429. OG image fetching retries once after 2s on bot-detection (response < 2 KB).
 
 ### State shape
 
@@ -94,6 +125,7 @@ Any change that adds, removes, or renames a config key must also update the corr
 - Errors posting one entry must not kill the run — `main.py` catches per-task exceptions, the gather uses `return_exceptions=True`.
 - Keep the 2-second sleep between posts in the same task (Discord webhook rate limits).
 - Don't add a sync HTTP path; the OG-image fetch and feed posting are deliberately concurrent via the shared session.
-- Only update `last_run` on a successful feed fetch. A `None` from `get_new_entries` must short-circuit the state write so a transiently broken feed retries on the next cron tick rather than waiting `period` hours.
-- LLM filter failures retry once after 10s before giving up on the whole task (returning `{}`).
-- All tasks for a given RSS/digest task share one LLM filter call; items are sent grouped by source with monotonically increasing integer IDs across all feeds.
+- Only update `last_run` on a successful feed fetch. A `None` from `Source.pull()` must short-circuit the state write so a transiently broken feed retries on the next cron tick rather than waiting `period` hours.
+- LLM filter failures retry once after 10s; on second failure all items are treated as passing (fail-open).
+- All feeds in a given RSS/digest task share one LLM filter call; items are sent grouped by source with monotonically increasing integer IDs across all feeds.
+- `Item.meta` carries per-item display hints (e.g. `color`, `download_og`) set during the pull stage so the target doesn't need to re-resolve them from config.
