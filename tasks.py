@@ -14,6 +14,7 @@ from discord import (
     post_text_to_discord,
 )
 from llm import LLMSearchSource, run_llm_task, filter_entries, summarize_entry
+from scraper import ScraperSource
 
 DEFAULT_PERIOD = timedelta(hours=1)
 PERIOD_GRACE = timedelta(seconds=60)
@@ -395,3 +396,49 @@ async def _process_llm_evaluate_task(
         new_task_state["memory"] = history
 
     return {task_name: new_task_state}
+
+
+async def _process_scraper_task(
+    task_cfg: dict,
+    state: dict,
+    session: aiohttp.ClientSession,
+    *,
+    global_color: int | None = None,
+) -> dict:
+    """Scrape a site, post new listings as Discord embeds. Returns {task_name: task_state}."""
+    task_name = task_cfg["name"]
+    task_discord = _get_discord_cfg(task_cfg)
+    task_color = _parse_color(task_discord.get("color")) or global_color
+
+    task_state = state.get("tasks", {}).get(task_name, {})
+    prev_items = task_state.get("items", [])
+    seen = {item["url"] for item in prev_items}
+
+    source = ScraperSource()
+    pull_result = await source.pull(task_cfg, seen, session)
+    if pull_result is None:
+        return {}
+
+    now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+    if not pull_result.new_items:
+        return {task_name: {**task_state, "last_run": now_iso}}
+
+    colored_items = [
+        dc_replace(item, meta={**item.meta, "color": task_color, "download_og": False})
+        for item in pull_result.new_items
+    ]
+
+    target = DiscordEmbedTarget(fetch_og=False)
+    ctx = PushContext(items=colored_items)
+    failed_ids = await target.push(ctx, task_cfg, session)
+
+    prev_by_url = {item["url"]: item for item in prev_items}
+    merged = list(prev_items)
+    for ci in pull_result.current_items:
+        if ci["url"] not in prev_by_url:
+            merged.append({**ci, "access_date": now_iso})
+    if failed_ids:
+        merged = [it for it in merged if it["url"] not in failed_ids]
+
+    return {task_name: {"items": merged, "last_run": now_iso}}

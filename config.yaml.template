@@ -78,6 +78,21 @@ tasks:
   #     - discord:
   #         webhook: !secret discord_webhook_my_digest
 
+  # Scraper task: browser-based extraction from websites that require JavaScript.
+  # Detected by pull containing a scraper item. New listings are posted as Discord embeds.
+  # After adding a new adapter, register it in scraper.py under _ADAPTERS.
+  # - name: imoveis-vivareal
+  #   period: 4h
+  #   pull:
+  #     - scraper:
+  #         adapter: vivareal          # adapter name (must match _ADAPTERS key in scraper.py)
+  #         url: "https://www.vivareal.com.br/venda/sp/sao-paulo/..."  # search URL with filters
+  #         max_items: 10              # optional — cap new items per run (avoids Discord spam on first run)
+  #   push:
+  #     - discord:
+  #         webhook: !secret discord_webhook_imoveis
+  #         # color: "#00b894"
+
   # LLM task: calls OpenAI Responses API and posts the plain-text response to Discord.
   # Detected by pull containing an llm item (web_search is required).
   - name: world-news

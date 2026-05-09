@@ -38,6 +38,8 @@ def _task_type(task_cfg: dict) -> str:
     if explicit:
         return explicit
     pull = task_cfg.get("pull", [])
+    if any("scraper" in item for item in pull):
+        return "scraper"
     if any("llm" in item for item in pull):
         return "llm"
     return "feeds"
@@ -53,6 +55,10 @@ def _get_discord_cfg(task_cfg: dict) -> dict:
 
 def _get_llm_pull_cfg(task_cfg: dict) -> dict:
     return next((item["llm"] for item in task_cfg.get("pull", []) if "llm" in item), {})
+
+
+def _get_scraper_cfg(task_cfg: dict) -> dict:
+    return next((item["scraper"] for item in task_cfg.get("pull", []) if "scraper" in item), {})
 
 
 def _make_secret_loader(secrets: dict | None, secrets_path: pathlib.Path) -> type:
@@ -206,16 +212,24 @@ class _PullLLMItem(BaseModel):
     instructions: str | None = None
 
 
+class _PullScraperItem(BaseModel):
+    model_config = ConfigDict(extra='allow')  # adapter-specific keys are allowed
+    adapter: str
+    url: str
+    max_items: int | None = None
+
+
 class _PullItem(BaseModel):
     model_config = ConfigDict(extra='forbid')
     feed: _PullFeedItem | None = None
     llm: _PullLLMItem | None = None
+    scraper: _PullScraperItem | None = None
 
     @model_validator(mode='after')
     def _exactly_one(self):
-        present = [k for k in ('feed', 'llm') if k in self.model_fields_set]
+        present = [k for k in ('feed', 'llm', 'scraper') if k in self.model_fields_set]
         if len(present) != 1:
-            raise ValueError("each pull item must have exactly one key: 'feed' or 'llm'")
+            raise ValueError("each pull item must have exactly one key: 'feed', 'llm', or 'scraper'")
         return self
 
 
@@ -249,7 +263,7 @@ class _TaskLLM(BaseModel):
 class _Task(BaseModel):
     model_config = ConfigDict(extra='forbid')
     name: str
-    type: Literal['digest'] | None = None
+    type: Literal['digest', 'scraper'] | None = None
     period: _Period = None
     pull: list[_PullItem]
     push: list[_PushItem]
@@ -262,9 +276,14 @@ class _Task(BaseModel):
     def _check_task(self):
         has_llm_pull = any(item.llm is not None for item in self.pull)
         has_feed_pull = any(item.feed is not None for item in self.pull)
+        has_scraper_pull = any(item.scraper is not None for item in self.pull)
         has_discord_push = any(item.discord is not None for item in self.push)
         if not has_discord_push:
             raise ValueError("push must contain at least one discord target")
+        if has_scraper_pull and (has_llm_pull or has_feed_pull):
+            raise ValueError("pull cannot mix scraper with feed or llm items")
+        if has_scraper_pull and sum(1 for item in self.pull if item.scraper is not None) > 1:
+            raise ValueError("pull can have at most one scraper item")
         if has_llm_pull and has_feed_pull:
             raise ValueError("pull cannot mix feed and llm items")
         return self
