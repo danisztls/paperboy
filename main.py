@@ -105,7 +105,14 @@ def _parse_vtt(content: str) -> str:
     return ' '.join(deduped)
 
 
+_YOUTUBE_RE = re.compile(r'https?://(?:[a-z0-9-]+\.)*youtube\.com(?:\.[a-z]{2,})?/', re.IGNORECASE)
+
+
 async def _async_summarize(url: str, api_key: str | None, model: str | None, language: str = "EN-US") -> None:
+    if not _YOUTUBE_RE.match(url):
+        log.error("--summarize only supports youtube.com URLs")
+        sys.exit(1)
+
     try:
         import yt_dlp
     except ImportError:
