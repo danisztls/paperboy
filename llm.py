@@ -125,7 +125,8 @@ async def summarize_entry(
     instructions = (
         f"You are a precise, concise summarizer. Write in {language}. "
         "Given the title and description of a news article or feed entry, write a brief summary "
-        "in 2-3 sentences covering the main point and key details. No filler phrases."
+        "covering the main point and key details. No filler phrases. "
+        "Keep the summary under 1024 characters."
     )
     log.info("Summarizing entry (model=%s): %s", model, title[:80])
     try:

@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 
 feedparser.sanitizer._HTMLSanitizer.acceptable_attributes.add("srcset")
 
-DESCRIPTION_MAX = 2048
+DESCRIPTION_MAX = 512 
 ENTRY_MAX_AGE_SECONDS = 7 * 86400
 
 log = logging.getLogger(__name__)
