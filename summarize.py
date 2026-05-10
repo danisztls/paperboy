@@ -175,18 +175,54 @@ async def _fetch_youtube_data(url: str, session: aiohttp.ClientSession) -> tuple
     return title, transcript
 
 
+async def _fetch_article_content(url: str, session: aiohttp.ClientSession) -> str | None:
+    """Extract article text from a URL using trafilatura."""
+    try:
+        import trafilatura
+    except ImportError:
+        log.warning("trafilatura is not installed — article fetch skipped")
+        return None
+
+    try:
+        async with session.get(url, allow_redirects=True) as resp:
+            resp.raise_for_status()
+            html = await resp.text()
+    except Exception as exc:
+        log.warning("Failed to fetch %s: %s", url, exc)
+        return None
+
+    def _extract() -> str | None:
+        doc = trafilatura.extract(
+            html,
+            url=url,
+            include_comments=False,
+            include_tables=True,
+            no_fallback=False,
+            favor_recall=True,
+            output_format="markdown",
+        )
+        return doc
+
+    result = await asyncio.to_thread(_extract)
+    if not result:
+        log.warning("trafilatura extracted no content from %s", url)
+        return None
+
+    log.info("Article extracted: %d chars from %s", len(result), url)
+    return result
+
+
 async def fetch_item_content(url: str, session: aiohttp.ClientSession) -> str | None:
     """Return fetchable text content for a feed item URL, or None.
 
     YouTube URLs: returns the video transcript via yt-dlp + SponsorBlock filtering.
-    Other URLs: stub — returns None (article extraction not yet implemented).
+    Other URLs: returns article text extracted by trafilatura (markdown format).
     Falls back to None when content cannot be fetched.
     """
     if _YOUTUBE_RE.match(url):
         result = await _fetch_youtube_data(url, session)
         return result[1] if result else None
-    # TODO: fetch and sanitize article content for non-YouTube URLs
-    return None
+    return await _fetch_article_content(url, session)
 
 
 async def run_summarize(url: str, api_key: str | None, model: str | None, language: str = "EN-US") -> None:
