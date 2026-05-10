@@ -16,6 +16,7 @@ from discord import (
 from file import FileEmbedTarget, FileDigestTarget
 from llm import LLMSearchSource, run_llm_task, filter_entries, summarize_entry
 from scraper import ScraperSource
+from summarize import fetch_item_content
 
 DEFAULT_PERIOD = timedelta(hours=1)
 PERIOD_GRACE = timedelta(seconds=60)
@@ -88,19 +89,31 @@ async def _summarize_items(
     api_key: str | None,
     model: str | None,
     language: str,
+    session: aiohttp.ClientSession | None = None,
 ) -> list[Item]:
-    """Replace .summary on items that have a body, concurrently."""
-    to_summarize = [e for e in items if e.body]
-    if not to_summarize:
+    """Replace .summary on items that have fetchable content or a body, concurrently."""
+    async def _get_content(e: Item) -> str:
+        if session:
+            fetched = await fetch_item_content(e.url, session)
+            if fetched:
+                return fetched
+        return e.body
+
+    contents = await asyncio.gather(*[_get_content(e) for e in items], return_exceptions=True)
+    pairs = [
+        (e, c) for e, c in zip(items, contents)
+        if not isinstance(c, Exception) and c
+    ]
+    if not pairs:
         return items
     results = await asyncio.gather(
-        *[summarize_entry(e.title, e.body, api_key=api_key, model=model, language=language)
-          for e in to_summarize],
+        *[summarize_entry(e.title, c, api_key=api_key, model=model, language=language)
+          for e, c in pairs],
         return_exceptions=True,
     )
     updated = {
         e.id: dc_replace(e, summary=s)
-        for e, s in zip(to_summarize, results)
+        for (e, _), s in zip(pairs, results)
         if not isinstance(s, Exception) and s
     }
     return [updated.get(e.id, e) for e in items]
@@ -285,11 +298,10 @@ async def _process_llm_evaluate_task(
                     summarize_set.add(item.id)
 
         if summarize_set:
-            to_summarize = [it for it in all_new_items if it.id in summarize_set and it.body]
-            not_summarized = [it for it in all_new_items if it.id not in summarize_set or not it.body]
+            to_summarize = [it for it in all_new_items if it.id in summarize_set]
             if to_summarize:
                 language = (filter_cfg or {}).get("language") or global_language
-                summarized = await _summarize_items(to_summarize, llm_api_key, evaluate_model, language)
+                summarized = await _summarize_items(to_summarize, llm_api_key, evaluate_model, language, session)
                 by_id = {it.id: it for it in summarized}
                 all_new_items = [by_id.get(it.id, it) for it in all_new_items]
 
