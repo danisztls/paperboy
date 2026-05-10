@@ -96,16 +96,13 @@ async def _fetch_sponsorblock(video_id: str, session: aiohttp.ClientSession) -> 
         return []
 
 
-async def run_summarize(url: str, api_key: str | None, model: str | None, language: str = "EN-US") -> None:
-    if not _YOUTUBE_RE.match(url):
-        log.error("--summarize only supports youtube.com URLs")
-        sys.exit(1)
-
+async def _fetch_youtube_data(url: str, session: aiohttp.ClientSession) -> tuple[str, str] | None:
+    """Return (title, transcript) for a YouTube URL, or None on failure."""
     try:
         import yt_dlp
     except ImportError:
-        log.error("yt-dlp is not installed — run: uv sync")
-        sys.exit(1)
+        log.warning("yt-dlp is not installed — transcript fetch skipped")
+        return None
 
     def _extract():
         with yt_dlp.YoutubeDL({'skip_download': True, 'quiet': True, 'no_warnings': True}) as ydl:
@@ -115,8 +112,8 @@ async def run_summarize(url: str, api_key: str | None, model: str | None, langua
     try:
         info = await asyncio.to_thread(_extract)
     except Exception as exc:
-        log.error("yt-dlp failed: %s", exc)
-        sys.exit(1)
+        log.warning("yt-dlp failed for %s: %s", url, exc)
+        return None
 
     title = info.get('title', '')
     subs = info.get('subtitles') or {}
@@ -132,38 +129,35 @@ async def run_summarize(url: str, api_key: str | None, model: str | None, langua
             break
 
     if not lang_track:
-        log.error("No subtitles or captions found for this video")
-        sys.exit(1)
+        log.warning("No subtitles or captions found for %s", url)
+        return None
 
     vtt_entry = next((e for e in lang_track if e.get('ext') == 'vtt'), lang_track[0])
     sub_url = vtt_entry.get('url')
     if not sub_url:
-        log.error("No subtitle URL found")
-        sys.exit(1)
+        log.warning("No subtitle URL found for %s", url)
+        return None
 
     video_id = info.get('id', '')
     log.info("Fetching captions for %r", title)
-    async with aiohttp.ClientSession(
-        timeout=aiohttp.ClientTimeout(total=15),
-        headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"},
-    ) as session:
+
+    try:
         async def _fetch_vtt() -> str:
             async with session.get(sub_url) as resp:
                 return await resp.text()
 
-        try:
-            vtt_content, sb_segments = await asyncio.gather(
-                _fetch_vtt(),
-                _fetch_sponsorblock(video_id, session),
-            )
-        except aiohttp.ClientError as exc:
-            log.error("Failed to fetch captions: %s", exc)
-            sys.exit(1)
+        vtt_content, sb_segments = await asyncio.gather(
+            _fetch_vtt(),
+            _fetch_sponsorblock(video_id, session),
+        )
+    except aiohttp.ClientError as exc:
+        log.warning("Failed to fetch captions for %s: %s", url, exc)
+        return None
 
     cues = _parse_vtt(vtt_content)
     if not cues:
-        log.error("No text could be extracted from captions")
-        sys.exit(1)
+        log.warning("No text extracted from captions for %s", url)
+        return None
 
     if sb_segments:
         before = len(cues)
@@ -174,10 +168,49 @@ async def run_summarize(url: str, api_key: str | None, model: str | None, langua
 
     transcript = _cues_to_text(cues)
     if not transcript:
-        log.error("No text remained after SponsorBlock filtering")
-        sys.exit(1)
+        log.warning("No text remained after SponsorBlock filtering for %s", url)
+        return None
 
     log.info("Transcript length: %d chars", len(transcript))
+    return title, transcript
+
+
+async def fetch_item_content(url: str, session: aiohttp.ClientSession) -> str | None:
+    """Return fetchable text content for a feed item URL, or None.
+
+    YouTube URLs: returns the video transcript via yt-dlp + SponsorBlock filtering.
+    Other URLs: stub — returns None (article extraction not yet implemented).
+    Falls back to None when content cannot be fetched.
+    """
+    if _YOUTUBE_RE.match(url):
+        result = await _fetch_youtube_data(url, session)
+        return result[1] if result else None
+    # TODO: fetch and sanitize article content for non-YouTube URLs
+    return None
+
+
+async def run_summarize(url: str, api_key: str | None, model: str | None, language: str = "EN-US") -> None:
+    if not _YOUTUBE_RE.match(url):
+        log.error("--summarize only supports youtube.com URLs")
+        sys.exit(1)
+
+    try:
+        import yt_dlp  # noqa: F401 — check before opening session
+    except ImportError:
+        log.error("yt-dlp is not installed — run: uv sync")
+        sys.exit(1)
+
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=15),
+        headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"},
+    ) as session:
+        result = await _fetch_youtube_data(url, session)
+
+    if not result:
+        log.error("Could not fetch transcript for %s", url)
+        sys.exit(1)
+
+    title, transcript = result
     summary = await summarize_transcript(title, transcript, api_key=api_key, model=model, language=language)
     if summary:
         print(summary)

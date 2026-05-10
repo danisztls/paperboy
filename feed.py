@@ -57,6 +57,8 @@ def _url_filtered(url: str, cfg) -> bool:
 
 
 def _apply_regex(cfg, text: str) -> str:
+    if not isinstance(cfg, (list, dict)):
+        return text
     if isinstance(cfg, list):
         for item in cfg:
             text = _apply_regex(item, text)
