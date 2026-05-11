@@ -326,6 +326,31 @@ class DiscordTextTarget(Target):
         return failed
 
 
+class DiscordMarkdownTarget(Target):
+    """Posts each item as a markdown-formatted Discord message (### heading + body)."""
+
+    async def push(self, ctx: PushContext, cfg: dict, session) -> set[str]:
+        webhook = _get_discord_cfg(cfg).get("webhook", "")
+        failed: set[str] = set()
+        items = sorted(ctx.items, key=lambda e: e.published or _FAR_FUTURE)
+        for i, item in enumerate(items):
+            title_part = f"[{item.title}](<{item.url}>)" if item.url else item.title
+            source_part = f" {item.source}" if item.source else ""
+            header = f"### {title_part}{source_part}"
+            body = item.body or ""
+            text = f"{header}\n{body}" if body else header
+            try:
+                await post_text_to_discord(webhook, text, session)
+                log.info("[%s] Posted: %s", item.source, item.title[:80])
+                if i < len(items) - 1:
+                    await asyncio.sleep(2)
+            except Exception:
+                log.error("Skipping entry %s due to post failure", item.id)
+                if item.url:
+                    failed.add(item.url)
+        return failed
+
+
 class DiscordDigestTarget(Target):
     """Posts the memory briefing as chunked Discord text messages."""
 

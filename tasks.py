@@ -10,7 +10,7 @@ from config import _parse_color, _task_type, _get_feeds, _get_discord_cfg, _get_
 from pipeline import Item, FilterResult, PushContext
 from feed import RSSSource, get_new_entries
 from discord import (
-    DiscordEmbedTarget, DiscordDigestTarget, DiscordTextTarget,
+    DiscordEmbedTarget, DiscordDigestTarget, DiscordMarkdownTarget, DiscordTextTarget,
     post_text_to_discord,
 )
 from file import FileEmbedTarget, FileDigestTarget
@@ -336,8 +336,9 @@ async def _process_llm_evaluate_task(
         cite_map = {}
 
     # --- Push ---
+    discord_format = task_discord.get("format")
     if task_type == "digest":
-        target: DiscordEmbedTarget | DiscordDigestTarget | DiscordTextTarget = DiscordDigestTarget()
+        target: DiscordEmbedTarget | DiscordDigestTarget | DiscordMarkdownTarget | DiscordTextTarget = DiscordDigestTarget()
         ctx = PushContext(items=passing, memory=memory_text, cite_map=cite_map)
         try:
             failed_ids = await target.push(ctx, task_cfg, session)
@@ -347,6 +348,12 @@ async def _process_llm_evaluate_task(
         log.info("[%s] Posted digest", task_name)
         if _get_file_path(task_cfg):
             await FileDigestTarget().push(ctx, task_cfg, session)
+    elif discord_format == "markdown":
+        target = DiscordMarkdownTarget()
+        ctx = PushContext(items=passing, memory=memory_text, cite_map=cite_map)
+        failed_ids = await target.push(ctx, task_cfg, session)
+        if _get_file_path(task_cfg):
+            await FileEmbedTarget().push(ctx, task_cfg, session)
     else:
         target = DiscordEmbedTarget(fetch_image=fetch_image)
         ctx = PushContext(items=passing, memory=memory_text, cite_map=cite_map)
@@ -449,9 +456,12 @@ async def _process_scraper_task(
         for item in pull_result.new_items
     ]
 
-    target = DiscordEmbedTarget(fetch_image=False)
+    discord_format = task_discord.get("format")
     ctx = PushContext(items=colored_items)
-    failed_ids = await target.push(ctx, task_cfg, session)
+    if discord_format == "markdown":
+        failed_ids = await DiscordMarkdownTarget().push(ctx, task_cfg, session)
+    else:
+        failed_ids = await DiscordEmbedTarget(fetch_image=False).push(ctx, task_cfg, session)
     if _get_file_path(task_cfg):
         await FileEmbedTarget().push(ctx, task_cfg, session)
 
