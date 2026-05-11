@@ -241,6 +241,7 @@ class _PushDiscordItem(BaseModel):
     model_config = ConfigDict(extra='forbid')
     webhook: str
     color: _Color = None
+    format: Literal['embed', 'markdown'] | None = None
 
 
 class _PushItem(BaseModel):
