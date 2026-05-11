@@ -148,7 +148,7 @@ async def _async_main(args: argparse.Namespace) -> None:
     global_language = llm_cfg.get("language") or "EN-US"
     discord_cfg = config.get("discord", {})
     global_color = _parse_color(discord_cfg.get("color"))
-    global_og_download: bool = (config.get("og_image") or {}).get("download", False)
+    global_image_download: bool = (config.get("image") or {}).get("download", False)
 
     tasks = config.get("tasks", [])
     if not tasks:
@@ -251,7 +251,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     ):
                         log.info("[%s] Skipping — no feeds are due", task_name)
                         continue
-                    feed_tasks.append(_process_llm_evaluate_task(task_cfg, state, session, evaluate_model=evaluate_model, llm_api_key=llm_api_key, global_color=global_color, global_language=global_language, global_og_download=global_og_download))
+                    feed_tasks.append(_process_llm_evaluate_task(task_cfg, state, session, evaluate_model=evaluate_model, llm_api_key=llm_api_key, global_color=global_color, global_language=global_language, global_image_download=global_image_download))
 
             results = await asyncio.gather(*feed_tasks, return_exceptions=True)
             tasks_state = state.setdefault("tasks", {})

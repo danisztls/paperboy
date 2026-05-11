@@ -232,7 +232,7 @@ async def _process_llm_evaluate_task(
     llm_api_key: str | None = None,
     global_color: int | None = None,
     global_language: str = "EN-US",
-    global_og_download: bool = False,
+    global_image_download: bool = False,
 ) -> dict:
     """Pull RSS feeds, optionally filter/summarize, push to Discord. Returns {task_name: task_state}."""
     task_name = task_cfg["name"]
@@ -240,9 +240,9 @@ async def _process_llm_evaluate_task(
     task_color = _parse_color(task_discord.get("color"))
     filter_cfg = task_cfg.get("llm") or None
     explain = bool(filter_cfg.get("explain")) if filter_cfg else False
-    task_og_cfg = task_cfg.get("og_image") or {}
-    fetch_og = not task_og_cfg.get("skip", False)
-    task_og_download = task_og_cfg.get("download")
+    task_image_cfg = task_cfg.get("image") or {}
+    fetch_image = not task_image_cfg.get("skip", False)
+    task_image_download = task_image_cfg.get("download")
     task_filter = task_cfg.get("filter", {})
     task_summarize = task_cfg.get("summarize", False)
     task_type = _task_type(task_cfg)
@@ -269,15 +269,15 @@ async def _process_llm_evaluate_task(
         pull_result = fetch_map.get(url)
         if pull_result is None:
             continue
-        feed_og_download = (fc.get("og_image") or {}).get("download")
-        download_og = (
-            feed_og_download if feed_og_download is not None
-            else task_og_download if task_og_download is not None
-            else global_og_download
+        feed_image_download = (fc.get("image") or {}).get("download")
+        download_image = (
+            feed_image_download if feed_image_download is not None
+            else task_image_download if task_image_download is not None
+            else global_image_download
         )
         feed_color = _parse_color(fc.get("discord", {}).get("color")) or task_color or global_color
         items_with_meta = [
-            dc_replace(item, meta={**item.meta, "color": feed_color, "download_og": download_og})
+            dc_replace(item, meta={**item.meta, "color": feed_color, "download_image": download_image})
             for item in pull_result.new_items
         ]
         all_new_items.extend(items_with_meta)
@@ -348,7 +348,7 @@ async def _process_llm_evaluate_task(
         if _get_file_path(task_cfg):
             await FileDigestTarget().push(ctx, task_cfg, session)
     else:
-        target = DiscordEmbedTarget(fetch_og=fetch_og)
+        target = DiscordEmbedTarget(fetch_image=fetch_image)
         ctx = PushContext(items=passing, memory=memory_text, cite_map=cite_map)
         failed_ids = await target.push(ctx, task_cfg, session)
         if _get_file_path(task_cfg):
@@ -445,11 +445,11 @@ async def _process_scraper_task(
         return {task_name: {**task_state, "last_run": now_iso}}
 
     colored_items = [
-        dc_replace(item, meta={**item.meta, "color": task_color, "download_og": False})
+        dc_replace(item, meta={**item.meta, "color": task_color, "download_image": False})
         for item in pull_result.new_items
     ]
 
-    target = DiscordEmbedTarget(fetch_og=False)
+    target = DiscordEmbedTarget(fetch_image=False)
     ctx = PushContext(items=colored_items)
     failed_ids = await target.push(ctx, task_cfg, session)
     if _get_file_path(task_cfg):

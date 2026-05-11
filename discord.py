@@ -16,8 +16,8 @@ _BOT_DETECTION_THRESHOLD = 2048
 _OG_FETCH_DELAY = 2.0
 
 
-async def _fetch_og_image_once(url: str, session: aiohttp.ClientSession) -> tuple[str | None, bool]:
-    """Single attempt. Returns (og_image_url, bot_detected)."""
+async def _scrape_image_once(url: str, session: aiohttp.ClientSession) -> tuple[str | None, bool]:
+    """Single attempt. Returns (image_url, bot_detected)."""
     if not url:
         return None, False
     try:
@@ -26,33 +26,33 @@ async def _fetch_og_image_once(url: str, session: aiohttp.ClientSession) -> tupl
             content_type = resp.headers.get("Content-Type", "")
             chunk = await resp.content.read(32768)
         if status >= 400:
-            log.debug("OG image fetch failed for %s: HTTP %d", url, status)
+            log.debug("image scrape failed for %s: HTTP %d", url, status)
             return None, False
         if len(chunk) < _BOT_DETECTION_THRESHOLD:
-            log.debug("OG image: got %d bytes (bot-detection?) from %s", len(chunk), url)
+            log.debug("image scrape: got %d bytes (bot-detection?) from %s", len(chunk), url)
             return None, True
         text = chunk.decode("utf-8", errors="replace")
-        log.debug("OG image: fetched %d bytes (status=%d, ct=%s) from %s", len(chunk), status, content_type, url)
+        log.debug("image scrape: fetched %d bytes (status=%d, ct=%s) from %s", len(chunk), status, content_type, url)
         meta = BeautifulSoup(text, "html.parser").find("meta", property="og:image")
-        og_image = meta.get("content") if meta else None
-        if og_image:
-            log.debug("OG image: found %s", og_image)
+        image_url = meta.get("content") if meta else None
+        if image_url:
+            log.debug("image scrape: found %s", image_url)
         else:
-            log.debug("OG image: no og:image tag found in first %d bytes of %s", len(chunk), url)
-        return og_image, False
+            log.debug("image scrape: no og:image tag found in first %d bytes of %s", len(chunk), url)
+        return image_url, False
     except Exception as exc:
-        log.debug("OG image: exception fetching %s: %s: %s", url, type(exc).__name__, exc)
+        log.debug("image scrape: exception fetching %s: %s: %s", url, type(exc).__name__, exc)
         return None, False
 
 
-async def _fetch_og_image(url: str, session: aiohttp.ClientSession) -> str | None:
+async def _scrape_image(url: str, session: aiohttp.ClientSession) -> str | None:
     """Fetch og:image URL from article HTML, with one bot-detection retry."""
-    og, bot_detected = await _fetch_og_image_once(url, session)
+    image_url, bot_detected = await _scrape_image_once(url, session)
     if bot_detected:
-        log.debug("OG image: bot-detected, retrying after %.0f s for %s", _OG_FETCH_DELAY, url)
+        log.debug("image scrape: bot-detected, retrying after %.0f s for %s", _OG_FETCH_DELAY, url)
         await asyncio.sleep(_OG_FETCH_DELAY)
-        og, _ = await _fetch_og_image_once(url, session)
-    return og
+        image_url, _ = await _scrape_image_once(url, session)
+    return image_url
 
 _MAX_BYTES = 4 * 1024 * 1024
 _MAX_DIM = 2000
@@ -205,8 +205,8 @@ async def post_to_discord(
     webhook_url: str,
     entry: Item,
     session: aiohttp.ClientSession,
-    fetch_og: bool = True,
-    download_og: bool = False,
+    fetch_image: bool = True,
+    download_image: bool = False,
     color: int | None = None,
 ) -> None:
     embed = {
@@ -219,13 +219,15 @@ async def post_to_discord(
     if entry.source:
         embed["footer"] = {"text": entry.source}
 
-    og_image_url: str | None = entry.image
-    if not og_image_url and fetch_og and entry.url:
-        og_image_url = await _fetch_og_image(entry.url, session)
+    image_url: str | None = None
+    if fetch_image:
+        image_url = entry.image
+        if not image_url and entry.url:
+            image_url = await _scrape_image(entry.url, session)
 
     image_bytes: bytes | None = None
-    if og_image_url and download_og:
-        raw = await _fetch_image(og_image_url, session)
+    if image_url and download_image:
+        raw = await _fetch_image(image_url, session)
         if raw is not None:
             image_bytes = _optimize_image(raw)
 
@@ -233,13 +235,13 @@ async def post_to_discord(
     try:
         def _build_kwargs() -> dict:
             if image_bytes is not None:
-                embed["image"] = {"url": "attachment://og_image.webp"}
+                embed["image"] = {"url": "attachment://image.webp"}
                 form = aiohttp.FormData()
                 form.add_field("payload_json", json.dumps({"embeds": [embed]}), content_type="application/json")
-                form.add_field("files[0]", image_bytes, filename="og_image.webp", content_type="image/webp")
+                form.add_field("files[0]", image_bytes, filename="image.webp", content_type="image/webp")
                 return {"data": form}
-            if og_image_url:
-                embed["image"] = {"url": og_image_url}
+            if image_url:
+                embed["image"] = {"url": image_url}
             return {"data": json.dumps({"embeds": [embed]}).encode(), "headers": {"Content-Type": "application/json"}}
 
         for attempt in range(2):
@@ -275,10 +277,10 @@ class DiscordEmbedTarget(Target):
     def __init__(
         self,
         *,
-        fetch_og: bool = True,
+        fetch_image: bool = True,
         color: int | None = None,
     ) -> None:
-        self._fetch_og = fetch_og
+        self._fetch_image = fetch_image
         self._color = color
 
     async def push(self, ctx: PushContext, cfg: dict, session) -> set[str]:
@@ -287,12 +289,12 @@ class DiscordEmbedTarget(Target):
         items = sorted(ctx.items, key=lambda e: e.published or _FAR_FUTURE)
         for i, item in enumerate(items):
             color = item.meta.get("color") or self._color
-            download_og = item.meta.get("download_og", False)
+            download_image = item.meta.get("download_image", False)
             try:
                 await post_to_discord(
                     webhook, item, session,
-                    fetch_og=self._fetch_og,
-                    download_og=download_og,
+                    fetch_image=self._fetch_image,
+                    download_image=download_image,
                     color=color,
                 )
                 log.info("[%s] Posted: %s", item.source, item.title[:80])

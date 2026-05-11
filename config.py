@@ -192,7 +192,7 @@ class _FeedDiscord(BaseModel):
     color: _Color = None
 
 
-class _OgImage(BaseModel):
+class _Image(BaseModel):
     model_config = ConfigDict(extra='forbid')
     skip: bool | None = None
     download: bool | None = None
@@ -203,7 +203,7 @@ class _PullFeedItem(BaseModel):
     name: str | None = None
     url: str
     discord: _FeedDiscord = Field(default_factory=_FeedDiscord)
-    og_image: _OgImage | None = None
+    image: _Image | None = None
     filter: _FilterDict | None = None
     summarize: bool | None = None
 
@@ -272,7 +272,7 @@ class _Task(BaseModel):
     period: _Period = None
     pull: list[_PullItem]
     push: list[_PushItem]
-    og_image: _OgImage | None = None
+    image: _Image | None = None
     filter: _FilterDict | None = None
     llm: _TaskLLM | None = None
     summarize: bool | None = None
@@ -299,7 +299,7 @@ class _Config(BaseModel):
     model_config = ConfigDict(extra='forbid')
     discord: _GlobalDiscord | None = None
     llm: _GlobalLLM | None = None
-    og_image: _OgImage | None = None
+    image: _Image | None = None
     tasks: list[_Task]
 
 
