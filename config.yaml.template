@@ -1,7 +1,7 @@
 discord:                    # optional — global defaults for Discord posting
   # color: "#5865F2"       # default embed color for RSS embeds
-# og_image:                 # optional — global OG image settings
-#   download: false         # download+optimize OG images as WebP attachments (default: false, uses URL directly)
+# image:                    # optional — global image settings
+#   download: false         # download+optimize images as WebP attachments (default: false, uses URL directly)
 
 llm:                        # optional — global defaults for all LLM tasks
   models:
@@ -30,9 +30,9 @@ tasks:
     #     extract: "\\d+ de \\w+"
     #   description:
     #     - remove_phrases_with_urls: true
-    # og_image:              # optional — OG image settings for this task
-    #   skip: true           # skip OG image fetching entirely (default: false)
-    #   download: true       # download+optimize as WebP; overrides global og_image.download (default: false)
+    # image:                 # optional — image settings for this task
+    #   skip: true           # skip image fetching entirely (default: false)
+    #   download: true       # download+optimize as WebP; overrides global image.download (default: false)
     # summarize: true        # optional — LLM-summarize each entry's description before filtering/posting (default: false)
     #                        # per-feed 'summarize' overrides this task-level default
     pull:
@@ -41,8 +41,8 @@ tasks:
           url: https://example.com/feed.xml
           # discord:
           #   color: "#FF0000"      # optional — overrides task/global discord.color for this feed
-          # og_image:
-          #   download: true        # optional — overrides task/global og_image.download for this feed
+          # image:
+          #   download: true        # optional — overrides task/global image.download for this feed
           # summarize: true         # optional — override task-level summarize for this feed
           # filter:
           #   title:
