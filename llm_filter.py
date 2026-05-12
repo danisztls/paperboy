@@ -1,9 +1,7 @@
 import json
 import logging
 
-from openai import AsyncOpenAI
-
-DEFAULT_MODEL = "gpt-5.4-mini"
+from llm.adapters.base import LLMAdapter
 
 log = logging.getLogger(__name__)
 
@@ -15,7 +13,7 @@ async def filter_entries(
     *,
     language: str = "EN-US",
     memory_history: list[tuple[str, str]] | None = None,
-    api_key: str | None = None,
+    adapter: LLMAdapter,
     extra_instructions: str | None = None,
 ) -> tuple[dict[str, dict], str | None] | None:
     """Filter feed entries through LLM and optionally update memory.
@@ -26,8 +24,7 @@ async def filter_entries(
     memory_history: chronological list of prior memory entries (oldest first) passed as
     context so the model can build continuity across runs.
     """
-    client = AsyncOpenAI(api_key=api_key) if api_key else AsyncOpenAI()
-    model = filter_cfg.get("model") or global_model or DEFAULT_MODEL
+    model = filter_cfg.get("model") or global_model or None
     explain = filter_cfg.get("explain", False)
     criteria = filter_cfg.get("prompt", "")
     memory_block = ""
@@ -75,38 +72,38 @@ async def filter_entries(
     log.info("Filtering %d entries with LLM (model=%s)", total, model)
     log.debug("Filter criteria: %s", criteria)
     web_search = filter_cfg.get("web_search")
-    tools: list[dict] = []
-    if web_search:
-        tool: dict = {"type": "web_search_preview"}
-        if isinstance(web_search, dict):
-            tool.update(web_search)
-        tools = [tool]
-    try:
-        response = await client.responses.create(
-            model=model,
-            instructions=instructions,
-            input=payload,
-            **({"tools": tools} if tools else {}),
-        )
-        text = (response.output_text or "").strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        log.debug("Filter LLM response: %s", text[:500])
-        result = json.loads(text)
-        if isinstance(result, list):
-            log.warning("LLM filter returned bare array — memory will not be saved; model may be ignoring format instruction")
-            items_list = result
-            memory_text = None
-        elif isinstance(result, dict) and "items" in result:
-            items_list = result["items"]
-            memory_text = str(result.get("memory", "")).strip() or None
-        else:
-            log.warning("LLM filter returned unexpected format: %s", text[:200])
-            return None
-        parsed = {str(r["id"]): {"pass": bool(r.get("pass")), "reason": str(r.get("reason", ""))} for r in items_list if "id" in r}
-        passed = sum(1 for v in parsed.values() if v["pass"])
-        log.info("Filter: %d/%d items passed", passed, total)
-        return parsed, memory_text
-    except Exception as exc:
-        log.error("LLM filter failed: %s", exc)
+
+    text = await adapter.complete(
+        payload,
+        model=model,
+        instructions=instructions,
+        web_search=web_search or False,
+    )
+    if not text:
+        log.error("LLM filter returned empty response")
         return None
+
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    log.debug("Filter LLM response: %s", text[:500])
+    try:
+        result = json.loads(text)
+    except json.JSONDecodeError as exc:
+        log.error("LLM filter returned invalid JSON: %s — %s", exc, text[:200])
+        return None
+
+    if isinstance(result, list):
+        log.warning("LLM filter returned bare array — memory will not be saved; model may be ignoring format instruction")
+        items_list = result
+        memory_text = None
+    elif isinstance(result, dict) and "items" in result:
+        items_list = result["items"]
+        memory_text = str(result.get("memory", "")).strip() or None
+    else:
+        log.warning("LLM filter returned unexpected format: %s", text[:200])
+        return None
+
+    parsed = {str(r["id"]): {"pass": bool(r.get("pass")), "reason": str(r.get("reason", ""))} for r in items_list if "id" in r}
+    passed = sum(1 for v in parsed.values() if v["pass"])
+    log.info("Filter: %d/%d items passed", passed, total)
+    return parsed, memory_text

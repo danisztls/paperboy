@@ -6,9 +6,8 @@ import re
 import sys
 
 import aiohttp
-from openai import AsyncOpenAI
 
-_DEFAULT_MODEL = "gpt-5.4-mini"
+from llm.adapters.base import LLMAdapter
 
 log = logging.getLogger(__name__)
 
@@ -16,58 +15,46 @@ log = logging.getLogger(__name__)
 async def summarize_entry(
     title: str,
     description: str,
-    api_key: str | None = None,
+    adapter: LLMAdapter,
+    *,
     model: str | None = None,
     language: str = "EN-US",
     instructions: str | None = None,
 ) -> str | None:
-    client = AsyncOpenAI(api_key=api_key) if api_key else AsyncOpenAI()
-    model = model or _DEFAULT_MODEL
     base_instructions = (
         f"You are a precise, concise summarizer. Write in {language}. "
         "Given the title and description of a news article or feed entry, write a brief summary "
         "covering the main point and key details. No filler phrases. "
         "Keep the summary under 1024 characters."
     )
-    instructions = f"{base_instructions} {instructions}" if instructions else base_instructions
+    combined = f"{base_instructions} {instructions}" if instructions else base_instructions
     log.info("Summarizing entry (model=%s): %s", model, title[:80])
-    try:
-        response = await client.responses.create(
-            model=model,
-            instructions=instructions,
-            input=f"Title: {title}\n\nDescription:\n{description}",
-        )
-        return (response.output_text or "").strip() or None
-    except Exception as exc:
-        log.error("Summarize entry failed: %s", exc)
-        return None
+    return await adapter.complete(
+        f"Title: {title}\n\nDescription:\n{description}",
+        model=model,
+        instructions=combined,
+    )
 
 
 async def summarize_transcript(
     title: str,
     transcript: str,
-    api_key: str | None = None,
+    adapter: LLMAdapter,
+    *,
     model: str | None = None,
     language: str = "EN-US",
 ) -> str | None:
-    client = AsyncOpenAI(api_key=api_key) if api_key else AsyncOpenAI()
-    model = model or _DEFAULT_MODEL
     instructions = (
         f"You are a precise, concise summarizer. Write in {language}. "
         "Given the title and transcript of a YouTube video, write a clear summary covering the main topics and key takeaways. "
         "Use a few short paragraphs. No filler phrases or meta-commentary about the summarization process."
     )
     log.info("Summarizing transcript (model=%s, language=%s, %d chars)", model, language, len(transcript))
-    try:
-        response = await client.responses.create(
-            model=model,
-            instructions=instructions,
-            input=f"Title: {title}\n\nTranscript:\n{transcript[:12000]}",
-        )
-        return (response.output_text or "").strip() or None
-    except Exception as exc:
-        log.error("Summarize failed: %s", exc)
-        return None
+    return await adapter.complete(
+        f"Title: {title}\n\nTranscript:\n{transcript[:12000]}",
+        model=model,
+        instructions=instructions,
+    )
 
 _VTT_CUE_RE = re.compile(
     r'^(\d{2}):(\d{2}):(\d{2})[.,](\d{3})\s*-->'
@@ -283,7 +270,7 @@ async def fetch_item_content(url: str, session: aiohttp.ClientSession) -> str | 
     return await _fetch_article_content(url, session)
 
 
-async def run_summarize(url: str, api_key: str | None, model: str | None, language: str = "EN-US") -> None:
+async def run_summarize(url: str, adapter: LLMAdapter, model: str | None, language: str = "EN-US") -> None:
     if not _YOUTUBE_RE.match(url):
         log.error("--summarize only supports youtube.com URLs")
         sys.exit(1)
@@ -305,7 +292,7 @@ async def run_summarize(url: str, api_key: str | None, model: str | None, langua
         sys.exit(1)
 
     title, transcript = result
-    summary = await summarize_transcript(title, transcript, api_key=api_key, model=model, language=language)
+    summary = await summarize_transcript(title, transcript, adapter, model=model, language=language)
     if summary:
         print(summary)
     else:
