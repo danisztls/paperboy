@@ -6,10 +6,66 @@ import re
 import sys
 
 import aiohttp
+from openai import AsyncOpenAI
 
-from llm import summarize_transcript
+_DEFAULT_MODEL = "gpt-5.4-mini"
 
 log = logging.getLogger(__name__)
+
+
+async def summarize_entry(
+    title: str,
+    description: str,
+    api_key: str | None = None,
+    model: str | None = None,
+    language: str = "EN-US",
+) -> str | None:
+    client = AsyncOpenAI(api_key=api_key) if api_key else AsyncOpenAI()
+    model = model or _DEFAULT_MODEL
+    instructions = (
+        f"You are a precise, concise summarizer. Write in {language}. "
+        "Given the title and description of a news article or feed entry, write a brief summary "
+        "covering the main point and key details. No filler phrases. "
+        "Keep the summary under 1024 characters."
+    )
+    log.info("Summarizing entry (model=%s): %s", model, title[:80])
+    try:
+        response = await client.responses.create(
+            model=model,
+            instructions=instructions,
+            input=f"Title: {title}\n\nDescription:\n{description}",
+        )
+        return (response.output_text or "").strip() or None
+    except Exception as exc:
+        log.error("Summarize entry failed: %s", exc)
+        return None
+
+
+async def summarize_transcript(
+    title: str,
+    transcript: str,
+    api_key: str | None = None,
+    model: str | None = None,
+    language: str = "EN-US",
+) -> str | None:
+    client = AsyncOpenAI(api_key=api_key) if api_key else AsyncOpenAI()
+    model = model or _DEFAULT_MODEL
+    instructions = (
+        f"You are a precise, concise summarizer. Write in {language}. "
+        "Given the title and transcript of a YouTube video, write a clear summary covering the main topics and key takeaways. "
+        "Use a few short paragraphs. No filler phrases or meta-commentary about the summarization process."
+    )
+    log.info("Summarizing transcript (model=%s, language=%s, %d chars)", model, language, len(transcript))
+    try:
+        response = await client.responses.create(
+            model=model,
+            instructions=instructions,
+            input=f"Title: {title}\n\nTranscript:\n{transcript[:12000]}",
+        )
+        return (response.output_text or "").strip() or None
+    except Exception as exc:
+        log.error("Summarize failed: %s", exc)
+        return None
 
 _VTT_CUE_RE = re.compile(
     r'^(\d{2}):(\d{2}):(\d{2})[.,](\d{3})\s*-->'
