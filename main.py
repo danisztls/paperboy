@@ -319,7 +319,7 @@ def main():
     args = parser.parse_args()
 
     if args.verbose:
-        for name in ("__main__", "pull.feed", "pull.llm", "push.discord", "pull.scraper", "adapters.vivareal"):
+        for name in ("__main__", "pull.feed", "pull.llm", "push.discord", "pull.scraper", "pull.adapters.vivareal"):
             logging.getLogger(name).setLevel(logging.DEBUG)
 
     if args.validate:

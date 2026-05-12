@@ -5,7 +5,7 @@ import logging
 from playwright.async_api import async_playwright
 
 from pipeline import PullResult, Source
-from adapters.vivareal import VivaRealAdapter
+from pull.adapters.vivareal import VivaRealAdapter
 
 log = logging.getLogger(__name__)
 
