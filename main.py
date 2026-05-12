@@ -12,7 +12,8 @@ from datetime import datetime, timezone
 
 import aiohttp
 
-from config import _parse_color, _parse_period, _task_type, _get_feeds, _get_discord_cfg, _get_llm_pull_cfg, load_config, validate_config
+from config import _parse_color, _parse_period, _task_type, _get_feeds, _get_discord_cfg, _get_llm_pull_cfg, load_config, validate_config, _resolve_model_spec, _get_api_key_for_provider
+from llm import get_adapter
 from state import _auto_clean, _remove_unknown, load_state, save_state
 from tasks import DEFAULT_PERIOD, _is_due, _process_llm_search_task, _process_llm_evaluate_task, _process_scraper_task
 from pull.feed import RSSSource
@@ -141,10 +142,12 @@ async def _async_main(args: argparse.Namespace) -> None:
 
     llm_cfg = config.get("llm", {})
     instructions = llm_cfg.get("instructions") or None
+    api_key_cfg = llm_cfg.get("api_key") or None
     llm_models = llm_cfg.get("models") or {}
-    evaluate_model = llm_models.get("reasoning") or None
-    search_model = llm_models.get("topic") or None
-    llm_api_key = llm_cfg.get("api_key") or None
+    reasoning_provider, evaluate_model = _resolve_model_spec(llm_models.get("reasoning"))
+    topic_provider, search_model = _resolve_model_spec(llm_models.get("topic"))
+    evaluate_adapter = get_adapter(reasoning_provider, _get_api_key_for_provider(api_key_cfg, reasoning_provider)) if reasoning_provider else None
+    search_adapter = get_adapter(topic_provider, _get_api_key_for_provider(api_key_cfg, topic_provider)) if topic_provider else None
     global_language = llm_cfg.get("language") or "EN-US"
     discord_cfg = config.get("discord", {})
     global_color = _parse_color(discord_cfg.get("color"))
@@ -226,7 +229,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                             name, mins, period,
                         )
                         continue
-                    feed_tasks.append(_process_llm_search_task(task_cfg, state, session, instructions=instructions, search_model=search_model, llm_api_key=llm_api_key))
+                    feed_tasks.append(_process_llm_search_task(task_cfg, state, session, instructions=instructions, search_model=search_model, llm_adapter=search_adapter))
                 elif _task_type(task_cfg) == "scraper":
                     task_name = task_cfg.get("name")
                     if not task_name:
@@ -251,7 +254,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     ):
                         log.info("[%s] Skipping — no feeds are due", task_name)
                         continue
-                    feed_tasks.append(_process_llm_evaluate_task(task_cfg, state, session, evaluate_model=evaluate_model, llm_api_key=llm_api_key, global_color=global_color, global_language=global_language, global_image_download=global_image_download))
+                    feed_tasks.append(_process_llm_evaluate_task(task_cfg, state, session, evaluate_model=evaluate_model, llm_adapter=evaluate_adapter, global_color=global_color, global_language=global_language, global_image_download=global_image_download))
 
             results = await asyncio.gather(*feed_tasks, return_exceptions=True)
             tasks_state = state.setdefault("tasks", {})
@@ -340,9 +343,10 @@ def main():
         return
 
     if args.summarize:
-        api_key = None
-        model = None
-        language = "EN-US"
+        _sum_provider = None
+        _sum_api_key_cfg = None
+        _sum_model = None
+        _sum_language = "EN-US"
         config_path = (
             _xdg_config_path() if args.config is None
             else pathlib.Path(args.config).expanduser().resolve()
@@ -351,13 +355,16 @@ def main():
             try:
                 cfg = load_config(config_path)
                 llm_cfg = cfg.get("llm") or {}
-                api_key = llm_cfg.get("api_key") or None
-                language = llm_cfg.get("language") or "EN-US"
-                models_cfg = llm_cfg.get("models") or {}
-                model = models_cfg.get("topic") or None
+                _sum_api_key_cfg = llm_cfg.get("api_key") or None
+                _sum_language = llm_cfg.get("language") or "EN-US"
+                _sum_provider, _sum_model = _resolve_model_spec((llm_cfg.get("models") or {}).get("topic"))
             except Exception:
                 pass
-        asyncio.run(run_summarize(args.summarize, api_key=api_key, model=model, language=language))
+        if not _sum_provider:
+            log.error("--summarize requires llm.models.topic with a provider configured")
+            sys.exit(1)
+        _sum_adapter = get_adapter(_sum_provider, _get_api_key_for_provider(_sum_api_key_cfg, _sum_provider))
+        asyncio.run(run_summarize(args.summarize, adapter=_sum_adapter, model=_sum_model, language=_sum_language))
         return
 
     asyncio.run(_async_main(args))

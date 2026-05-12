@@ -65,6 +65,20 @@ def _get_file_path(task_cfg: dict) -> str | None:
     return next((item["file"] for item in task_cfg.get("push", []) if "file" in item), None)
 
 
+def _resolve_model_spec(spec) -> tuple[str | None, str | None]:
+    """Return (provider, model_name) from a {provider, model} dict, or (None, None)."""
+    if spec is None:
+        return None, None
+    return spec.get("provider") or None, spec.get("model") or None
+
+
+def _get_api_key_for_provider(api_key_cfg, provider: str | None) -> str | None:
+    """Return the API key for a given provider from an {openai, gemini} dict."""
+    if api_key_cfg is None or not provider:
+        return None
+    return api_key_cfg.get(provider)
+
+
 def _make_secret_loader(secrets: dict | None, secrets_path: pathlib.Path) -> type:
     import yaml
 
@@ -128,17 +142,29 @@ class _GlobalDiscord(BaseModel):
     color: _Color = None
 
 
+class _ModelSpec(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    provider: Literal['openai', 'gemini'] | None = None
+    model: str
+
+
 class _GlobalModels(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    reasoning: str | None = None
-    topic: str | None = None
+    reasoning: _ModelSpec | None = None
+    topic: _ModelSpec | None = None
+
+
+class _ApiKeys(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    openai: str | None = None
+    gemini: str | None = None
 
 
 class _GlobalLLM(BaseModel):
     model_config = ConfigDict(extra='forbid')
     models: _GlobalModels | None = None
     language: str | None = None
-    api_key: str | None = None
+    api_key: _ApiKeys | None = None
     instructions: str | None = None
 
 

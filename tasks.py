@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import aiohttp
 
 from config import _parse_color, _task_type, _get_feeds, _get_discord_cfg, _get_file_path
+from llm.adapters.base import LLMAdapter
 from pipeline import Item, FilterResult, PushContext
 from pull.feed import RSSSource, get_new_entries
 from push.discord import (
@@ -88,7 +89,7 @@ async def _pull_feeds(
 async def _summarize_items(
     items: list[Item],
     cfg_by_id: dict[str, tuple[str, str | None]],
-    api_key: str | None,
+    llm_adapter: LLMAdapter | None,
     model: str | None,
     session: aiohttp.ClientSession | None = None,
 ) -> list[Item]:
@@ -100,6 +101,10 @@ async def _summarize_items(
                 return fetched
         return e.body
 
+    if llm_adapter is None:
+        log.error("Summarize skipped — llm.models.reasoning is not configured")
+        return items
+
     contents = await asyncio.gather(*[_get_content(e) for e in items], return_exceptions=True)
     pairs = [
         (e, c) for e, c in zip(items, contents)
@@ -109,7 +114,8 @@ async def _summarize_items(
         return items
     results = await asyncio.gather(
         *[summarize_entry(
-              e.title, c, api_key=api_key, model=model,
+              e.title, c, llm_adapter,
+              model=model,
               language=cfg_by_id[e.id][0],
               instructions=cfg_by_id[e.id][1],
           )
@@ -130,7 +136,7 @@ async def _apply_llm_filter(
     model: str | None,
     language: str,
     memory_history: list[tuple[str, str]] | None,
-    api_key: str | None,
+    llm_adapter: LLMAdapter | None,
 ) -> FilterResult:
     """Run LLM filter on items. Returns FilterResult with filter_pass set on each item."""
     # Build grouped payload for the LLM (grouped by source)
@@ -162,10 +168,14 @@ async def _apply_llm_filter(
     if not payload_groups:
         return FilterResult(items=all_items, memory=None, cite_map=cite_map)
 
+    if llm_adapter is None:
+        log.error("LLM filter skipped — llm.models.reasoning is not configured")
+        return FilterResult(items=all_items, memory=None, cite_map=cite_map)
+
     _filter_kwargs = dict(
         language=language,
         memory_history=memory_history,
-        api_key=api_key,
+        adapter=llm_adapter,
         extra_instructions=filter_cfg.get("instructions") or None,
     )
     llm_return = await filter_entries(payload_groups, filter_cfg, model, **_filter_kwargs)
@@ -205,11 +215,14 @@ async def _process_llm_search_task(
     *,
     instructions: str | None = None,
     search_model: str | None = None,
-    llm_api_key: str | None = None,
+    llm_adapter: LLMAdapter | None,
 ) -> dict:
     """Pull from LLM web search, post as plain text. Returns {name: task_state} or {}."""
     name = task_cfg["name"]
-    source = LLMSearchSource(instructions=instructions, global_model=search_model, api_key=llm_api_key)
+    if llm_adapter is None:
+        log.error("[%s] Skipping — llm.models.topic is not configured", name)
+        return {}
+    source = LLMSearchSource(instructions=instructions, global_model=search_model, adapter=llm_adapter)
     pull_result = await source.pull(task_cfg, set(), session)
     if pull_result is None or not pull_result.new_items:
         return {}
@@ -234,7 +247,7 @@ async def _process_llm_evaluate_task(
     session: aiohttp.ClientSession,
     *,
     evaluate_model: str | None = None,
-    llm_api_key: str | None = None,
+    llm_adapter: LLMAdapter | None,
     global_color: int | None = None,
     global_language: str = "EN-US",
     global_image_download: bool = False,
@@ -313,7 +326,7 @@ async def _process_llm_evaluate_task(
         if summarize_cfg_by_id:
             to_summarize = [it for it in all_new_items if it.id in summarize_cfg_by_id]
             if to_summarize:
-                summarized = await _summarize_items(to_summarize, summarize_cfg_by_id, llm_api_key, evaluate_model, session)
+                summarized = await _summarize_items(to_summarize, summarize_cfg_by_id, llm_adapter, evaluate_model, session)
                 by_id = {it.id: it for it in summarized}
                 all_new_items = [by_id.get(it.id, it) for it in all_new_items]
 
@@ -322,7 +335,7 @@ async def _process_llm_evaluate_task(
     if filter_cfg and all_new_items:
         language = filter_cfg.get("language") or global_language
         filter_result = await _apply_llm_filter(
-            all_new_items, filter_cfg, evaluate_model, language, memory_history, llm_api_key
+            all_new_items, filter_cfg, evaluate_model, language, memory_history, llm_adapter
         )
 
     # Determine passing items and apply explain mode
