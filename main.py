@@ -15,7 +15,7 @@ import aiohttp
 from config import _parse_color, _parse_period, _task_type, _get_feeds, _get_discord_cfg, _get_llm_pull_cfg, load_config, validate_config
 from state import _auto_clean, _remove_unknown, load_state, save_state
 from tasks import DEFAULT_PERIOD, _is_due, _process_llm_search_task, _process_llm_evaluate_task, _process_scraper_task
-from feed import RSSSource
+from pull.feed import RSSSource
 from summarize import run_summarize
 from migrate import CURRENT_VERSION, needs_migration, migrate
 
@@ -319,7 +319,7 @@ def main():
     args = parser.parse_args()
 
     if args.verbose:
-        for name in ("__main__", "feed", "llm", "discord", "scraper", "adapters.vivareal"):
+        for name in ("__main__", "pull.feed", "pull.llm", "push.discord", "pull.scraper", "adapters.vivareal"):
             logging.getLogger(name).setLevel(logging.DEBUG)
 
     if args.validate:
