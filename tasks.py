@@ -87,9 +87,9 @@ async def _pull_feeds(
 
 async def _summarize_items(
     items: list[Item],
+    cfg_by_id: dict[str, tuple[str, str | None]],
     api_key: str | None,
     model: str | None,
-    language: str,
     session: aiohttp.ClientSession | None = None,
 ) -> list[Item]:
     """Replace .summary on items that have fetchable content or a body, concurrently."""
@@ -108,7 +108,11 @@ async def _summarize_items(
     if not pairs:
         return items
     results = await asyncio.gather(
-        *[summarize_entry(e.title, c, api_key=api_key, model=model, language=language)
+        *[summarize_entry(
+              e.title, c, api_key=api_key, model=model,
+              language=cfg_by_id[e.id][0],
+              instructions=cfg_by_id[e.id][1],
+          )
           for e, c in pairs],
         return_exceptions=True,
     )
@@ -285,24 +289,31 @@ async def _process_llm_evaluate_task(
 
     # --- Process: summarize ---
     if all_new_items:
-        # Determine which items need summarization
-        summarize_set: set[str] = set()
+        # Build per-item summarize config: id -> (language, instructions)
+        summarize_cfg_by_id: dict[str, tuple[str, str | None]] = {}
         for fc in feed_cfgs:
             url = fc["url"]
             if fetch_map.get(url) is None:
                 continue
             feed_summarize = fc.get("summarize")
-            should = feed_summarize if feed_summarize is not None else task_summarize
-            if should:
-                pull_result = fetch_map[url]
-                for item in pull_result.new_items:
-                    summarize_set.add(item.id)
+            active = feed_summarize if feed_summarize is not None else task_summarize
+            if not active:
+                continue
+            if isinstance(active, dict):
+                sum_lang = active.get("language")
+                sum_instructions = active.get("instructions")
+            else:
+                sum_lang = None
+                sum_instructions = None
+            effective_lang = sum_lang or (filter_cfg or {}).get("language") or global_language
+            pull_result = fetch_map[url]
+            for item in pull_result.new_items:
+                summarize_cfg_by_id[item.id] = (effective_lang, sum_instructions)
 
-        if summarize_set:
-            to_summarize = [it for it in all_new_items if it.id in summarize_set]
+        if summarize_cfg_by_id:
+            to_summarize = [it for it in all_new_items if it.id in summarize_cfg_by_id]
             if to_summarize:
-                language = (filter_cfg or {}).get("language") or global_language
-                summarized = await _summarize_items(to_summarize, llm_api_key, evaluate_model, language, session)
+                summarized = await _summarize_items(to_summarize, summarize_cfg_by_id, llm_api_key, evaluate_model, session)
                 by_id = {it.id: it for it in summarized}
                 all_new_items = [by_id.get(it.id, it) for it in all_new_items]
 

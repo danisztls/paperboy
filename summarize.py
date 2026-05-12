@@ -19,15 +19,17 @@ async def summarize_entry(
     api_key: str | None = None,
     model: str | None = None,
     language: str = "EN-US",
+    instructions: str | None = None,
 ) -> str | None:
     client = AsyncOpenAI(api_key=api_key) if api_key else AsyncOpenAI()
     model = model or _DEFAULT_MODEL
-    instructions = (
+    base_instructions = (
         f"You are a precise, concise summarizer. Write in {language}. "
         "Given the title and description of a news article or feed entry, write a brief summary "
         "covering the main point and key details. No filler phrases. "
         "Keep the summary under 1024 characters."
     )
+    instructions = f"{base_instructions} {instructions}" if instructions else base_instructions
     log.info("Summarizing entry (model=%s): %s", model, title[:80])
     try:
         response = await client.responses.create(

@@ -198,6 +198,12 @@ class _Image(BaseModel):
     download: bool | None = None
 
 
+class _Summarize(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    language: str | None = None
+    instructions: str | None = None
+
+
 class _PullFeedItem(BaseModel):
     model_config = ConfigDict(extra='forbid')
     name: str | None = None
@@ -205,7 +211,7 @@ class _PullFeedItem(BaseModel):
     discord: _FeedDiscord = Field(default_factory=_FeedDiscord)
     image: _Image | None = None
     filter: _FilterDict | None = None
-    summarize: bool | None = None
+    summarize: bool | _Summarize | None = None
 
 
 class _PullLLMItem(BaseModel):
@@ -276,7 +282,7 @@ class _Task(BaseModel):
     image: _Image | None = None
     filter: _FilterDict | None = None
     llm: _TaskLLM | None = None
-    summarize: bool | None = None
+    summarize: bool | _Summarize | None = None
 
     @model_validator(mode='after')
     def _check_task(self):

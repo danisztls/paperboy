@@ -35,6 +35,9 @@ tasks:
     #   download: true       # download+optimize as WebP; overrides global image.download (default: false)
     # summarize: true        # optional — LLM-summarize each entry's description before filtering/posting (default: false)
     #                        # per-feed 'summarize' overrides this task-level default
+    # summarize:             # long form: 'true' is implicit when using extra options
+    #   language: "PT-BR"   # optional — override language for summaries (falls back to llm.language or EN-US)
+    #   instructions: "Ignore marketing claims and focus on what was demonstrated/proved."  # optional
     pull:
       - feed:
           name: My Feed
@@ -43,7 +46,7 @@ tasks:
           #   color: "#FF0000"      # optional — overrides task/global discord.color for this feed
           # image:
           #   download: true        # optional — overrides task/global image.download for this feed
-          # summarize: true         # optional — override task-level summarize for this feed
+          # summarize: true         # optional — override task-level summarize for this feed (also accepts dict form)
           # filter:
           #   title:
           #     extract: "\\d+ de \\w+"           # extract match (group 1 if captured, else group 0)
