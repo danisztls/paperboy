@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import re
+import textwrap
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -124,6 +125,7 @@ async def post_text_to_discord(
     text: str,
     session: aiohttp.ClientSession,
 ) -> None:
+    text = _wrap_text(text)
     if len(text) > 2000:
         text = text[:1997] + "…"
     payload = json.dumps({"content": text}).encode()
@@ -143,8 +145,20 @@ async def post_text_to_discord(
 
 
 _CONTENT_LIMIT = 2000
+_LINE_WIDTH = 70
 _CITE_RE = re.compile(r'\[(\d+)\]')
 _SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?])\s+')
+
+
+def _wrap_text(text: str) -> str:
+    lines = text.split('\n')
+    result = []
+    for line in lines:
+        if len(line) <= _LINE_WIDTH or line.startswith('#'):
+            result.append(line)
+        else:
+            result.append(textwrap.fill(line, width=_LINE_WIDTH, break_long_words=False, break_on_hyphens=False))
+    return '\n'.join(result)
 
 
 def _apply_cite_map(text: str, cite_map: dict[int, tuple[str, str | None]]) -> str:
@@ -153,9 +167,10 @@ def _apply_cite_map(text: str, cite_map: dict[int, tuple[str, str | None]]) -> s
         if item is None:
             return m.group(0)
         name, url = item
-        return f"[[{name}]](<{url}>)" if url else f"[{name}]"
+        return f"[[{name}](<{url}>)]" if url else f"[{name}]"
 
     return _CITE_RE.sub(replace, text)
+
 
 
 def _build_digest_chunks(
@@ -215,7 +230,7 @@ async def post_to_discord(
         "color": color if color is not None else 0x5865F2,
     }
     if entry.body:
-        embed["description"] = entry.body
+        embed["description"] = _wrap_text(entry.body)
     if entry.source:
         embed["footer"] = {"text": entry.source}
 
@@ -335,7 +350,7 @@ class DiscordMarkdownTarget(Target):
         items = sorted(ctx.items, key=lambda e: e.published or _FAR_FUTURE)
         for i, item in enumerate(items):
             title_part = f"[{item.title}](<{item.url}>)" if item.url else item.title
-            source_part = f" {item.source}" if item.source else ""
+            source_part = f" [{item.source}]" if item.source else ""
             header = f"### {title_part}{source_part}"
             body = item.body or ""
             text = f"{header}\n{body}" if body else header
