@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 
 from playwright.async_api import Page
 
@@ -10,6 +11,20 @@ log = logging.getLogger(__name__)
 
 _BASE = "https://www.vivareal.com.br"
 
+_JSONLD_TYPE_MAP = {
+    "Apartment": "Apartamento",
+    "House": "Casa",
+    "SingleFamilyResidence": "Casa",
+    "Condominium": "Condomínio",
+    "Flat": "Flat",
+    "Penthouse": "Cobertura",
+    "Place": "Imóvel",
+    "Accommodation": "Imóvel",
+    "Residence": "Imóvel",
+    "LandProperty": "Terreno",
+}
+
+# Legacy: kept for __NEXT_DATA__ fallback
 _TYPE_MAP = {
     "APARTMENT": "Apartamento",
     "HOME": "Casa",
@@ -25,7 +40,6 @@ _TYPE_MAP = {
     "WAREHOUSE": "Galpão",
 }
 
-# Known paths to the listings array inside __NEXT_DATA__.props.pageProps
 _NEXT_DATA_PATHS = [
     ["initialSearch", "result", "listings"],
     ["search", "result", "listings"],
@@ -43,21 +57,120 @@ class VivaRealAdapter(SiteAdapter):
         try:
             await page.wait_for_load_state("networkidle", timeout=12000)
         except Exception:
-            pass  # proceed even if network isn't fully idle
+            pass
 
-        items = self._from_next_data(await page.evaluate(
+        # Primary: JSON-LD ItemList (current site structure)
+        jsonld_blocks = await page.evaluate(
+            "() => Array.from(document.querySelectorAll('script[type=\"application/ld+json\"]'))"
+            ".map(s => s.textContent)"
+        )
+        items = self._from_jsonld(jsonld_blocks)
+        if items is not None:
+            log.info("[vivareal] %d listings via JSON-LD", len(items))
+            return items
+
+        # Fallback: __NEXT_DATA__ (legacy Next.js Pages Router)
+        raw = await page.evaluate(
             "() => document.getElementById('__NEXT_DATA__')?.textContent ?? null"
-        ))
+        )
+        items = self._from_next_data(raw)
         if items is not None:
             log.info("[vivareal] %d listings via __NEXT_DATA__", len(items))
             return items
 
-        log.warning("[vivareal] __NEXT_DATA__ extraction failed — falling back to DOM")
-        items = await self._from_dom(page)
-        log.info("[vivareal] %d listings via DOM", len(items))
-        return items
+        log.warning("[vivareal] No listing data found (tried JSON-LD and __NEXT_DATA__)")
+        return []
 
-    # --- __NEXT_DATA__ path ---
+    # --- JSON-LD path (primary) ---
+
+    def _from_jsonld(self, blocks: list[str]) -> list[Item] | None:
+        for raw in blocks:
+            try:
+                d = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if d.get("@type") != "ItemList":
+                continue
+            elements = d.get("itemListElement") or []
+            if not elements:
+                return None
+            items = [self._parse_jsonld_entry(e.get("item", e)) for e in elements]
+            return [it for it in items if it is not None]
+        return None
+
+    def _parse_jsonld_entry(self, item: dict) -> Item | None:
+        try:
+            url = item.get("url") or ""
+            if not url:
+                return None
+
+            ltype = _JSONLD_TYPE_MAP.get(item.get("@type", ""), "Imóvel")
+
+            bedrooms = item.get("numberOfBedrooms")
+            bathrooms = item.get("numberOfBathroomsTotal")
+            area = (item.get("floorSize") or {}).get("value")
+
+            name = item.get("name") or ""
+            # Name format: "Tipo ... em Bairro, Cidade" — extract neighborhood
+            nbh_match = re.search(r"\bem ([^,]+),", name)
+            neighborhood = nbh_match.group(1).strip() if nbh_match else ""
+
+            addr = item.get("address") or {}
+            city = addr.get("addressLocality") or ""
+            location = ", ".join(p for p in [neighborhood, city] if p)
+
+            # Parking not in JSON-LD schema; parse from name
+            parking_match = re.search(r"(\d+)\s*vaga", name, re.IGNORECASE)
+            parking = int(parking_match.group(1)) if parking_match else None
+
+            offers = item.get("offers") or {}
+            price_raw = offers.get("price")
+            try:
+                price_str = f"R$ {int(float(price_raw)):,}".replace(",", ".") if price_raw else "Sob consulta"
+            except (ValueError, TypeError):
+                price_str = str(price_raw) if price_raw else "Sob consulta"
+
+            title_parts = [ltype]
+            if bedrooms:
+                title_parts.append(f"{bedrooms}q")
+            if location:
+                title_parts.append(f"- {location}")
+
+            body_parts = [price_str]
+            if area:
+                body_parts.append(f"{area}m²")
+            if bedrooms:
+                body_parts.append(f"{bedrooms} quartos")
+            if bathrooms:
+                body_parts.append(f"{bathrooms} ban.")
+            if parking:
+                body_parts.append(f"{parking} vaga")
+
+            images = item.get("image") or []
+            image = images[0] if isinstance(images, list) and images else (images if isinstance(images, str) else None)
+
+            return Item(
+                id=url,
+                title=" ".join(title_parts)[:256],
+                source="VivaReal",
+                url=url,
+                body=" · ".join(body_parts),
+                image=image,
+                meta={
+                    "price": price_raw,
+                    "area": area,
+                    "bedrooms": bedrooms,
+                    "bathrooms": bathrooms,
+                    "parking": parking,
+                    "neighborhood": neighborhood,
+                    "city": city,
+                },
+            )
+        except Exception as exc:
+            log.debug("[vivareal] Failed to parse JSON-LD entry: %s — %s", exc, str(item)[:120])
+            return None
+
+    # --- __NEXT_DATA__ path (legacy fallback) ---
 
     def _from_next_data(self, raw: str | None) -> list[Item] | None:
         if not raw:
@@ -75,14 +188,13 @@ class VivaRealAdapter(SiteAdapter):
                 if node is None:
                     break
             if isinstance(node, list):
-                items = [self._parse_entry(e) for e in node]
+                items = [self._parse_next_data_entry(e) for e in node]
                 return [it for it in items if it is not None]
 
-        log.debug("[vivareal] known __NEXT_DATA__ paths not found; pageProps keys: %s", list(pp))
+        log.warning("[vivareal] __NEXT_DATA__ paths not found; pageProps keys: %s", list(pp))
         return None
 
-    def _parse_entry(self, entry: dict) -> Item | None:
-        # VivaReal wraps the listing under a "listing" key in search results
+    def _parse_next_data_entry(self, entry: dict) -> Item | None:
         listing = entry.get("listing") or entry
         try:
             lid = listing.get("id") or listing.get("externalId")
@@ -133,7 +245,6 @@ class VivaRealAdapter(SiteAdapter):
             if parking:
                 body_parts.append(f"{parking} vaga")
 
-            # medias can be on the listing or on the wrapper entry
             medias = listing.get("medias") or entry.get("medias") or []
             image = next(
                 (m.get("url") or m.get("src") for m in medias if m.get("type") == "IMAGE"),
@@ -158,53 +269,5 @@ class VivaRealAdapter(SiteAdapter):
                 },
             )
         except Exception as exc:
-            log.debug("[vivareal] Failed to parse entry: %s — %s", exc, str(entry)[:120])
+            log.debug("[vivareal] Failed to parse __NEXT_DATA__ entry: %s — %s", exc, str(entry)[:120])
             return None
-
-    # --- DOM fallback ---
-
-    async def _from_dom(self, page: Page) -> list[Item]:
-        selector = '[data-type="property"], article.property-card, [data-id]'
-        try:
-            await page.wait_for_selector(selector, timeout=8000)
-        except Exception:
-            log.warning("[vivareal] No listing cards found via DOM selector")
-            return []
-
-        cards = await page.query_selector_all(selector)
-        items: list[Item] = []
-        for card in cards:
-            try:
-                link_el = await card.query_selector(
-                    'a[href*="/imovel/"], a[href*="/venda/"], a[href*="/aluguel/"]'
-                ) or await card.query_selector('a[href]')
-                href = await link_el.get_attribute("href") if link_el else None
-                if not href:
-                    continue
-                if not href.startswith("http"):
-                    href = f"{_BASE}{href}"
-
-                title_el = await card.query_selector('h2, [class*="title"], [data-cy*="title"]')
-                title = (await title_el.inner_text()).strip() if title_el else href[:80]
-
-                price_el = await card.query_selector('[class*="price"], [data-cy*="price"]')
-                price_text = (await price_el.inner_text()).strip() if price_el else ""
-
-                img_el = await card.query_selector("img[src], img[data-src]")
-                image = None
-                if img_el:
-                    image = await img_el.get_attribute("src") or await img_el.get_attribute("data-src")
-
-                items.append(Item(
-                    id=href,
-                    title=title[:256],
-                    source="VivaReal",
-                    url=href,
-                    body=price_text,
-                    image=image,
-                ))
-            except Exception as exc:
-                log.debug("[vivareal] DOM card parse error: %s", exc)
-                continue
-
-        return items
