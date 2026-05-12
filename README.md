@@ -32,6 +32,8 @@ uv run main.py --task "world-news"     # run one task by name (ignores period/la
 uv run main.py --config config.yaml    # explicit config path
 uv run main.py --validate              # validate config and exit
 uv run main.py --migrate               # migrate state file to current schema
+uv run main.py --clean                 # remove stale state entries, then exit
+uv run main.py --summarize <url>       # fetch YouTube transcript and print summary
 uv run main.py --verbose               # verbose output
 ```
 

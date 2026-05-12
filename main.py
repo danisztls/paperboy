@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RSS to Discord webhook notifier"""
+"""Feed aggregator and notifier: RSS feeds, scrapers, and LLM tasks posted to Discord"""
 
 import asyncio
 import atexit
@@ -272,7 +272,7 @@ async def _async_main(args: argparse.Namespace) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="RSS to Discord webhook notifier")
+    parser = argparse.ArgumentParser(description="Feed aggregator and notifier: RSS feeds, scrapers, and LLM tasks posted to Discord")
     parser.add_argument(
         "--config", "-c",
         default=None,
