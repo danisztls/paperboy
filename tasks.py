@@ -29,6 +29,47 @@ _CITE_STRIP_RE = re.compile(r"\s*\[\d+\]")
 log = logging.getLogger(__name__)
 
 
+def _merge_feed_state(
+    prev_items: list[dict],
+    current_items: list[dict],
+    annotated_by_link: dict[str, Item],
+    *,
+    has_filter: bool,
+    failed_ids: set[str],
+    now_iso: str,
+) -> list[dict]:
+    """Merge prior feed state with new pull results.
+
+    Unseen current items become state dicts with optional summary and (under
+    a filter) filter_pass/filter_reason annotations. Items that failed to
+    post are dropped. access_date is stamped on any item that lacks it.
+    """
+    prev_by_url = {item["url"]: item for item in prev_items}
+    new_items: list[dict] = []
+    for ci in current_items:
+        if ci["url"] in prev_by_url:
+            continue
+        state_item = dict(ci)
+        it = annotated_by_link.get(ci["url"])
+        if it is not None and it.summary:
+            state_item["summary"] = it.summary
+        if has_filter:
+            if it is not None and it.filter_pass is not None:
+                state_item["filter_pass"] = it.filter_pass
+                state_item["filter_reason"] = it.filter_reason or ""
+            else:
+                state_item["filter_pass"] = True
+        new_items.append(state_item)
+
+    final = list(prev_items) + new_items
+    if failed_ids:
+        final = [item for item in final if item["url"] not in failed_ids]
+    for item in final:
+        if "access_date" not in item:
+            item["access_date"] = now_iso
+    return final
+
+
 def _decode_filter_results(
     raw_results: dict[str, dict], id_map: dict[int, Item]
 ) -> dict[str, dict]:
@@ -597,6 +638,7 @@ async def _process_llm_curate_task(
         # --- State update ---
         now_iso = datetime.now(UTC).replace(microsecond=0).isoformat()
         new_feeds_state = dict(feeds_state)
+        annotated_by_link = {it.id: it for it in all_annotated}
 
         for fc in feed_cfgs:
             url = fc["url"]
@@ -604,48 +646,14 @@ async def _process_llm_curate_task(
             if pull_result is None:
                 continue  # failed fetch — leave existing state untouched
 
-            prev_items = feeds_state.get(url, {}).get("items", [])
-            prev_by_url = {item["url"]: item for item in prev_items}
-            annotated_by_link = {it.id: it for it in all_annotated}
-
-            if filter_cfg:
-                final_items = list(prev_items)
-                for ci in pull_result.current_items:
-                    item_url = ci["url"]
-                    if item_url not in prev_by_url:
-                        state_item = dict(ci)
-                        it = annotated_by_link.get(item_url)
-                        if it is not None and it.summary:
-                            state_item["summary"] = it.summary
-                        if it is not None and it.filter_pass is not None:
-                            state_item.update(
-                                {
-                                    "filter_pass": it.filter_pass,
-                                    "filter_reason": it.filter_reason or "",
-                                }
-                            )
-                        else:
-                            state_item["filter_pass"] = True
-                        final_items.append(state_item)
-            else:
-                new_items_state = []
-                for ci in pull_result.current_items:
-                    if ci["url"] not in prev_by_url:
-                        state_item = dict(ci)
-                        it = annotated_by_link.get(ci["url"])
-                        if it is not None and it.summary:
-                            state_item["summary"] = it.summary
-                        new_items_state.append(state_item)
-                final_items = list(prev_items) + new_items_state
-
-            # Remove any items that failed to post
-            if failed_ids:
-                final_items = [item for item in final_items if item["url"] not in failed_ids]
-
-            for item in final_items:
-                if "access_date" not in item:
-                    item["access_date"] = now_iso
-
+            final_items = _merge_feed_state(
+                prev_items=feeds_state.get(url, {}).get("items", []),
+                current_items=pull_result.current_items,
+                annotated_by_link=annotated_by_link,
+                has_filter=bool(filter_cfg),
+                failed_ids=failed_ids,
+                now_iso=now_iso,
+            )
             new_feeds_state[url] = {"items": final_items, "last_run": now_iso}
 
         new_task_state: dict = {"feeds": new_feeds_state}
