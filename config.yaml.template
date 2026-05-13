@@ -6,14 +6,15 @@ discord:                    # optional — global defaults for Discord posting
 llm:                        # optional — global defaults for all LLM tasks
   models:
     reasoning:              # used for RSS/digest LLM filter + summarize (per-task 'model' overrides this)
-      provider: openai      # 'openai' or 'gemini'
+      provider: openai      # 'openai', 'gemini', or 'deepseek'
       model: gpt-5.4-mini
     topic:                  # used for standalone LLM search tasks (per-task 'model' overrides this)
       provider: openai
       model: gpt-5.4-nano
-  api_key:                  # per-provider API keys (omit to read from $OPENAI_API_KEY / $GEMINI_API_KEY env var)
+  api_key:                  # per-provider API keys (omit to read from $OPENAI_API_KEY / $GEMINI_API_KEY / $DEEPSEEK_API_KEY env var)
     openai: !secret openai_api_key
     # gemini: !secret gemini_api_key
+    # deepseek: !secret deepseek_api_key
   # instructions: "..."      # additional instructions appended to the built-in system prompt for LLM tasks
   # language: "EN-US"        # language for filter memory briefings (default: EN-US; per-filter 'language' overrides)
 
