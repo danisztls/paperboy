@@ -35,10 +35,13 @@ def _sort_state(state: dict) -> dict:
 
 def save_state(path: pathlib.Path, state: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    state["_last_run"] = datetime.now(UTC).replace(microsecond=0).isoformat()
-    state["_version"] = CURRENT_VERSION
+    stamped = {
+        **state,
+        "_last_run": datetime.now(UTC).replace(microsecond=0).isoformat(),
+        "_version": CURRENT_VERSION,
+    }
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(_sort_state(state), indent=2, ensure_ascii=False))
+    tmp.write_text(json.dumps(_sort_state(stamped), indent=2, ensure_ascii=False))
     tmp.replace(path)  # atomic on POSIX
 
 
