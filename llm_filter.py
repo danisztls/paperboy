@@ -1,5 +1,6 @@
 import json
 import logging
+import textwrap
 
 from llm.adapters.base import LLMAdapter
 
@@ -29,47 +30,58 @@ async def filter_entries(
     model = filter_cfg.get("model") or global_model or None
     explain = filter_cfg.get("explain", False)
     criteria = filter_cfg.get("prompt", "")
-    memory_block = ""
+
+    prefix = f"## Filter criteria\n{criteria}\n\n"
+    if extra_instructions:
+        prefix += f"## Additional instructions\n{extra_instructions}\n\n"
     if memory_history:
         entries = "\n---\n".join(f"[{ts[:16]}] {text}" for ts, text in memory_history)
-        memory_block = (
+        prefix += (
             "Previous memory log (oldest → newest — your evolving view of this information space):\n"
             + entries
             + "\n\n"
         )
-    instructions = (
-        f"## Filter criteria\n{criteria}\n\n"
-        + (f"## Additional instructions\n{extra_instructions}\n\n" if extra_instructions else "")
-        + f"{memory_block}"
-        "## Input\n\n"
-        "You will receive a JSON array of source groups, each with a 'source' name and an 'items' array. "
-        "Each item has an integer 'id', a 'title', and an optional 'description'.\n\n"
-        "## Steps\n\n"
-        "**Step 1 — Filter.** For each item, decide whether it matches the filter criteria above. "
-        "Mark it pass: true if it does, pass: false otherwise.\n\n"
-        "**Step 2 — Deduplicate.**\n"
-        "- Fail any item that covers a story already present in the memory log above without adding a significant new development. Use reason: 'already covered'.\n"
-        "- Within this batch, if multiple items cover the same event, keep only the one(s) that contribute the most relevant information; fail the rest with reason: 'duplicate within batch'.\n\n"
-        f"**Step 3 — Write memory.** Write a factual news briefing in {language} covering every item that passed the filter. Rules:\n"
-        "- Include ALL passing items — do not omit any.\n"
-        "- One story per paragraph (blank line between stories). Write 2–3 sentences per story: the first sentence states the core fact; subsequent sentences add context, significance, key figures, numbers, or consequences. Never mix two different topics in one paragraph.\n"
-        "- Never use semicolons to chain unrelated events in the same sentence.\n"
-        "- Group by theme; within each group order by significance. Lead with the single most significant development overall.\n"
-        "- Append the story's numeric id in square brackets after the period of the last sentence only, e.g. 'Talks broke down over tariffs [3].' — use the integer id values from the input.\n"
-        "- No meta-commentary about the filtering process, no mention of what was discarded, no hedging phrases.\n"
-        "- Include enough factual specificity (names, numbers, dates, places) that a follow-up story on the same event can be recognised as a continuation on the next run.\n\n"
-        "## Output format\n\n"
-        "Return a JSON object with exactly two top-level keys:\n"
-        '- "items": array where each element is {"id": <integer>, "pass": true/false, "reason": "<explanation>"}. Include ALL input items, both passing and failing.\n'
-        '- "memory": string — the news briefing from Step 3.\n\n'
-        + (
-            "Reason format — PASSING items: 2–3 sentence plain-language explanation of what the story is about and why it is relevant, written for someone with no prior context (ELI5 style).\n"
-            "Reason format — FAILING items: one short sentence explaining why it was excluded.\n"
-            if explain
-            else 'Keep the "reason" field to one short sentence for all items.\n'
-        )
-        + "\nReturn ONLY a valid JSON object, no other text."
+
+    reason_format = (
+        "Reason format — PASSING items: 2–3 sentence plain-language explanation of what the story is about and why it is relevant, written for someone with no prior context (ELI5 style).\nReason format — FAILING items: one short sentence explaining why it was excluded."
+        if explain
+        else 'Keep the "reason" field to one short sentence for all items.'
     )
+
+    body = textwrap.dedent(f"""\
+        ## Input
+
+        You will receive a JSON array of source groups, each with a 'source' name and an 'items' array. Each item has an integer 'id', a 'title', and an optional 'description'.
+
+        ## Steps
+
+        **Step 1 — Filter.** For each item, decide whether it matches the filter criteria above. Mark it pass: true if it does, pass: false otherwise.
+
+        **Step 2 — Deduplicate.**
+        - Fail any item that covers a story already present in the memory log above without adding a significant new development. Use reason: 'already covered'.
+        - Within this batch, if multiple items cover the same event, keep only the one(s) that contribute the most relevant information; fail the rest with reason: 'duplicate within batch'.
+
+        **Step 3 — Write memory.** Write a factual news briefing in {language} covering every item that passed the filter. Rules:
+        - Include ALL passing items — do not omit any.
+        - One story per paragraph (blank line between stories). Write 2–3 sentences per story: the first sentence states the core fact; subsequent sentences add context, significance, key figures, numbers, or consequences. Never mix two different topics in one paragraph.
+        - Never use semicolons to chain unrelated events in the same sentence.
+        - Group by theme; within each group order by significance. Lead with the single most significant development overall.
+        - Append the story's numeric id in square brackets after the period of the last sentence only, e.g. 'Talks broke down over tariffs [3].' — use the integer id values from the input.
+        - No meta-commentary about the filtering process, no mention of what was discarded, no hedging phrases.
+        - Include enough factual specificity (names, numbers, dates, places) that a follow-up story on the same event can be recognised as a continuation on the next run.
+
+        ## Output format
+
+        Return a JSON object with exactly two top-level keys:
+        - "items": array where each element is {{"id": <integer>, "pass": true/false, "reason": "<explanation>"}}. Include ALL input items, both passing and failing.
+        - "memory": string — the news briefing from Step 3.
+
+        {reason_format}
+
+        Return ONLY a valid JSON object, no other text.
+    """)
+
+    instructions = prefix + body
     if trace is not None:
         trace["instructions"] = instructions
         trace["payload"] = items
