@@ -110,6 +110,7 @@ async def main() -> None:
             "url": url,
             "title": title,
             "kind": kind,
+            "body": content,
             "summaries": [],
         }
 
