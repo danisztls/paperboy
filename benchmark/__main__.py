@@ -73,6 +73,55 @@ async def run_model(
     raise RuntimeError("model returned no output after retry (model may be unavailable)")
 
 
+async def process_url(
+    url: str,
+    title: str,
+    content: str,
+    models: list[tuple[str, str]],
+) -> dict:
+    """Run all models against one URL concurrently. Returns a complete entry dict."""
+    is_youtube = bool(_YOUTUBE_RE.match(url))
+    entry: dict = {
+        "url": url,
+        "title": title,
+        "kind": "youtube" if is_youtube else "article",
+        "body": content,
+        "summaries": [],
+    }
+    if not content:
+        entry["fetch_error"] = True
+        return entry
+    entry["fetch_error"] = False
+    model_tasks = [
+        run_model(provider, model, url, title, content, is_youtube) for provider, model in models
+    ]
+    results = await asyncio.gather(*model_tasks, return_exceptions=True)
+    for i, result in enumerate(results):
+        provider, model = models[i]
+        if isinstance(result, BaseException):
+            entry["summaries"].append(
+                {
+                    "provider": provider,
+                    "model": model,
+                    "elapsed": None,
+                    "summary": None,
+                    "error": str(result),
+                }
+            )
+        else:
+            rprovider, rmodel, _, elapsed, summary = result
+            entry["summaries"].append(
+                {
+                    "provider": rprovider,
+                    "model": rmodel,
+                    "elapsed": round(elapsed, 3),
+                    "summary": summary,
+                    "error": None,
+                }
+            )
+    return entry
+
+
 async def main() -> None:
     cfg = yaml.safe_load(_CONFIG_PATH.read_text())
     urls: list[str] = cfg["urls"]
@@ -99,66 +148,28 @@ async def main() -> None:
 
     print(f"\nFetched {len(contents)} items. Running {len(models)} models on each.\n")
 
-    for url, title, content in contents:
-        is_youtube = bool(_YOUTUBE_RE.match(url))
-        kind = "youtube" if is_youtube else "article"
-        display = title if title else url
+    all_entries = await asyncio.gather(
+        *[process_url(url, title, content, models) for url, title, content in contents],
+    )
+
+    for entry in all_entries:
+        is_youtube = entry["kind"] == "youtube"
+        display = entry["title"] if entry["title"] else entry["url"]
         print(f"\n{'YouTube' if is_youtube else 'Article'}: {display}")
-        print(f"URL: {url}")
-
-        entry: dict = {
-            "url": url,
-            "title": title,
-            "kind": kind,
-            "body": content,
-            "summaries": [],
-        }
-
-        if not content:
+        print(f"URL: {entry['url']}")
+        if entry.get("fetch_error"):
             print("  ERROR: could not fetch content — skipping")
-            entry["fetch_error"] = True
-            report["results"].append(entry)
-            continue
-
-        entry["fetch_error"] = False
-
-        model_tasks = [
-            run_model(provider, model, url, title, content, is_youtube)
-            for provider, model in models
-        ]
-        results = await asyncio.gather(*model_tasks, return_exceptions=True)
-
-        for i, result in enumerate(results):
-            provider, model = models[i]
-            if isinstance(result, BaseException):
-                print(f"\n  [{provider}/{model}] ERROR: {result}")
-                entry["summaries"].append(
-                    {
-                        "provider": provider,
-                        "model": model,
-                        "elapsed": None,
-                        "summary": None,
-                        "error": str(result),
-                    }
-                )
-            else:
-                rprovider, rmodel, _, elapsed, summary = result
-                print(f"\n  [{rprovider}/{rmodel}] ({elapsed:.1f}s)")
-                if summary:
-                    for line in summary.splitlines():
-                        print(f"  {line}")
+        else:
+            for s in entry["summaries"]:
+                if s["error"]:
+                    print(f"\n  [{s['provider']}/{s['model']}] ERROR: {s['error']}")
                 else:
-                    print("  (no output)")
-                entry["summaries"].append(
-                    {
-                        "provider": rprovider,
-                        "model": rmodel,
-                        "elapsed": round(elapsed, 3),
-                        "summary": summary,
-                        "error": None,
-                    }
-                )
-
+                    print(f"\n  [{s['provider']}/{s['model']}] ({s['elapsed']:.1f}s)")
+                    if s["summary"]:
+                        for line in s["summary"].splitlines():
+                            print(f"  {line}")
+                    else:
+                        print("  (no output)")
         report["results"].append(entry)
 
     print("\nBenchmark complete.")
