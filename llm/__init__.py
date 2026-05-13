@@ -1,6 +1,6 @@
 import logging
 
-from llm.adapters.base import LLMAdapter
+from llm.adapters.base import LLMAdapter, LLMResponse
 
 log = logging.getLogger(__name__)
 
@@ -18,7 +18,8 @@ class FallbackAdapter(LLMAdapter):
         model: str | None = None,
         instructions: str | None = None,
         web_search: bool | dict = False,
-    ) -> str | None:
+        reasoning: bool | dict = False,
+    ) -> LLMResponse | None:
         # If a per-task model override is provided, try it with the first adapter first,
         # then fall back to global entries starting from the second (haven't been tried yet).
         if model is not None:
@@ -31,6 +32,7 @@ class FallbackAdapter(LLMAdapter):
                 model=effective_model,
                 instructions=instructions,
                 web_search=web_search,
+                reasoning=reasoning,
             )
             if result is not None:
                 return result
@@ -59,3 +61,6 @@ def get_adapter(provider: str | None = None, api_key: str | None = None) -> LLMA
     from llm.adapters.openai import OpenAIAdapter
 
     return OpenAIAdapter(api_key=api_key)
+
+
+__all__ = ["FallbackAdapter", "LLMAdapter", "LLMResponse", "get_adapter"]

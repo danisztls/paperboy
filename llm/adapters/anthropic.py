@@ -1,6 +1,7 @@
 import logging
+import time
 
-from .base import LLMAdapter
+from .base import LLMAdapter, LLMResponse
 
 DEFAULT_MODEL = "claude-haiku-4-5"
 log = logging.getLogger(__name__)
@@ -25,7 +26,8 @@ class AnthropicAdapter(LLMAdapter):
         model: str | None = None,
         instructions: str | None = None,
         web_search: bool | dict = False,
-    ) -> str | None:
+        reasoning: bool | dict = False,
+    ) -> LLMResponse | None:
         _model = model or DEFAULT_MODEL
         tools: list[dict] = []
         if web_search:
@@ -35,6 +37,12 @@ class AnthropicAdapter(LLMAdapter):
             kwargs["system"] = instructions
         if tools:
             kwargs["tools"] = tools
+        if reasoning:
+            thinking_arg: dict = {"type": "enabled", "budget_tokens": 8000}
+            if isinstance(reasoning, dict):
+                thinking_arg.update(reasoning)
+            kwargs["thinking"] = thinking_arg
+        t0 = time.monotonic()
         try:
             async with self._client.messages.stream(
                 model=_model,
@@ -43,8 +51,30 @@ class AnthropicAdapter(LLMAdapter):
                 **kwargs,
             ) as stream:
                 message = await stream.get_final_message()
-            text = "".join(block.text for block in message.content if block.type == "text")
-            return text.strip() or None
         except Exception as exc:
             log.error("Anthropic completion failed: %s", exc)
             return None
+        latency = time.monotonic() - t0
+        text = "".join(block.text for block in message.content if block.type == "text").strip()
+        if not text:
+            return None
+        reasoning_text: str | None = None
+        if reasoning:
+            thoughts = [
+                getattr(block, "thinking", "")
+                for block in message.content
+                if block.type == "thinking"
+            ]
+            joined = "\n".join(t for t in thoughts if t).strip()
+            if joined:
+                reasoning_text = joined
+        usage = getattr(message, "usage", None)
+        return LLMResponse(
+            text=text,
+            model=_model,
+            input_tokens=getattr(usage, "input_tokens", None) if usage else None,
+            output_tokens=getattr(usage, "output_tokens", None) if usage else None,
+            latency_s=latency,
+            reasoning=reasoning_text,
+            finish_reason=getattr(message, "stop_reason", None),
+        )

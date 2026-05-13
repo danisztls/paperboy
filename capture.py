@@ -1,10 +1,11 @@
 import json
+import pathlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 
 @dataclass
-class AnalysisCollector:
+class RunCapture:
     limit: int = 7
     limit_feeds: int = 7
     _tasks: list[dict] = field(default_factory=list, repr=False)
@@ -59,16 +60,29 @@ class AnalysisCollector:
         raw_response: str | None,
         parsed: list[dict],
         memory: str | None,
+        *,
+        model_used: str | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        latency_s: float | None = None,
+        reasoning: str | None = None,
+        web_search: bool = False,
     ) -> None:
         if self._current is None:
             return
         self._current["llm_filter"] = {
             "model": model,
+            "model_used": model_used,
             "instructions": instructions,
             "payload": payload,
             "raw_response": raw_response,
             "parsed": parsed,
             "memory": memory,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "latency_s": latency_s,
+            "reasoning": reasoning,
+            "web_search": web_search,
         }
 
     def record_summarization(
@@ -80,6 +94,12 @@ class AnalysisCollector:
         instructions: str,
         input_text: str,
         summary: str | None,
+        *,
+        model_used: str | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        latency_s: float | None = None,
+        reasoning: str | None = None,
     ) -> None:
         if self._current is None:
             return
@@ -92,6 +112,11 @@ class AnalysisCollector:
                 "instructions": instructions,
                 "input": input_text,
                 "summary": summary,
+                "model_used": model_used,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "latency_s": latency_s,
+                "reasoning": reasoning,
             }
         )
 
@@ -101,14 +126,27 @@ class AnalysisCollector:
         instructions: str | None,
         prompt: str,
         raw_response: str | None,
+        *,
+        model_used: str | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        latency_s: float | None = None,
+        reasoning: str | None = None,
+        web_search: bool = True,
     ) -> None:
         if self._current is None:
             return
         self._current["llm_search"] = {
             "model": model,
+            "model_used": model_used,
             "instructions": instructions,
             "prompt": prompt,
             "raw_response": raw_response,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "latency_s": latency_s,
+            "reasoning": reasoning,
+            "web_search": web_search,
         }
 
     def record_push(self, would_post: int) -> None:
@@ -120,6 +158,115 @@ class AnalysisCollector:
         if self._current is not None:
             self._tasks.append(self._current)
             self._current = None
+
+    def write_jsonl(self, base_dir: pathlib.Path, run_iso: str) -> list[pathlib.Path]:
+        """Persist captured LLM calls as <base_dir>/<task>/<run_iso>.jsonl. Returns paths written.
+
+        Tasks that produced zero LLM calls are skipped (no empty files).
+        """
+        by_task: dict[str, list[dict]] = {}
+        for task_name, record in self.to_jsonl_records():
+            by_task.setdefault(task_name, []).append(record)
+        written: list[pathlib.Path] = []
+        for task_name, recs in by_task.items():
+            if not recs:
+                continue
+            out_dir = base_dir / task_name
+            out_dir.mkdir(parents=True, exist_ok=True)
+            path = out_dir / f"{run_iso}.jsonl"
+            with path.open("w", encoding="utf-8") as f:
+                for r in recs:
+                    f.write(json.dumps(r, ensure_ascii=False, default=str) + "\n")
+            written.append(path)
+        return written
+
+    def to_jsonl_records(self) -> list[tuple[str, dict]]:
+        """Flatten captured tasks to (task_name, record) tuples, one per LLM call.
+
+        The caller decides how to group/persist these (e.g. per-task JSONL files).
+        """
+        records: list[tuple[str, dict]] = []
+        for task in self._tasks:
+            task_name = task["task"]
+            ts = task["timestamp"]
+            for s in task.get("summarization", []):
+                records.append(
+                    (
+                        task_name,
+                        {
+                            "task": task_name,
+                            "call_type": "summarize",
+                            "ts": ts,
+                            "model_used": s.get("model_used"),
+                            "instructions": s.get("instructions"),
+                            "input": s.get("input"),
+                            "response": s.get("summary"),
+                            "input_tokens": s.get("input_tokens"),
+                            "output_tokens": s.get("output_tokens"),
+                            "latency_s": s.get("latency_s"),
+                            "reasoning": s.get("reasoning"),
+                            "item_id": s.get("id"),
+                            "item_title": s.get("title"),
+                            "item_url": s.get("url"),
+                            "fetched_body": s.get("fetched_body"),
+                        },
+                    )
+                )
+            f = task.get("llm_filter")
+            if f:
+                payload = f.get("payload") or []
+                source_groups = len(payload)
+                source_groups_items = sum(len(g.get("items", [])) for g in payload)
+                parsed = f.get("parsed") or []
+                passing = sum(1 for p in parsed if p.get("pass"))
+                records.append(
+                    (
+                        task_name,
+                        {
+                            "task": task_name,
+                            "call_type": "filter",
+                            "ts": ts,
+                            "model": f.get("model"),
+                            "model_used": f.get("model_used"),
+                            "instructions": f.get("instructions"),
+                            "payload": payload,
+                            "response": f.get("raw_response"),
+                            "parsed": parsed,
+                            "memory": f.get("memory"),
+                            "input_tokens": f.get("input_tokens"),
+                            "output_tokens": f.get("output_tokens"),
+                            "latency_s": f.get("latency_s"),
+                            "reasoning": f.get("reasoning"),
+                            "source_groups_count": source_groups,
+                            "items_count": source_groups_items,
+                            "passing_count": passing,
+                            "web_search": f.get("web_search", False),
+                        },
+                    )
+                )
+            ls = task.get("llm_search")
+            if ls:
+                records.append(
+                    (
+                        task_name,
+                        {
+                            "task": task_name,
+                            "call_type": "llm_search",
+                            "ts": ts,
+                            "model": ls.get("model"),
+                            "model_used": ls.get("model_used"),
+                            "instructions": ls.get("instructions"),
+                            "prompt": ls.get("prompt"),
+                            "response": ls.get("raw_response"),
+                            "input_tokens": ls.get("input_tokens"),
+                            "output_tokens": ls.get("output_tokens"),
+                            "latency_s": ls.get("latency_s"),
+                            "reasoning": ls.get("reasoning"),
+                            "web_search": ls.get("web_search", True),
+                        },
+                    )
+                )
+        return records
 
     def display(self, *, console=None) -> None:
         from rich import box
@@ -264,91 +411,3 @@ class AnalysisCollector:
 
     def to_json(self) -> str:
         return json.dumps(self._tasks, ensure_ascii=False, indent=2, default=str)
-
-    def to_human(self) -> str:
-        lines: list[str] = []
-
-        def _indent(text: str, prefix: str = "    ") -> str:
-            return "\n".join(prefix + line for line in str(text).splitlines())
-
-        for task in self._tasks:
-            lines.append("=" * 72)
-            lines.append(f"TASK: {task['task']}  type={task['type']}  {task['timestamp']}")
-            lines.append("=" * 72)
-
-            for feed in task.get("feeds", []):
-                hf = feed.get("heuristic_filters", {})
-                url_excl = hf.get("url_excluded", [])
-                title_tr = hf.get("title_transforms", [])
-                desc_tr = hf.get("description_transforms", [])
-                lines.append(
-                    f"\n=== FEED: {feed['name']}  ({feed['url']})\n"
-                    f"    total_in_feed={feed['total_in_feed']}  new_eligible={feed['new_eligible']}  "
-                    f"url_excluded={len(url_excl)}  passed_heuristic={feed['passed_heuristic']}  "
-                    f"after_limit={feed['after_limit']}"
-                )
-                for e in url_excl:
-                    lines.append(f"    [url-excluded]      {e['url']}")
-                for t in title_tr:
-                    lines.append(f"    [title-transform]   {t['before']!r}  →  {t['after']!r}")
-                for t in desc_tr:
-                    b = t["before"][:120].replace("\n", " ")
-                    a = t["after"][:120].replace("\n", " ")
-                    lines.append(f"    [desc-transform]    {b!r}  →  {a!r}")
-
-            for s in task.get("summarization", []):
-                lines.append(f"\n=== SUMMARIZE: {s['title'][:80]}")
-                lines.append(f"    url: {s['url']}")
-                fb = s.get("fetched_body") or ""
-                if fb:
-                    lines.append(f"    fetched_body ({len(fb)} chars):")
-                    lines.append(_indent(fb[:400].replace("\n", " ")))
-                lines.append("    instructions:")
-                lines.append(_indent(s["instructions"][:300]))
-                lines.append(f"    summary: {s.get('summary') or '(none)'}")
-
-            if task.get("llm_filter"):
-                f = task["llm_filter"]
-                raw = f.get("raw_response") or ""
-                payload = f.get("payload") or []
-                n_items = sum(len(g.get("items", [])) for g in payload)
-                lines.append(f"\n=== LLM FILTER  model={f['model']}  items={n_items}")
-                lines.append("--- instructions:")
-                lines.append(_indent(f["instructions"][:800]))
-                lines.append("--- payload (JSON):")
-                try:
-                    payload_str = json.dumps(payload, ensure_ascii=False)
-                except Exception:
-                    payload_str = str(payload)
-                lines.append(_indent(payload_str[:800]))
-                lines.append(f"--- raw_response ({len(raw)} chars):")
-                lines.append(_indent(raw[:800]))
-                lines.append(f"--- parsed ({len(f['parsed'])} items):")
-                for item in f["parsed"]:
-                    icon = "✓" if item.get("pass") else "✗"
-                    lines.append(
-                        f"    [{icon}] [{item.get('id', '?')}] {item.get('source', '?')} — {str(item.get('title', ''))[:70]}"
-                    )
-                    reason = str(item.get("reason", ""))
-                    if reason:
-                        lines.append(f"         {reason[:140]}")
-                if f.get("memory"):
-                    lines.append("--- memory:")
-                    lines.append(_indent(f["memory"][:500]))
-
-            if task.get("llm_search"):
-                s = task["llm_search"]
-                raw = s.get("raw_response") or ""
-                lines.append(f"\n=== LLM SEARCH  model={s['model']}")
-                if s.get("instructions"):
-                    lines.append("--- instructions:")
-                    lines.append(_indent(str(s["instructions"])[:400]))
-                lines.append("--- prompt:")
-                lines.append(_indent(s["prompt"][:400]))
-                lines.append(f"--- raw_response ({len(raw)} chars):")
-                lines.append(_indent(raw[:800]))
-
-            p = task["push"]
-            lines.append(f"\n=== PUSH  dry_run={p['dry_run']}  would_post={p['would_post']}")
-
-        return "\n".join(lines)

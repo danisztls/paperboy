@@ -34,14 +34,29 @@ uv run main.py --validate              # validate config and exit
 uv run main.py --migrate               # migrate state file to current schema
 uv run main.py --clean                 # remove stale state entries, then exit
 uv run main.py --summarize <url>       # fetch YouTube transcript and print summary
+uv run main.py --analysis --task <t>   # inspection mode: LLM reasoning + ELI5 reasons, dry-run, render to stdout (extra tokens)
+uv run main.py --replay <jsonl> --models openai:gpt-4o-mini,gemini:gemini-2.5-flash --call filter
 uv run main.py --verbose               # verbose output
 ```
 
 Config: `$XDG_CONFIG_HOME/claudinho/config.yaml` (default `~/.config/claudinho/config.yaml`)  
 State: `$XDG_DATA_HOME/claudinho/state.json` (default `~/.local/share/claudinho/state.json`)  
-Logs: `<state_dir>/logs/<timestamp>.log`
+Logs: `<state_dir>/logs/<timestamp>.log`  
+Eval traces: `<state_dir>/evals/<task>/<run_iso>.jsonl` (one record per LLM call per run)
 
 Both paths can be overridden with `--config` and `--state`.
+
+## Eval data
+
+Every run writes a JSONL of its LLM calls (prompts, responses, tokens, latency, optional reasoning trace) under `<state_dir>/evals/<task>/<run_iso>.jsonl`. Use these to spot-check what the LLM saw and said on any past run, or feed them to `--replay` to compare against alternative models. The replay command re-issues each captured call against the listed `provider:model` pairs using the exact same instructions and input, so the only variable is the model:
+
+```sh
+uv run main.py --replay ~/.local/share/claudinho/evals/world-news/2026-05-13T08-00-00.jsonl \
+  --models openai:gpt-4o-mini,gemini:gemini-2.5-flash \
+  --call filter
+```
+
+Output is written to `<state_dir>/evals/replays/<basename>__replay_<ts>.json` with the original captured response included as the reference.
 
 ## Cron example
 

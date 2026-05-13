@@ -11,7 +11,7 @@ from llm.adapters.base import LLMAdapter
 from llm_filter import filter_entries
 from pipeline import FilterResult, Item, PushContext
 from pull.feed import RSSSource
-from pull.llm import LLMSearchSource, run_llm_task
+from pull.llm import run_llm_task
 from pull.scraper import ScraperSource
 from push.discord import (
     DiscordDigestTarget,
@@ -65,6 +65,7 @@ async def _pull_feeds(
     session: aiohttp.ClientSession,
     *,
     collector=None,
+    analysis: bool = False,
 ) -> tuple[dict[str, object], dict[str, dict]]:
     """Fetch all feeds concurrently. Returns ({url: PullResult | None}, {url: filter_log})."""
     task_filter = task_filter or {}
@@ -73,7 +74,7 @@ async def _pull_feeds(
         url = fc["url"]
         seen = (
             set()
-            if collector
+            if analysis
             else {item["url"] for item in feeds_state.get(url, {}).get("items", [])}
         )
         feed_filter = fc.get("filter", {})
@@ -118,6 +119,7 @@ async def _summarize_items(
     session: aiohttp.ClientSession | None = None,
     *,
     collector=None,
+    analysis: bool = False,
 ) -> list[Item]:
     """Replace .summary on items that have fetchable content or a body, concurrently."""
 
@@ -136,7 +138,7 @@ async def _summarize_items(
         content = await _get_content(e)
         if not content:
             return e, None, None, None
-        cap: dict | None = {} if collector else None
+        trace: dict | None = {} if collector else None
         try:
             summary = await summarize_entry(
                 e.title,
@@ -145,28 +147,34 @@ async def _summarize_items(
                 model=model,
                 language=cfg_by_id[e.id][0],
                 instructions=cfg_by_id[e.id][1],
-                capture=cap,
+                reasoning=analysis,
+                trace=trace,
             )
         except Exception as exc:
             log.error("summarize_entry failed for %s: %s", e.url, exc)
             summary = None
-        return e, content, summary, cap
+        return e, content, summary, trace
 
     results = await asyncio.gather(*[_fetch_and_summarize(e) for e in items])
 
     updated: dict[str, Item] = {}
-    for e, content, summary, cap in results:
+    for e, content, summary, trace in results:
         if summary:
             updated[e.id] = dc_replace(e, summary=summary)
-        if collector and cap is not None:
+        if collector and trace is not None:
             collector.record_summarization(
                 item_id=e.id,
                 title=e.title,
                 url=e.url,
                 fetched_body=content,
-                instructions=cap.get("instructions", ""),
-                input_text=cap.get("input", ""),
+                instructions=trace.get("instructions", ""),
+                input_text=trace.get("input", ""),
                 summary=summary,
+                model_used=trace.get("model_used"),
+                input_tokens=trace.get("input_tokens"),
+                output_tokens=trace.get("output_tokens"),
+                latency_s=trace.get("latency_s"),
+                reasoning=trace.get("reasoning"),
             )
     return [updated.get(e.id, e) for e in items]
 
@@ -180,6 +188,7 @@ async def _apply_llm_filter(
     llm_adapter: LLMAdapter | None,
     *,
     collector=None,
+    analysis: bool = False,
 ) -> FilterResult:
     """Run LLM filter on items. Returns FilterResult with filter_pass set on each item."""
     # Build grouped payload for the LLM (grouped by source)
@@ -215,35 +224,45 @@ async def _apply_llm_filter(
         log.error("LLM filter skipped — llm.models.reasoning is not configured")
         return FilterResult(items=all_items, memory=None, cite_map=cite_map)
 
-    filter_capture: dict | None = {} if collector else None
+    filter_trace: dict | None = {} if collector else None
+    effective_filter_cfg = {**filter_cfg, "explain": True} if analysis else filter_cfg
     _filter_kwargs = dict(
         language=language,
         memory_history=memory_history,
         adapter=llm_adapter,
-        extra_instructions=filter_cfg.get("instructions") or None,
-        capture=filter_capture,
+        extra_instructions=effective_filter_cfg.get("instructions") or None,
+        reasoning=analysis,
+        trace=filter_trace,
     )
-    llm_return = await filter_entries(payload_groups, filter_cfg, model, **_filter_kwargs)
+    llm_return = await filter_entries(payload_groups, effective_filter_cfg, model, **_filter_kwargs)
     if llm_return is None:
         log.warning("Filter failed, retrying in 10s")
         await asyncio.sleep(10)
-        llm_return = await filter_entries(payload_groups, filter_cfg, model, **_filter_kwargs)
+        llm_return = await filter_entries(
+            payload_groups, effective_filter_cfg, model, **_filter_kwargs
+        )
     if llm_return is None:
-        if collector and filter_capture is not None:
+        if collector and filter_trace is not None:
             collector.record_filter(
                 model=model,
-                instructions=filter_capture.get("instructions", ""),
-                payload=filter_capture.get("payload", []),
-                raw_response=filter_capture.get("raw_response"),
+                instructions=filter_trace.get("instructions", ""),
+                payload=filter_trace.get("payload", []),
+                raw_response=filter_trace.get("raw_response"),
                 parsed=[],
                 memory=None,
+                model_used=filter_trace.get("model_used"),
+                input_tokens=filter_trace.get("input_tokens"),
+                output_tokens=filter_trace.get("output_tokens"),
+                latency_s=filter_trace.get("latency_s"),
+                reasoning=filter_trace.get("reasoning"),
+                web_search=filter_trace.get("web_search", False),
             )
         log.error("Filter failed twice — treating all items as passing")
         return FilterResult(items=all_items, memory=None, cite_map=cite_map)
 
     raw_results, memory_text = llm_return
 
-    if collector and filter_capture is not None:
+    if collector and filter_trace is not None:
         parsed_list = []
         for gid_str, v in raw_results.items():
             try:
@@ -262,11 +281,17 @@ async def _apply_llm_filter(
             )
         collector.record_filter(
             model=model,
-            instructions=filter_capture.get("instructions", ""),
-            payload=filter_capture.get("payload", []),
-            raw_response=filter_capture.get("raw_response"),
+            instructions=filter_trace.get("instructions", ""),
+            payload=filter_trace.get("payload", []),
+            raw_response=filter_trace.get("raw_response"),
             parsed=parsed_list,
             memory=memory_text,
+            model_used=filter_trace.get("model_used"),
+            input_tokens=filter_trace.get("input_tokens"),
+            output_tokens=filter_trace.get("output_tokens"),
+            latency_s=filter_trace.get("latency_s"),
+            reasoning=filter_trace.get("reasoning"),
+            web_search=filter_trace.get("web_search", False),
         )
 
     # Map LLM results back to Items
@@ -301,6 +326,7 @@ async def _process_llm_search_task(
     search_model: str | None = None,
     llm_adapter: LLMAdapter | None,
     collector=None,
+    analysis: bool = False,
 ) -> dict:
     """Pull from LLM web search, post as plain text. Returns {name: task_state} or {}."""
     name = task_cfg["name"]
@@ -311,32 +337,43 @@ async def _process_llm_search_task(
             log.error("[%s] Skipping — llm.models.topic is not configured", name)
             return {}
 
-        if collector:
-            cap: dict = {}
-            text = await run_llm_task(
-                task_cfg, instructions, search_model, adapter=llm_adapter, capture=cap
-            )
+        trace: dict | None = {} if collector else None
+        text = await run_llm_task(
+            task_cfg,
+            instructions,
+            search_model,
+            adapter=llm_adapter,
+            reasoning=analysis,
+            trace=trace,
+        )
+        if collector and trace is not None:
             collector.record_llm_search(
-                model=cap.get("model"),
-                instructions=cap.get("instructions"),
-                prompt=cap.get("prompt", ""),
+                model=trace.get("model"),
+                instructions=trace.get("instructions"),
+                prompt=trace.get("prompt", ""),
                 raw_response=text,
+                model_used=trace.get("model_used"),
+                input_tokens=trace.get("input_tokens"),
+                output_tokens=trace.get("output_tokens"),
+                latency_s=trace.get("latency_s"),
+                reasoning=trace.get("reasoning"),
+                web_search=trace.get("web_search", True),
             )
-            new_items = (
+
+        if analysis:
+            new_items_preview = (
                 [Item(id=f"{name}:llm_result", title=name, source=name, body=text)] if text else []
             )
-            collector.record_push(len(new_items))
+            if collector:
+                collector.record_push(len(new_items_preview))
             return {}
 
-        source = LLMSearchSource(
-            instructions=instructions, global_model=search_model, adapter=llm_adapter
-        )
-        pull_result = await source.pull(task_cfg, set(), session)
-        if pull_result is None or not pull_result.new_items:
+        if not text:
             return {}
+        new_items = [Item(id=f"{name}:llm_result", title=name, source=name, body=text)]
 
         target = DiscordTextTarget()
-        ctx = PushContext(items=pull_result.new_items)
+        ctx = PushContext(items=new_items)
         try:
             await target.push(ctx, task_cfg, session)
         except Exception:
@@ -346,13 +383,15 @@ async def _process_llm_search_task(
         if _get_file_path(task_cfg):
             await FileEmbedTarget().push(ctx, task_cfg, session)
 
+        if collector:
+            collector.record_push(len(new_items))
         return {name: {"last_run": datetime.now(UTC).replace(microsecond=0).isoformat()}}
     finally:
         if collector:
             collector.finish_task()
 
 
-async def _process_llm_evaluate_task(
+async def _process_llm_curate_task(
     task_cfg: dict,
     state: dict,
     session: aiohttp.ClientSession,
@@ -363,6 +402,7 @@ async def _process_llm_evaluate_task(
     global_language: str = "EN-US",
     global_image_download: bool = False,
     collector=None,
+    analysis: bool = False,
 ) -> dict:
     """Pull RSS feeds, optionally filter/summarize, push to Discord. Returns {task_name: task_state}."""
     task_name = task_cfg["name"]
@@ -370,6 +410,8 @@ async def _process_llm_evaluate_task(
     task_color = _parse_color(task_discord.get("color"))
     filter_cfg = task_cfg.get("llm") or None
     explain = bool(filter_cfg.get("explain")) if filter_cfg else False
+    if analysis and filter_cfg:
+        explain = True
     task_image_cfg = task_cfg.get("image") or {}
     fetch_image = not task_image_cfg.get("skip", False)
     task_image_download = task_image_cfg.get("download")
@@ -382,7 +424,7 @@ async def _process_llm_evaluate_task(
 
     try:
         feed_cfgs = [fc for fc in _get_feeds(task_cfg) if fc.get("url")]
-        if collector and collector.limit_feeds > 0:
+        if analysis and collector and collector.limit_feeds > 0:
             feed_cfgs = feed_cfgs[: collector.limit_feeds]
         task_state = state.get("tasks", {}).get(task_name, {})
         feeds_state = task_state.get("feeds", {})
@@ -397,7 +439,13 @@ async def _process_llm_evaluate_task(
         # --- Pull ---
         source = RSSSource()
         fetch_map, filter_log_map = await _pull_feeds(
-            source, feed_cfgs, feeds_state, task_filter, session, collector=collector
+            source,
+            feed_cfgs,
+            feeds_state,
+            task_filter,
+            session,
+            collector=collector,
+            analysis=analysis,
         )
 
         # Collect all new items, tagged with per-feed display metadata
@@ -410,7 +458,7 @@ async def _process_llm_evaluate_task(
                 items_per_feed[url] = []
                 continue
             feed_items = pull_result.new_items
-            if collector and collector.limit > 0:
+            if analysis and collector and collector.limit > 0:
                 feed_items = feed_items[-collector.limit :]
             items_per_feed[url] = feed_items
 
@@ -480,6 +528,7 @@ async def _process_llm_evaluate_task(
                         evaluate_model,
                         session,
                         collector=collector,
+                        analysis=analysis,
                     )
                     by_id = {it.id: it for it in summarized}
                     all_new_items = [by_id.get(it.id, it) for it in all_new_items]
@@ -496,6 +545,7 @@ async def _process_llm_evaluate_task(
                 memory_history,
                 llm_adapter,
                 collector=collector,
+                analysis=analysis,
             )
 
         # Determine passing items and apply explain mode
@@ -522,6 +572,7 @@ async def _process_llm_evaluate_task(
         # --- Analysis mode: record push count and return without posting ---
         if collector:
             collector.record_push(len(passing))
+        if analysis:
             return {}
 
         # --- Push ---
