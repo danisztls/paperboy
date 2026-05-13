@@ -2,15 +2,15 @@ import logging
 import os
 import pathlib
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from config import _get_file_path
 from pipeline import Item, PushContext, Target
 
 log = logging.getLogger(__name__)
 
-_CITE_RE = re.compile(r'\[(\d+)\]')
-_FAR_FUTURE = datetime.max.replace(tzinfo=timezone.utc)
+_CITE_RE = re.compile(r"\[(\d+)\]")
+_FAR_FUTURE = datetime.max.replace(tzinfo=UTC)
 
 
 def _resolve_path(path_str: str) -> pathlib.Path:
@@ -82,7 +82,7 @@ class FileDigestTarget(Target):
         path = _resolve_path(path_str)
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
         text = _apply_cite_map_md(ctx.memory, ctx.cite_map) if ctx.cite_map else ctx.memory
 
         block = f"## {date_str}\n\n{text.strip()}\n\n---\n\n"

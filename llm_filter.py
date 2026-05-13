@@ -57,14 +57,14 @@ async def filter_entries(
         "- No meta-commentary about the filtering process, no mention of what was discarded, no hedging phrases.\n"
         "- Include enough factual specificity that a follow-up story can be recognised as a continuation on the next run.\n\n"
         "## Output format\n\n"
-        'Return a JSON object with exactly two top-level keys:\n'
+        "Return a JSON object with exactly two top-level keys:\n"
         '- "items": array where each element is {"id": <integer>, "pass": true/false, "reason": "<explanation>"}. Include ALL input items, both passing and failing.\n'
         '- "memory": string — the news briefing from Step 3.\n\n'
         + (
-            'Reason format — PASSING items: 2–3 sentence plain-language explanation of what the story is about and why it is relevant, written for someone with no prior context (ELI5 style).\n'
-            'Reason format — FAILING items: one short sentence explaining why it was excluded.\n'
-            if explain else
-            'Keep the "reason" field to one short sentence for all items.\n'
+            "Reason format — PASSING items: 2–3 sentence plain-language explanation of what the story is about and why it is relevant, written for someone with no prior context (ELI5 style).\n"
+            "Reason format — FAILING items: one short sentence explaining why it was excluded.\n"
+            if explain
+            else 'Keep the "reason" field to one short sentence for all items.\n'
         )
         + "\nReturn ONLY a valid JSON object, no other text."
     )
@@ -100,7 +100,9 @@ async def filter_entries(
         return None
 
     if isinstance(result, list):
-        log.warning("LLM filter returned bare array — memory will not be saved; model may be ignoring format instruction")
+        log.warning(
+            "LLM filter returned bare array — memory will not be saved; model may be ignoring format instruction"
+        )
         items_list = result
         memory_text = None
     elif isinstance(result, dict) and "items" in result:
@@ -110,7 +112,11 @@ async def filter_entries(
         log.warning("LLM filter returned unexpected format: %s", text[:200])
         return None
 
-    parsed = {str(r["id"]): {"pass": bool(r.get("pass")), "reason": str(r.get("reason", ""))} for r in items_list if "id" in r}
+    parsed = {
+        str(r["id"]): {"pass": bool(r.get("pass")), "reason": str(r.get("reason", ""))}
+        for r in items_list
+        if "id" in r
+    }
     passed = sum(1 for v in parsed.values() if v["pass"])
     log.info("Filter: %d/%d items passed", passed, total)
     return parsed, memory_text

@@ -1,7 +1,7 @@
 import asyncio
-import re
 import logging
-from datetime import datetime, timezone
+import re
+from datetime import UTC, datetime
 
 import aiohttp
 import feedparser
@@ -22,9 +22,9 @@ def _strip_html(text: str) -> str:
     return BeautifulSoup(text, "html.parser").get_text()
 
 
-_MD_ESCAPE_RE = re.compile(r'(?m)(^[>#]+|[*_`~])')
-_CDATA_RE = re.compile(r'<!\[CDATA\[(.*?)\]\]>', re.DOTALL)
-_PHRASE_URL_RE = re.compile(r'[^.!?\n]*?https?://\S+')
+_MD_ESCAPE_RE = re.compile(r"(?m)(^[>#]+|[*_`~])")
+_CDATA_RE = re.compile(r"<!\[CDATA\[(.*?)\]\]>", re.DOTALL)
+_PHRASE_URL_RE = re.compile(r"[^.!?\n]*?https?://\S+")
 
 
 def _entry_title(entry) -> str:
@@ -34,7 +34,7 @@ def _entry_title(entry) -> str:
 
 
 def _escape_markdown(text: str) -> str:
-    return _MD_ESCAPE_RE.sub(r'\\\1', text)
+    return _MD_ESCAPE_RE.sub(r"\\\1", text)
 
 
 def _remove_phrases_with_urls(text: str) -> str:
@@ -71,8 +71,8 @@ def _apply_regex(cfg, text: str) -> str:
         if needle := cfg.get("remove_phrases_containing"):
             needles = needle if isinstance(needle, list) else [needle]
             for n in needles:
-                text = re.sub(r'[^.!?\n]*?' + re.escape(n) + r'[^.!?\n]*', '', text)
-            text = re.sub(r'[ \t]+', ' ', text).strip()
+                text = re.sub(r"[^.!?\n]*?" + re.escape(n) + r"[^.!?\n]*", "", text)
+            text = re.sub(r"[ \t]+", " ", text).strip()
         if key := cfg.get("extract"):
             m = re.search(key, text)
             text = (m.group(1) if m.lastindex else m.group(0)) if m else text
@@ -161,14 +161,14 @@ async def get_new_entries(
     filter_description = feed_filter.get("description")
     filter_url = feed_filter.get("url")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     _new_eligible = 0
     for entry in parsed.entries:
         eid = entry.get("link")
         if not eid:
             continue
         pt = entry.get("published_parsed") or entry.get("updated_parsed")
-        published = datetime(*pt[:6], tzinfo=timezone.utc) if pt else None
+        published = datetime(*pt[:6], tzinfo=UTC) if pt else None
         if published and (now - published).total_seconds() > ENTRY_MAX_AGE_SECONDS:
             log.debug("[%s] Skipping old entry (%s): %s", feed_title, published.date(), eid[:80])
             continue
@@ -205,31 +205,37 @@ async def get_new_entries(
             _orig_body = body
             body = _apply_regex(filter_description, body)
             if filter_log is not None and body != _orig_body:
-                filter_log["description_transforms"].append({"id": eid, "before": _orig_body[:300], "after": body[:300]})
+                filter_log["description_transforms"].append(
+                    {"id": eid, "before": _orig_body[:300], "after": body[:300]}
+                )
         body = "\n".join(line for line in body.splitlines() if line.strip())
         if len(body) > DESCRIPTION_MAX:
             body = body[:DESCRIPTION_MAX].rstrip() + "…"
         body = _escape_markdown(body)
 
         pt = entry.get("published_parsed") or entry.get("updated_parsed")
-        published = datetime(*pt[:6], tzinfo=timezone.utc) if pt else None
+        published = datetime(*pt[:6], tzinfo=UTC) if pt else None
 
         title = (_entry_title(entry) or "(no title)")[:256]
         if filter_title:
             _orig_title = title
             title = _apply_regex(filter_title, title)
             if filter_log is not None and title != _orig_title:
-                filter_log["title_transforms"].append({"id": eid, "before": _orig_title, "after": title})
+                filter_log["title_transforms"].append(
+                    {"id": eid, "before": _orig_title, "after": title}
+                )
 
-        new_entries.append(Item(
-            id=eid,
-            title=title,
-            source=feed_title,
-            url=link,
-            body=body,
-            image=_entry_image(entry),
-            published=published,
-        ))
+        new_entries.append(
+            Item(
+                id=eid,
+                title=title,
+                source=feed_title,
+                url=link,
+                body=body,
+                image=_entry_image(entry),
+                published=published,
+            )
+        )
 
     return current_items, new_entries
 

@@ -1,7 +1,7 @@
 import json
 import logging
 import pathlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from migrate import CURRENT_VERSION
 
@@ -35,7 +35,7 @@ def _sort_state(state: dict) -> dict:
 
 def save_state(path: pathlib.Path, state: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    state["_last_run"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    state["_last_run"] = datetime.now(UTC).replace(microsecond=0).isoformat()
     state["_version"] = CURRENT_VERSION
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(_sort_state(state), indent=2, ensure_ascii=False))

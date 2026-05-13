@@ -22,7 +22,9 @@ class LLMSearchSource(Source):
         self._adapter = adapter
 
     async def pull(self, cfg: dict, seen: set[str], session) -> PullResult | None:
-        text = await run_llm_task(cfg, self._instructions, self._global_model, adapter=self._adapter)
+        text = await run_llm_task(
+            cfg, self._instructions, self._global_model, adapter=self._adapter
+        )
         if not text:
             return None
         name = cfg.get("name", "llm")

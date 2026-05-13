@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
+
 from playwright.async_api import Page
+
 from pipeline import Item
 
 

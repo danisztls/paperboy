@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 @dataclass
@@ -14,7 +14,7 @@ class AnalysisCollector:
         self._current = {
             "task": name,
             "type": task_type,
-            "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            "timestamp": datetime.now(UTC).replace(microsecond=0).isoformat(),
             "feeds": [],
             "summarization": [],
             "llm_filter": None,
@@ -35,19 +35,21 @@ class AnalysisCollector:
     ) -> None:
         if self._current is None:
             return
-        self._current["feeds"].append({
-            "url": url,
-            "name": name,
-            "total_in_feed": total_in_feed,
-            "new_eligible": new_eligible,
-            "passed_heuristic": new_eligible - len(url_excluded),
-            "after_limit": after_limit,
-            "heuristic_filters": {
-                "url_excluded": url_excluded,
-                "title_transforms": title_transforms,
-                "description_transforms": description_transforms,
-            },
-        })
+        self._current["feeds"].append(
+            {
+                "url": url,
+                "name": name,
+                "total_in_feed": total_in_feed,
+                "new_eligible": new_eligible,
+                "passed_heuristic": new_eligible - len(url_excluded),
+                "after_limit": after_limit,
+                "heuristic_filters": {
+                    "url_excluded": url_excluded,
+                    "title_transforms": title_transforms,
+                    "description_transforms": description_transforms,
+                },
+            }
+        )
 
     def record_filter(
         self,
@@ -81,15 +83,17 @@ class AnalysisCollector:
     ) -> None:
         if self._current is None:
             return
-        self._current["summarization"].append({
-            "id": item_id,
-            "title": title,
-            "url": url,
-            "fetched_body": fetched_body,
-            "instructions": instructions,
-            "input": input_text,
-            "summary": summary,
-        })
+        self._current["summarization"].append(
+            {
+                "id": item_id,
+                "title": title,
+                "url": url,
+                "fetched_body": fetched_body,
+                "instructions": instructions,
+                "input": input_text,
+                "summary": summary,
+            }
+        )
 
     def record_llm_search(
         self,
@@ -181,7 +185,9 @@ class AnalysisCollector:
                 lines.append(f"--- parsed ({len(f['parsed'])} items):")
                 for item in f["parsed"]:
                     icon = "✓" if item.get("pass") else "✗"
-                    lines.append(f"    [{icon}] [{item.get('id', '?')}] {item.get('source', '?')} — {str(item.get('title', ''))[:70]}")
+                    lines.append(
+                        f"    [{icon}] [{item.get('id', '?')}] {item.get('source', '?')} — {str(item.get('title', ''))[:70]}"
+                    )
                     reason = str(item.get("reason", ""))
                     if reason:
                         lines.append(f"         {reason[:140]}")

@@ -53,20 +53,21 @@ async def summarize_transcript(
         "Given the title and transcript of a YouTube video, write a clear summary covering the main topics and key takeaways. "
         "Use a few short paragraphs. No filler phrases or meta-commentary about the summarization process."
     )
-    log.info("Summarizing transcript (model=%s, language=%s, %d chars)", model, language, len(transcript))
+    log.info(
+        "Summarizing transcript (model=%s, language=%s, %d chars)", model, language, len(transcript)
+    )
     return await adapter.complete(
         f"Title: {title}\n\nTranscript:\n{transcript[:12000]}",
         model=model,
         instructions=instructions,
     )
 
-_VTT_CUE_RE = re.compile(
-    r'^(\d{2}):(\d{2}):(\d{2})[.,](\d{3})\s*-->'
-)
-_VTT_TAGS_RE = re.compile(r'<[^>]+>')
-_VTT_META_RE = re.compile(r'^(WEBVTT|Kind:|Language:)')
 
-_YOUTUBE_RE = re.compile(r'https?://(?:[a-z0-9-]+\.)*youtube\.com(?:\.[a-z]{2,})?/', re.IGNORECASE)
+_VTT_CUE_RE = re.compile(r"^(\d{2}):(\d{2}):(\d{2})[.,](\d{3})\s*-->")
+_VTT_TAGS_RE = re.compile(r"<[^>]+>")
+_VTT_META_RE = re.compile(r"^(WEBVTT|Kind:|Language:)")
+
+_YOUTUBE_RE = re.compile(r"https?://(?:[a-z0-9-]+\.)*youtube\.com(?:\.[a-z]{2,})?/", re.IGNORECASE)
 
 
 def _parse_vtt(content: str) -> list[tuple[float, str]]:
@@ -86,7 +87,7 @@ def _parse_vtt(content: str) -> list[tuple[float, str]]:
         for ln in current_lines:
             if not deduped or ln != deduped[-1]:
                 deduped.append(ln)
-        text = ' '.join(deduped)
+        text = " ".join(deduped)
         if text:
             cues.append((current_start, text))
 
@@ -106,7 +107,7 @@ def _parse_vtt(content: str) -> list[tuple[float, str]]:
             current_start = h * 3600 + mn * 60 + s + ms / 1000
             current_lines = []
             continue
-        cleaned = _VTT_TAGS_RE.sub('', line).strip()
+        cleaned = _VTT_TAGS_RE.sub("", line).strip()
         if cleaned:
             current_lines.append(cleaned)
 
@@ -114,11 +115,13 @@ def _parse_vtt(content: str) -> list[tuple[float, str]]:
     return cues
 
 
-def _apply_sponsorblock(cues: list[tuple[float, str]], segments: list[dict]) -> list[tuple[float, str]]:
+def _apply_sponsorblock(
+    cues: list[tuple[float, str]], segments: list[dict]
+) -> list[tuple[float, str]]:
     """Remove cues whose start time falls inside any SponsorBlock segment."""
     if not segments:
         return cues
-    blocked = [(seg['segment'][0], seg['segment'][1]) for seg in segments]
+    blocked = [(seg["segment"][0], seg["segment"][1]) for seg in segments]
     return [(t, text) for t, text in cues if not any(start <= t < end for start, end in blocked)]
 
 
@@ -128,7 +131,7 @@ def _cues_to_text(cues: list[tuple[float, str]]) -> str:
     for _, text in cues:
         if not deduped or text != deduped[-1]:
             deduped.append(text)
-    return ' '.join(deduped)
+    return " ".join(deduped)
 
 
 async def _fetch_sponsorblock(video_id: str, session: aiohttp.ClientSession) -> list[dict]:
@@ -154,7 +157,7 @@ async def _fetch_youtube_data(url: str, session: aiohttp.ClientSession) -> tuple
         return None
 
     def _extract():
-        with yt_dlp.YoutubeDL({'skip_download': True, 'quiet': True, 'no_warnings': True}) as ydl:
+        with yt_dlp.YoutubeDL({"skip_download": True, "quiet": True, "no_warnings": True}) as ydl:
             return ydl.extract_info(url, download=False)
 
     log.info("Fetching video info: %s", url)
@@ -164,13 +167,13 @@ async def _fetch_youtube_data(url: str, session: aiohttp.ClientSession) -> tuple
         log.warning("yt-dlp failed for %s: %s", url, exc)
         return None
 
-    title = info.get('title', '')
-    subs = info.get('subtitles') or {}
-    auto = info.get('automatic_captions') or {}
+    title = info.get("title", "")
+    subs = info.get("subtitles") or {}
+    auto = info.get("automatic_captions") or {}
 
     lang_track = None
     for src in (subs, auto):
-        for lang in ('en', 'en-orig', *src.keys()):
+        for lang in ("en", "en-orig", *src.keys()):
             if lang in src:
                 lang_track = src[lang]
                 break
@@ -181,16 +184,17 @@ async def _fetch_youtube_data(url: str, session: aiohttp.ClientSession) -> tuple
         log.warning("No subtitles or captions found for %s", url)
         return None
 
-    vtt_entry = next((e for e in lang_track if e.get('ext') == 'vtt'), lang_track[0])
-    sub_url = vtt_entry.get('url')
+    vtt_entry = next((e for e in lang_track if e.get("ext") == "vtt"), lang_track[0])
+    sub_url = vtt_entry.get("url")
     if not sub_url:
         log.warning("No subtitle URL found for %s", url)
         return None
 
-    video_id = info.get('id', '')
+    video_id = info.get("id", "")
     log.info("Fetching captions for %r", title)
 
     try:
+
         async def _fetch_vtt() -> str:
             async with session.get(sub_url) as resp:
                 return await resp.text()
@@ -211,7 +215,12 @@ async def _fetch_youtube_data(url: str, session: aiohttp.ClientSession) -> tuple
     if sb_segments:
         before = len(cues)
         cues = _apply_sponsorblock(cues, sb_segments)
-        log.info("SponsorBlock removed %d/%d cues (%d segments)", before - len(cues), before, len(sb_segments))
+        log.info(
+            "SponsorBlock removed %d/%d cues (%d segments)",
+            before - len(cues),
+            before,
+            len(sb_segments),
+        )
     else:
         log.info("No SponsorBlock segments found")
 
@@ -274,7 +283,9 @@ async def fetch_item_content(url: str, session: aiohttp.ClientSession) -> str | 
     return await _fetch_article_content(url, session)
 
 
-async def run_summarize(url: str, adapter: LLMAdapter, model: str | None, language: str = "EN-US") -> None:
+async def run_summarize(
+    url: str, adapter: LLMAdapter, model: str | None, language: str = "EN-US"
+) -> None:
     if not _YOUTUBE_RE.match(url):
         log.error("--summarize only supports youtube.com URLs")
         sys.exit(1)
@@ -287,7 +298,9 @@ async def run_summarize(url: str, adapter: LLMAdapter, model: str | None, langua
 
     async with aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=15),
-        headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"},
+        headers={
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
+        },
     ) as session:
         result = await _fetch_youtube_data(url, session)
 

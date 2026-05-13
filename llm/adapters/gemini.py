@@ -25,6 +25,7 @@ class GeminiAdapter(LLMAdapter):
         web_search: bool | dict = False,
     ) -> str | None:
         from google.genai import types
+
         _model = model or DEFAULT_MODEL
         config_kwargs: dict = {}
         if instructions:

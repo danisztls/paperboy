@@ -27,7 +27,9 @@ class ScraperSource(Source):
 
         adapter_cls = _ADAPTERS.get(adapter_name)
         if not adapter_cls:
-            log.error("[scraper] Unknown adapter %r. Available: %s", adapter_name, sorted(_ADAPTERS))
+            log.error(
+                "[scraper] Unknown adapter %r. Available: %s", adapter_name, sorted(_ADAPTERS)
+            )
             return None
         if not url:
             log.error("[scraper] No url configured for adapter %r", adapter_name)
@@ -59,5 +61,7 @@ class ScraperSource(Source):
         if max_items is not None:
             new_items = new_items[:max_items]
 
-        log.info("[scraper] %d total, %d new (capped: %s)", len(all_items), len(new_items), max_items)
+        log.info(
+            "[scraper] %d total, %d new (capped: %s)", len(all_items), len(new_items), max_items
+        )
         return PullResult(new_items=new_items, current_items=current)

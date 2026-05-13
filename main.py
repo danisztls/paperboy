@@ -1,25 +1,43 @@
 #!/usr/bin/env python3
 """Feed aggregator and notifier: RSS feeds, scrapers, and LLM tasks posted to Discord"""
 
+import argparse
 import asyncio
 import atexit
 import logging
 import os
 import pathlib
 import sys
-import argparse
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import aiohttp
 
 from analysis import AnalysisCollector
-from config import _parse_color, _parse_period, _task_type, _get_feeds, _get_discord_cfg, _get_llm_pull_cfg, load_config, validate_config, _resolve_model_spec, _get_api_key_for_provider
+from config import (
+    _get_api_key_for_provider,
+    _get_discord_cfg,
+    _get_feeds,
+    _get_llm_pull_cfg,
+    _parse_color,
+    _parse_period,
+    _resolve_model_spec,
+    _task_type,
+    load_config,
+    validate_config,
+)
 from llm import get_adapter
-from state import _auto_clean, _remove_unknown, load_state, save_state
-from tasks import DEFAULT_PERIOD, _is_due, _process_llm_search_task, _process_llm_evaluate_task, _process_scraper_task
+from migrate import CURRENT_VERSION, migrate, needs_migration
 from pull.feed import RSSSource
+from state import _auto_clean, _remove_unknown, load_state, save_state
 from summarize import run_summarize
-from migrate import CURRENT_VERSION, needs_migration, migrate
+from tasks import (
+    DEFAULT_PERIOD,
+    _is_due,
+    _process_llm_evaluate_task,
+    _process_llm_search_task,
+    _process_scraper_task,
+)
+
 
 def _under_systemd() -> bool:
     # JOURNAL_STREAM is set when stdout/stderr is captured by journald
@@ -28,10 +46,10 @@ def _under_systemd() -> bool:
 
 _SYSLOG_PREFIX = {
     logging.CRITICAL: "<2>",
-    logging.ERROR:    "<3>",
-    logging.WARNING:  "<4>",
-    logging.INFO:     "<6>",
-    logging.DEBUG:    "<7>",
+    logging.ERROR: "<3>",
+    logging.WARNING: "<4>",
+    logging.INFO: "<6>",
+    logging.DEBUG: "<7>",
 }
 
 
@@ -52,7 +70,9 @@ else:
     )
 log = logging.getLogger(__name__)
 
-_LOG_FORMAT = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+_LOG_FORMAT = logging.Formatter(
+    "%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+)
 
 
 def _setup_log_file(logs_dir: pathlib.Path, ts: datetime) -> None:
@@ -78,8 +98,7 @@ def _xdg_state_path() -> pathlib.Path:
 async def _async_main(args: argparse.Namespace) -> None:
     xdg_defaults = args.config is None
     config_path = (
-        _xdg_config_path() if xdg_defaults
-        else pathlib.Path(args.config).expanduser().resolve()
+        _xdg_config_path() if xdg_defaults else pathlib.Path(args.config).expanduser().resolve()
     )
     state_path = (
         pathlib.Path(args.state).expanduser().resolve()
@@ -93,7 +112,7 @@ async def _async_main(args: argparse.Namespace) -> None:
         raw = lock_path.read_text().strip()
         try:
             os.kill(int(raw), 0)
-        except (ValueError, ProcessLookupError):
+        except ValueError, ProcessLookupError:
             log.warning("Removing stale lock file (PID %s)", raw)
         else:
             log.error("Another instance is running (PID %s), exiting.", raw)
@@ -105,7 +124,7 @@ async def _async_main(args: argparse.Namespace) -> None:
         log.error("Config file not found: %s", config_path)
         sys.exit(1)
 
-    _run_ts = datetime.now(timezone.utc).replace(microsecond=0)
+    _run_ts = datetime.now(UTC).replace(microsecond=0)
     _setup_log_file(state_path.parent / "logs", _run_ts)
 
     log.info("Config: %s", config_path)
@@ -147,8 +166,16 @@ async def _async_main(args: argparse.Namespace) -> None:
     llm_models = llm_cfg.get("models") or {}
     reasoning_provider, evaluate_model = _resolve_model_spec(llm_models.get("reasoning"))
     topic_provider, search_model = _resolve_model_spec(llm_models.get("topic"))
-    evaluate_adapter = get_adapter(reasoning_provider, _get_api_key_for_provider(api_key_cfg, reasoning_provider)) if reasoning_provider else None
-    search_adapter = get_adapter(topic_provider, _get_api_key_for_provider(api_key_cfg, topic_provider)) if topic_provider else None
+    evaluate_adapter = (
+        get_adapter(reasoning_provider, _get_api_key_for_provider(api_key_cfg, reasoning_provider))
+        if reasoning_provider
+        else None
+    )
+    search_adapter = (
+        get_adapter(topic_provider, _get_api_key_for_provider(api_key_cfg, topic_provider))
+        if topic_provider
+        else None
+    )
     global_language = llm_cfg.get("language") or "EN-US"
     discord_cfg = config.get("discord", {})
     global_color = _parse_color(discord_cfg.get("color"))
@@ -162,10 +189,12 @@ async def _async_main(args: argparse.Namespace) -> None:
     async with aiohttp.ClientSession(
         connector=aiohttp.TCPConnector(limit=20),
         timeout=aiohttp.ClientTimeout(total=15),
-        headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"},
+        headers={
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
+        },
     ) as session:
         if args.regenerate_state:
-            now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+            now = datetime.now(UTC).replace(microsecond=0).isoformat()
             for task_cfg in tasks:
                 if _task_type(task_cfg) != "feeds":
                     continue
@@ -197,10 +226,16 @@ async def _async_main(args: argparse.Namespace) -> None:
             log.info("Done. State regenerated and saved to %s", state_path)
         else:
             # Concurrent: all tasks run in parallel.
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             feed_tasks = []
             force_task = args.task
-            collector = AnalysisCollector(limit=args.analysis_limit_items, limit_feeds=args.analysis_limit_feeds) if args.analysis else None
+            collector = (
+                AnalysisCollector(
+                    limit=args.analysis_limit_items, limit_feeds=args.analysis_limit_feeds
+                )
+                if args.analysis
+                else None
+            )
 
             task_list = tasks
             if force_task:
@@ -220,7 +255,10 @@ async def _async_main(args: argparse.Namespace) -> None:
                         log.warning("Skipping LLM task with no name")
                         continue
                     if not _get_llm_pull_cfg(task_cfg).get("web_search"):
-                        log.warning("[%s] Skipping LLM task: llm.web_search not configured (no input source)", name)
+                        log.warning(
+                            "[%s] Skipping LLM task: llm.web_search not configured (no input source)",
+                            name,
+                        )
                         continue
                     task_state = state.get("tasks", {}).get(name, {"last_run": None})
                     if not force_task and not collector and not _is_due(task_state, period, now):
@@ -228,10 +266,22 @@ async def _async_main(args: argparse.Namespace) -> None:
                         mins = int((now - last).total_seconds() // 60)
                         log.info(
                             "[%s] Skipping — last run %d min ago, period is %s",
-                            name, mins, period,
+                            name,
+                            mins,
+                            period,
                         )
                         continue
-                    feed_tasks.append(_process_llm_search_task(task_cfg, state, session, instructions=instructions, search_model=search_model, llm_adapter=search_adapter, collector=collector))
+                    feed_tasks.append(
+                        _process_llm_search_task(
+                            task_cfg,
+                            state,
+                            session,
+                            instructions=instructions,
+                            search_model=search_model,
+                            llm_adapter=search_adapter,
+                            collector=collector,
+                        )
+                    )
                 elif _task_type(task_cfg) == "scraper":
                     task_name = task_cfg.get("name")
                     if not task_name:
@@ -244,9 +294,16 @@ async def _async_main(args: argparse.Namespace) -> None:
                     if not force_task and not _is_due(task_state, period, now):
                         last = datetime.fromisoformat(task_state["last_run"])
                         mins = int((now - last).total_seconds() // 60)
-                        log.info("[%s] Skipping — last run %d min ago, period is %s", task_name, mins, period)
+                        log.info(
+                            "[%s] Skipping — last run %d min ago, period is %s",
+                            task_name,
+                            mins,
+                            period,
+                        )
                         continue
-                    feed_tasks.append(_process_scraper_task(task_cfg, state, session, global_color=global_color))
+                    feed_tasks.append(
+                        _process_scraper_task(task_cfg, state, session, global_color=global_color)
+                    )
                 else:
                     task_name = task_cfg.get("name")
                     if not task_name:
@@ -254,12 +311,29 @@ async def _async_main(args: argparse.Namespace) -> None:
                         continue
                     feeds_state = state.get("tasks", {}).get(task_name, {}).get("feeds", {})
                     feed_urls = [f["url"] for f in _get_feeds(task_cfg) if f.get("url")]
-                    if not force_task and not collector and not any(
-                        _is_due(feeds_state.get(u, {"last_run": None}), period, now) for u in feed_urls
+                    if (
+                        not force_task
+                        and not collector
+                        and not any(
+                            _is_due(feeds_state.get(u, {"last_run": None}), period, now)
+                            for u in feed_urls
+                        )
                     ):
                         log.info("[%s] Skipping — no feeds are due", task_name)
                         continue
-                    feed_tasks.append(_process_llm_evaluate_task(task_cfg, state, session, evaluate_model=evaluate_model, llm_adapter=evaluate_adapter, global_color=global_color, global_language=global_language, global_image_download=global_image_download, collector=collector))
+                    feed_tasks.append(
+                        _process_llm_evaluate_task(
+                            task_cfg,
+                            state,
+                            session,
+                            evaluate_model=evaluate_model,
+                            llm_adapter=evaluate_adapter,
+                            global_color=global_color,
+                            global_language=global_language,
+                            global_image_download=global_image_download,
+                            collector=collector,
+                        )
+                    )
 
             results = await asyncio.gather(*feed_tasks, return_exceptions=True)
 
@@ -285,9 +359,12 @@ async def _async_main(args: argparse.Namespace) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Feed aggregator and notifier: RSS feeds, scrapers, and LLM tasks posted to Discord")
+    parser = argparse.ArgumentParser(
+        description="Feed aggregator and notifier: RSS feeds, scrapers, and LLM tasks posted to Discord"
+    )
     parser.add_argument(
-        "--config", "-c",
+        "--config",
+        "-c",
         default=None,
         help="Path to config file (YAML or JSON). Default: $XDG_CONFIG_HOME/claudinho/config.yaml",
     )
@@ -297,7 +374,8 @@ def main():
         help="Path to state file. Default: $XDG_DATA_HOME/claudinho/state.json (or <config_dir>/state.json when config is given explicitly)",
     )
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Enable verbose (DEBUG) logging",
     )
@@ -359,12 +437,20 @@ def main():
     args = parser.parse_args()
 
     if args.verbose:
-        for name in ("__main__", "pull.feed", "pull.llm", "push.discord", "pull.scraper", "pull.adapters.vivareal"):
+        for name in (
+            "__main__",
+            "pull.feed",
+            "pull.llm",
+            "push.discord",
+            "pull.scraper",
+            "pull.adapters.vivareal",
+        ):
             logging.getLogger(name).setLevel(logging.DEBUG)
 
     if args.validate:
         config_path = (
-            _xdg_config_path() if args.config is None
+            _xdg_config_path()
+            if args.config is None
             else pathlib.Path(args.config).expanduser().resolve()
         )
         if not config_path.exists():
@@ -385,7 +471,8 @@ def main():
         _sum_model = None
         _sum_language = "EN-US"
         config_path = (
-            _xdg_config_path() if args.config is None
+            _xdg_config_path()
+            if args.config is None
             else pathlib.Path(args.config).expanduser().resolve()
         )
         if config_path.exists():
@@ -394,14 +481,22 @@ def main():
                 llm_cfg = cfg.get("llm") or {}
                 _sum_api_key_cfg = llm_cfg.get("api_key") or None
                 _sum_language = llm_cfg.get("language") or "EN-US"
-                _sum_provider, _sum_model = _resolve_model_spec((llm_cfg.get("models") or {}).get("topic"))
+                _sum_provider, _sum_model = _resolve_model_spec(
+                    (llm_cfg.get("models") or {}).get("topic")
+                )
             except Exception:
                 pass
         if not _sum_provider:
             log.error("--summarize requires llm.models.topic with a provider configured")
             sys.exit(1)
-        _sum_adapter = get_adapter(_sum_provider, _get_api_key_for_provider(_sum_api_key_cfg, _sum_provider))
-        asyncio.run(run_summarize(args.summarize, adapter=_sum_adapter, model=_sum_model, language=_sum_language))
+        _sum_adapter = get_adapter(
+            _sum_provider, _get_api_key_for_provider(_sum_api_key_cfg, _sum_provider)
+        )
+        asyncio.run(
+            run_summarize(
+                args.summarize, adapter=_sum_adapter, model=_sum_model, language=_sum_language
+            )
+        )
         return
 
     asyncio.run(_async_main(args))

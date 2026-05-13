@@ -2,27 +2,29 @@ import asyncio
 import logging
 import re
 from dataclasses import replace as dc_replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import aiohttp
 
-from config import _parse_color, _task_type, _get_feeds, _get_discord_cfg, _get_file_path
+from config import _get_discord_cfg, _get_feeds, _get_file_path, _parse_color, _task_type
 from llm.adapters.base import LLMAdapter
-from pipeline import Item, FilterResult, PushContext
-from pull.feed import RSSSource, get_new_entries
-from push.discord import (
-    DiscordEmbedTarget, DiscordDigestTarget, DiscordMarkdownTarget, DiscordTextTarget,
-    post_text_to_discord,
-)
-from push.file import FileEmbedTarget, FileDigestTarget
+from llm_filter import filter_entries
+from pipeline import FilterResult, Item, PushContext
+from pull.feed import RSSSource
 from pull.llm import LLMSearchSource, run_llm_task
 from pull.scraper import ScraperSource
-from llm_filter import filter_entries
+from push.discord import (
+    DiscordDigestTarget,
+    DiscordEmbedTarget,
+    DiscordMarkdownTarget,
+    DiscordTextTarget,
+)
+from push.file import FileDigestTarget, FileEmbedTarget
 from summarize import fetch_item_content, summarize_entry
 
 DEFAULT_PERIOD = timedelta(hours=1)
 PERIOD_GRACE = timedelta(seconds=60)
-_CITE_STRIP_RE = re.compile(r'\s*\[\d+\]')
+_CITE_STRIP_RE = re.compile(r"\s*\[\d+\]")
 
 log = logging.getLogger(__name__)
 
@@ -69,14 +71,26 @@ async def _pull_feeds(
 
     async def _fetch_one(fc: dict):
         url = fc["url"]
-        seen = set() if collector else {item["url"] for item in feeds_state.get(url, {}).get("items", [])}
+        seen = (
+            set()
+            if collector
+            else {item["url"] for item in feeds_state.get(url, {}).get("items", [])}
+        )
         feed_filter = fc.get("filter", {})
-        merged_filter = _merge_filter(task_filter, feed_filter) if (task_filter or feed_filter) else {}
+        merged_filter = (
+            _merge_filter(task_filter, feed_filter) if (task_filter or feed_filter) else {}
+        )
         effective_fc = {**fc, "filter": merged_filter} if merged_filter else fc
         filter_log = (
-            {"url_excluded": [], "title_transforms": [], "description_transforms": [],
-             "total_in_feed": 0, "new_eligible": 0}
-            if collector else None
+            {
+                "url_excluded": [],
+                "title_transforms": [],
+                "description_transforms": [],
+                "total_in_feed": 0,
+                "new_eligible": 0,
+            }
+            if collector
+            else None
         )
         return fc, await source.pull(effective_fc, seen, session, filter_log=filter_log), filter_log
 
@@ -106,6 +120,7 @@ async def _summarize_items(
     collector=None,
 ) -> list[Item]:
     """Replace .summary on items that have fetchable content or a body, concurrently."""
+
     async def _get_content(e: Item) -> str:
         if session:
             fetched = await fetch_item_content(e.url, session)
@@ -118,22 +133,23 @@ async def _summarize_items(
         return items
 
     contents = await asyncio.gather(*[_get_content(e) for e in items], return_exceptions=True)
-    pairs = [
-        (e, c) for e, c in zip(items, contents)
-        if not isinstance(c, Exception) and c
-    ]
+    pairs = [(e, c) for e, c in zip(items, contents) if not isinstance(c, Exception) and c]
     if not pairs:
         return items
     captures = [{} for _ in pairs] if collector else [None] * len(pairs)
     results = await asyncio.gather(
-        *[summarize_entry(
-              e.title, c, llm_adapter,
-              model=model,
-              language=cfg_by_id[e.id][0],
-              instructions=cfg_by_id[e.id][1],
-              capture=cap,
-          )
-          for (e, c), cap in zip(pairs, captures)],
+        *[
+            summarize_entry(
+                e.title,
+                c,
+                llm_adapter,
+                model=model,
+                language=cfg_by_id[e.id][0],
+                instructions=cfg_by_id[e.id][1],
+                capture=cap,
+            )
+            for (e, c), cap in zip(pairs, captures)
+        ],
         return_exceptions=True,
     )
     updated = {}
@@ -233,13 +249,15 @@ async def _apply_llm_filter(
                 it = id_map.get(gid_int)
             except ValueError:
                 it = None
-            parsed_list.append({
-                "id": gid_str,
-                "source": it.source if it else "?",
-                "title": it.title if it else "?",
-                "pass": v["pass"],
-                "reason": v["reason"],
-            })
+            parsed_list.append(
+                {
+                    "id": gid_str,
+                    "source": it.source if it else "?",
+                    "title": it.title if it else "?",
+                    "pass": v["pass"],
+                    "reason": v["reason"],
+                }
+            )
         collector.record_filter(
             model=model,
             instructions=filter_capture.get("instructions", ""),
@@ -259,8 +277,12 @@ async def _apply_llm_filter(
     annotated = [
         dc_replace(
             item,
-            filter_pass=result_by_item_id[item.id]["pass"] if item.id in result_by_item_id else True,
-            filter_reason=result_by_item_id[item.id]["reason"] if item.id in result_by_item_id else "",
+            filter_pass=result_by_item_id[item.id]["pass"]
+            if item.id in result_by_item_id
+            else True,
+            filter_reason=result_by_item_id[item.id]["reason"]
+            if item.id in result_by_item_id
+            else "",
         )
         for item in all_items
     ]
@@ -289,18 +311,24 @@ async def _process_llm_search_task(
 
         if collector:
             cap: dict = {}
-            text = await run_llm_task(task_cfg, instructions, search_model, adapter=llm_adapter, capture=cap)
+            text = await run_llm_task(
+                task_cfg, instructions, search_model, adapter=llm_adapter, capture=cap
+            )
             collector.record_llm_search(
                 model=cap.get("model"),
                 instructions=cap.get("instructions"),
                 prompt=cap.get("prompt", ""),
                 raw_response=text,
             )
-            new_items = [Item(id=f"{name}:llm_result", title=name, source=name, body=text)] if text else []
+            new_items = (
+                [Item(id=f"{name}:llm_result", title=name, source=name, body=text)] if text else []
+            )
             collector.record_push(len(new_items))
             return {}
 
-        source = LLMSearchSource(instructions=instructions, global_model=search_model, adapter=llm_adapter)
+        source = LLMSearchSource(
+            instructions=instructions, global_model=search_model, adapter=llm_adapter
+        )
         pull_result = await source.pull(task_cfg, set(), session)
         if pull_result is None or not pull_result.new_items:
             return {}
@@ -316,7 +344,7 @@ async def _process_llm_search_task(
         if _get_file_path(task_cfg):
             await FileEmbedTarget().push(ctx, task_cfg, session)
 
-        return {name: {"last_run": datetime.now(timezone.utc).replace(microsecond=0).isoformat()}}
+        return {name: {"last_run": datetime.now(UTC).replace(microsecond=0).isoformat()}}
     finally:
         if collector:
             collector.finish_task()
@@ -353,7 +381,7 @@ async def _process_llm_evaluate_task(
     try:
         feed_cfgs = [fc for fc in _get_feeds(task_cfg) if fc.get("url")]
         if collector and collector.limit_feeds > 0:
-            feed_cfgs = feed_cfgs[:collector.limit_feeds]
+            feed_cfgs = feed_cfgs[: collector.limit_feeds]
         task_state = state.get("tasks", {}).get(task_name, {})
         feeds_state = task_state.get("feeds", {})
 
@@ -366,7 +394,9 @@ async def _process_llm_evaluate_task(
 
         # --- Pull ---
         source = RSSSource()
-        fetch_map, filter_log_map = await _pull_feeds(source, feed_cfgs, feeds_state, task_filter, session, collector=collector)
+        fetch_map, filter_log_map = await _pull_feeds(
+            source, feed_cfgs, feeds_state, task_filter, session, collector=collector
+        )
 
         # Collect all new items, tagged with per-feed display metadata
         items_per_feed: dict[str, list[Item]] = {}
@@ -379,7 +409,7 @@ async def _process_llm_evaluate_task(
                 continue
             feed_items = pull_result.new_items
             if collector and collector.limit > 0:
-                feed_items = feed_items[-collector.limit:]
+                feed_items = feed_items[-collector.limit :]
             items_per_feed[url] = feed_items
 
             if collector:
@@ -397,15 +427,24 @@ async def _process_llm_evaluate_task(
 
             feed_image_download = (fc.get("image") or {}).get("download")
             download_image = (
-                feed_image_download if feed_image_download is not None
-                else task_image_download if task_image_download is not None
+                feed_image_download
+                if feed_image_download is not None
+                else task_image_download
+                if task_image_download is not None
                 else global_image_download
             )
-            feed_color = _parse_color(fc.get("discord", {}).get("color")) or task_color or global_color
-            all_new_items.extend([
-                dc_replace(item, meta={**item.meta, "color": feed_color, "download_image": download_image})
-                for item in feed_items
-            ])
+            feed_color = (
+                _parse_color(fc.get("discord", {}).get("color")) or task_color or global_color
+            )
+            all_new_items.extend(
+                [
+                    dc_replace(
+                        item,
+                        meta={**item.meta, "color": feed_color, "download_image": download_image},
+                    )
+                    for item in feed_items
+                ]
+            )
 
         # --- Process: summarize ---
         if all_new_items:
@@ -432,7 +471,14 @@ async def _process_llm_evaluate_task(
             if summarize_cfg_by_id:
                 to_summarize = [it for it in all_new_items if it.id in summarize_cfg_by_id]
                 if to_summarize:
-                    summarized = await _summarize_items(to_summarize, summarize_cfg_by_id, llm_adapter, evaluate_model, session, collector=collector)
+                    summarized = await _summarize_items(
+                        to_summarize,
+                        summarize_cfg_by_id,
+                        llm_adapter,
+                        evaluate_model,
+                        session,
+                        collector=collector,
+                    )
                     by_id = {it.id: it for it in summarized}
                     all_new_items = [by_id.get(it.id, it) for it in all_new_items]
 
@@ -441,7 +487,12 @@ async def _process_llm_evaluate_task(
         if filter_cfg and all_new_items:
             language = filter_cfg.get("language") or global_language
             filter_result = await _apply_llm_filter(
-                all_new_items, filter_cfg, evaluate_model, language, memory_history, llm_adapter,
+                all_new_items,
+                filter_cfg,
+                evaluate_model,
+                language,
+                memory_history,
+                llm_adapter,
                 collector=collector,
             )
 
@@ -450,8 +501,7 @@ async def _process_llm_evaluate_task(
             passing = [it for it in filter_result.items if it.filter_pass is not False]
             if explain:
                 passing = [
-                    dc_replace(it, body=it.filter_reason or it.summary or it.body)
-                    for it in passing
+                    dc_replace(it, body=it.filter_reason or it.summary or it.body) for it in passing
                 ]
             elif all(it.summary is None for it in passing):
                 pass  # no summaries to apply
@@ -475,7 +525,9 @@ async def _process_llm_evaluate_task(
         # --- Push ---
         discord_format = task_discord.get("format")
         if task_type == "digest":
-            target: DiscordEmbedTarget | DiscordDigestTarget | DiscordMarkdownTarget | DiscordTextTarget = DiscordDigestTarget()
+            target: (
+                DiscordEmbedTarget | DiscordDigestTarget | DiscordMarkdownTarget | DiscordTextTarget
+            ) = DiscordDigestTarget()
             ctx = PushContext(items=passing, memory=memory_text, cite_map=cite_map)
             try:
                 failed_ids = await target.push(ctx, task_cfg, session)
@@ -499,7 +551,7 @@ async def _process_llm_evaluate_task(
                 await FileEmbedTarget().push(ctx, task_cfg, session)
 
         # --- State update ---
-        now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        now_iso = datetime.now(UTC).replace(microsecond=0).isoformat()
         new_feeds_state = dict(feeds_state)
 
         for fc in feed_cfgs:
@@ -522,7 +574,12 @@ async def _process_llm_evaluate_task(
                         if it is not None and it.summary:
                             state_item["summary"] = it.summary
                         if it is not None and it.filter_pass is not None:
-                            state_item.update({"filter_pass": it.filter_pass, "filter_reason": it.filter_reason or ""})
+                            state_item.update(
+                                {
+                                    "filter_pass": it.filter_pass,
+                                    "filter_reason": it.filter_reason or "",
+                                }
+                            )
                         else:
                             state_item["filter_pass"] = True
                         final_items.append(state_item)
@@ -551,10 +608,12 @@ async def _process_llm_evaluate_task(
         if filter_cfg:
             history = dict(raw_history)
             if memory_text is not None:
-                _stripped = _CITE_STRIP_RE.sub('', memory_text)
-                history[now_iso] = " ".join(line.strip() for line in _stripped.splitlines() if line.strip())
+                _stripped = _CITE_STRIP_RE.sub("", memory_text)
+                history[now_iso] = " ".join(
+                    line.strip() for line in _stripped.splitlines() if line.strip()
+                )
                 if len(history) > 20:
-                    for old_key in sorted(history)[:len(history) - 20]:
+                    for old_key in sorted(history)[: len(history) - 20]:
                         del history[old_key]
                 log.info("[%s] Memory updated (%d chars)", task_name, len(memory_text))
             new_task_state["memory"] = history
@@ -587,7 +646,7 @@ async def _process_scraper_task(
     if pull_result is None:
         return {}
 
-    now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    now_iso = datetime.now(UTC).replace(microsecond=0).isoformat()
 
     if not pull_result.new_items:
         return {task_name: {**task_state, "last_run": now_iso}}
