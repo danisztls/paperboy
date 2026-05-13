@@ -132,39 +132,41 @@ async def _summarize_items(
         log.error("Summarize skipped — llm.models.reasoning is not configured")
         return items
 
-    contents = await asyncio.gather(*[_get_content(e) for e in items], return_exceptions=True)
-    pairs = [(e, c) for e, c in zip(items, contents) if not isinstance(c, Exception) and c]
-    if not pairs:
-        return items
-    captures = [{} for _ in pairs] if collector else [None] * len(pairs)
-    results = await asyncio.gather(
-        *[
-            summarize_entry(
+    async def _fetch_and_summarize(e: Item) -> tuple[Item, str | None, str | None, dict | None]:
+        content = await _get_content(e)
+        if not content:
+            return e, None, None, None
+        cap: dict | None = {} if collector else None
+        try:
+            summary = await summarize_entry(
                 e.title,
-                c,
+                content,
                 llm_adapter,
                 model=model,
                 language=cfg_by_id[e.id][0],
                 instructions=cfg_by_id[e.id][1],
                 capture=cap,
             )
-            for (e, c), cap in zip(pairs, captures)
-        ],
-        return_exceptions=True,
-    )
-    updated = {}
-    for (e, c), cap, s in zip(pairs, captures, results):
-        if not isinstance(s, Exception) and s:
-            updated[e.id] = dc_replace(e, summary=s)
+        except Exception as exc:
+            log.error("summarize_entry failed for %s: %s", e.url, exc)
+            summary = None
+        return e, content, summary, cap
+
+    results = await asyncio.gather(*[_fetch_and_summarize(e) for e in items])
+
+    updated: dict[str, Item] = {}
+    for e, content, summary, cap in results:
+        if summary:
+            updated[e.id] = dc_replace(e, summary=summary)
         if collector and cap is not None:
             collector.record_summarization(
                 item_id=e.id,
                 title=e.title,
                 url=e.url,
-                fetched_body=c,
+                fetched_body=content,
                 instructions=cap.get("instructions", ""),
                 input_text=cap.get("input", ""),
-                summary=s if not isinstance(s, Exception) else None,
+                summary=summary,
             )
     return [updated.get(e.id, e) for e in items]
 
