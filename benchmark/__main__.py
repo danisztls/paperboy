@@ -31,7 +31,7 @@ from rich.text import Text
 from llm import get_adapter
 from summarize import (
     _YOUTUBE_RE,
-    _fetch_article_data,
+    _fetch_article,
     _fetch_youtube_data,
     summarize_entry,
     summarize_transcript,
@@ -54,7 +54,7 @@ async def fetch_content(url: str, session: aiohttp.ClientSession) -> tuple[str, 
             return url, "", ""
         title, transcript = result
         return url, title, transcript
-    result = await _fetch_article_data(url, session)
+    result = await _fetch_article(url, session, with_title=True)
     if not result:
         return url, "", ""
     title, content = result

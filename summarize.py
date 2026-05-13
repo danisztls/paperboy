@@ -247,8 +247,10 @@ async def _fetch_youtube_data(url: str, session: aiohttp.ClientSession) -> tuple
     return title, transcript
 
 
-async def _fetch_article_data(url: str, session: aiohttp.ClientSession) -> tuple[str, str] | None:
-    """Return (title, content) for an article URL using trafilatura."""
+async def _fetch_article(
+    url: str, session: aiohttp.ClientSession, *, with_title: bool = False
+) -> tuple[str, str] | str | None:
+    """Extract article text (and optionally title) from a URL using trafilatura."""
     try:
         import trafilatura
     except ImportError:
@@ -263,9 +265,7 @@ async def _fetch_article_data(url: str, session: aiohttp.ClientSession) -> tuple
         log.warning("Failed to fetch %s: %s", url, exc)
         return None
 
-    def _extract() -> tuple[str, str] | None:
-        meta = trafilatura.extract_metadata(html, default_url=url)
-        title = meta.title if meta else ""
+    def _extract():
         doc = trafilatura.extract(
             html,
             url=url,
@@ -277,43 +277,9 @@ async def _fetch_article_data(url: str, session: aiohttp.ClientSession) -> tuple
         )
         if not doc:
             return None
-        return title or "", doc
-
-    result = await asyncio.to_thread(_extract)
-    if not result:
-        log.warning("trafilatura extracted no content from %s", url)
-        return None
-
-    log.info("Article extracted: %d chars from %s", len(result[1]), url)
-    return result
-
-
-async def _fetch_article_content(url: str, session: aiohttp.ClientSession) -> str | None:
-    """Extract article text from a URL using trafilatura."""
-    try:
-        import trafilatura
-    except ImportError:
-        log.warning("trafilatura is not installed — article fetch skipped")
-        return None
-
-    try:
-        async with session.get(url, allow_redirects=True) as resp:
-            resp.raise_for_status()
-            html = await resp.text()
-    except Exception as exc:
-        log.warning("Failed to fetch %s: %s", url, exc)
-        return None
-
-    def _extract() -> str | None:
-        doc = trafilatura.extract(
-            html,
-            url=url,
-            include_comments=False,
-            include_tables=True,
-            no_fallback=False,
-            favor_recall=True,
-            output_format="markdown",
-        )
+        if with_title:
+            meta = trafilatura.extract_metadata(html, default_url=url)
+            return (meta.title if meta else "") or "", doc
         return doc
 
     result = await asyncio.to_thread(_extract)
@@ -321,7 +287,8 @@ async def _fetch_article_content(url: str, session: aiohttp.ClientSession) -> st
         log.warning("trafilatura extracted no content from %s", url)
         return None
 
-    log.info("Article extracted: %d chars from %s", len(result), url)
+    body_len = len(result[1]) if with_title else len(result)
+    log.info("Article extracted: %d chars from %s", body_len, url)
     return result
 
 
@@ -335,7 +302,7 @@ async def fetch_item_content(url: str, session: aiohttp.ClientSession) -> str | 
     if _YOUTUBE_RE.match(url):
         result = await _fetch_youtube_data(url, session)
         return result[1] if result else None
-    return await _fetch_article_content(url, session)
+    return await _fetch_article(url, session)
 
 
 async def run_summarize(
@@ -366,7 +333,7 @@ async def run_summarize(
                 title, transcript, adapter, model=model, language=language
             )
         else:
-            content = await _fetch_article_content(url, session)
+            content = await _fetch_article(url, session)
             if not content:
                 log.error("Could not fetch article content for %s", url)
                 sys.exit(1)
