@@ -1,4 +1,5 @@
 __pycache__/
 .venv/
 *.py[co]
-benchmark_results/
+benchmark/results
+benchmark/config.yaml
