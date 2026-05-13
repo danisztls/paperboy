@@ -8,7 +8,7 @@ import logging
 import os
 import pathlib
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import aiohttp
 
@@ -92,6 +92,17 @@ def _setup_log_file(logs_dir: pathlib.Path, ts: datetime) -> None:
     handler = logging.FileHandler(logs_dir / f"{stamp}.log", encoding="utf-8")
     handler.setFormatter(_LOG_FORMAT)
     logging.getLogger().addHandler(handler)
+
+
+def _check_due_or_skip(name: str, last_run: str | None, period: timedelta, now: datetime) -> bool:
+    """True if the task is due. Otherwise log a skip message and return False."""
+    if _is_due({"last_run": last_run}, period, now):
+        return True
+    if last_run:
+        last = datetime.fromisoformat(last_run)
+        mins = int((now - last).total_seconds() // 60)
+        log.info("[%s] Skipping — last run %d min ago, period is %s", name, mins, period)
+    return False
 
 
 def _build_adapter(specs: list[tuple[str | None, str | None]], api_key_cfg: dict | None) -> tuple:
@@ -262,27 +273,25 @@ async def _async_main(args: argparse.Namespace) -> None:
                 if not webhook:
                     continue
                 period = _parse_period(task_cfg.get("period", DEFAULT_PERIOD))
-                if _task_type(task_cfg) == "llm":
-                    name = task_cfg.get("name")
-                    if not name:
-                        log.warning("Skipping LLM task with no name")
-                        continue
+                task_type = _task_type(task_cfg)
+                name = task_cfg.get("name")
+                if not name:
+                    log.warning("Skipping %s task with no name", task_type)
+                    continue
+                task_state = state.get("tasks", {}).get(name, {})
+
+                if task_type == "llm":
                     if not _get_llm_pull_cfg(task_cfg).get("web_search"):
                         log.warning(
                             "[%s] Skipping LLM task: llm.web_search not configured (no input source)",
                             name,
                         )
                         continue
-                    task_state = state.get("tasks", {}).get(name, {"last_run": None})
-                    if not force_task and not analysis and not _is_due(task_state, period, now):
-                        last = datetime.fromisoformat(task_state["last_run"])
-                        mins = int((now - last).total_seconds() // 60)
-                        log.info(
-                            "[%s] Skipping — last run %d min ago, period is %s",
-                            name,
-                            mins,
-                            period,
-                        )
+                    if (
+                        not force_task
+                        and not analysis
+                        and not _check_due_or_skip(name, task_state.get("last_run"), period, now)
+                    ):
                         continue
                     feed_tasks.append(
                         _process_llm_search_task(
@@ -296,44 +305,26 @@ async def _async_main(args: argparse.Namespace) -> None:
                             analysis=analysis,
                         )
                     )
-                elif _task_type(task_cfg) == "scraper":
-                    task_name = task_cfg.get("name")
-                    if not task_name:
-                        log.warning("Skipping scraper task with no name")
-                        continue
+                elif task_type == "scraper":
                     if analysis:
-                        log.info("[%s] Skipping scraper task in analysis mode", task_name)
+                        log.info("[%s] Skipping scraper task in analysis mode", name)
                         continue
-                    task_state = state.get("tasks", {}).get(task_name, {"last_run": None})
-                    if not force_task and not _is_due(task_state, period, now):
-                        last = datetime.fromisoformat(task_state["last_run"])
-                        mins = int((now - last).total_seconds() // 60)
-                        log.info(
-                            "[%s] Skipping — last run %d min ago, period is %s",
-                            task_name,
-                            mins,
-                            period,
-                        )
+                    if not force_task and not _check_due_or_skip(
+                        name, task_state.get("last_run"), period, now
+                    ):
                         continue
                     feed_tasks.append(
                         _process_scraper_task(task_cfg, state, session, global_color=global_color)
                     )
                 else:
-                    task_name = task_cfg.get("name")
-                    if not task_name:
-                        log.warning("Skipping feeds task with no name")
-                        continue
-                    feeds_state = state.get("tasks", {}).get(task_name, {}).get("feeds", {})
+                    feeds_state = task_state.get("feeds", {})
                     feed_urls = [f["url"] for f in _get_feeds(task_cfg) if f.get("url")]
                     if (
                         not force_task
                         and not analysis
-                        and not any(
-                            _is_due(feeds_state.get(u, {"last_run": None}), period, now)
-                            for u in feed_urls
-                        )
+                        and not any(_is_due(feeds_state.get(u, {}), period, now) for u in feed_urls)
                     ):
-                        log.info("[%s] Skipping — no feeds are due", task_name)
+                        log.info("[%s] Skipping — no feeds are due", name)
                         continue
                     feed_tasks.append(
                         _process_llm_curate_task(
