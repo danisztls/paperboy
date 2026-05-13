@@ -16,7 +16,7 @@ import yaml
 from llm import get_adapter
 from summarize import (
     _YOUTUBE_RE,
-    _fetch_article_content,
+    _fetch_article_data,
     _fetch_youtube_data,
     summarize_entry,
     summarize_transcript,
@@ -30,15 +30,18 @@ _SESSION_HEADERS = {
 
 
 async def fetch_content(url: str, session: aiohttp.ClientSession) -> tuple[str, str, str]:
-    """Return (url, title, content) for a URL. title may be empty for articles."""
+    """Return (url, title, content) for a URL."""
     if _YOUTUBE_RE.match(url):
         result = await _fetch_youtube_data(url, session)
         if not result:
             return url, "", ""
         title, transcript = result
         return url, title, transcript
-    content = await _fetch_article_content(url, session)
-    return url, "", content or ""
+    result = await _fetch_article_data(url, session)
+    if not result:
+        return url, "", ""
+    title, content = result
+    return url, title, content
 
 
 async def run_model(
@@ -49,15 +52,25 @@ async def run_model(
     content: str,
     is_youtube: bool,
 ) -> tuple[str, str, str, float, str | None]:
-    """Return (provider, model, url, elapsed_seconds, summary)."""
+    """Return (provider, model, url, elapsed_seconds, summary). Retries once on failure."""
     adapter = get_adapter(provider)
     start = time.monotonic()
-    if is_youtube:
-        summary = await summarize_transcript(title, content, adapter, model=model)
-    else:
-        summary = await summarize_entry(title or url, content, adapter, model=model)
-    elapsed = time.monotonic() - start
-    return provider, model, url, elapsed, summary
+    last_exc: BaseException | None = None
+    for attempt in range(2):
+        try:
+            if is_youtube:
+                summary = await summarize_transcript(title, content, adapter, model=model)
+            else:
+                summary = await summarize_entry(title or url, content, adapter, model=model)
+            if summary is not None:
+                return provider, model, url, time.monotonic() - start, summary
+        except Exception as exc:
+            last_exc = exc
+        if attempt == 0:
+            await asyncio.sleep(2)
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("model returned no output after retry (model may be unavailable)")
 
 
 async def main() -> None:
