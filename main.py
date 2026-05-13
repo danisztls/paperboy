@@ -195,7 +195,6 @@ async def _async_main(args: argparse.Namespace) -> None:
     global_language = llm_cfg.get("language") or "EN-US"
     discord_cfg = config.get("discord", {})
     global_color = _parse_color(discord_cfg.get("color"))
-    global_image_download: bool = (config.get("image") or {}).get("download", False)
 
     tasks = config.get("tasks", [])
     if not tasks:
@@ -345,7 +344,6 @@ async def _async_main(args: argparse.Namespace) -> None:
                             llm_adapter=evaluate_adapter,
                             global_color=global_color,
                             global_language=global_language,
-                            global_image_download=global_image_download,
                             collector=collector,
                             analysis=analysis,
                         )

@@ -401,7 +401,6 @@ async def _process_llm_curate_task(
     llm_adapter: LLMAdapter | None,
     global_color: int | None = None,
     global_language: str = "EN-US",
-    global_image_download: bool = False,
     collector=None,
     analysis: bool = False,
 ) -> dict:
@@ -415,7 +414,6 @@ async def _process_llm_curate_task(
         explain = True
     task_image_cfg = task_cfg.get("image") or {}
     fetch_image = not task_image_cfg.get("skip", False)
-    task_image_download = task_image_cfg.get("download")
     task_filter = task_cfg.get("filter", {})
     task_type = _task_type(task_cfg)
     task_summarize = task_cfg.get("summarize", task_type == "digest")
@@ -476,25 +474,11 @@ async def _process_llm_curate_task(
                     description_transforms=fl.get("description_transforms", []),
                 )
 
-            feed_image_download = (fc.get("image") or {}).get("download")
-            download_image = (
-                feed_image_download
-                if feed_image_download is not None
-                else task_image_download
-                if task_image_download is not None
-                else global_image_download
-            )
             feed_color = (
                 _parse_color(fc.get("discord", {}).get("color")) or task_color or global_color
             )
             all_new_items.extend(
-                [
-                    dc_replace(
-                        item,
-                        meta={**item.meta, "color": feed_color, "download_image": download_image},
-                    )
-                    for item in feed_items
-                ]
+                [dc_replace(item, meta={**item.meta, "color": feed_color}) for item in feed_items]
             )
 
         # --- Process: summarize ---
@@ -706,8 +690,7 @@ async def _process_scraper_task(
         return {task_name: {**task_state, "last_run": now_iso}}
 
     colored_items = [
-        dc_replace(item, meta={**item.meta, "color": task_color, "download_image": False})
-        for item in pull_result.new_items
+        dc_replace(item, meta={**item.meta, "color": task_color}) for item in pull_result.new_items
     ]
 
     discord_format = task_discord.get("format")
