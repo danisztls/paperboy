@@ -1,0 +1,13 @@
+urls:
+  - https://www.youtube.com/watch?v=XXXXXXXXXXX   # YouTube video (transcript)
+  - https://example.com/some-article              # article (fetched + summarized)
+
+models:
+  - provider: anthropic          # 'anthropic', 'openai', 'gemini', or 'deepseek'
+    model: claude-sonnet-4-6
+  - provider: openai
+    model: gpt-4o-mini
+  # - provider: gemini
+  #   model: gemini-2.0-flash
+  # - provider: deepseek
+  #   model: deepseek-chat

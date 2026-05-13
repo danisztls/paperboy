@@ -29,6 +29,7 @@ The project uses `uv` (see `uv.lock`, `.python-version` pinning Python 3.14).
 - Sync deps: `uv sync`
 - Format: `uv run ruff format .`
 - Lint: `uv run ruff check --fix .`
+- Run benchmark: `uv run benchmark/` (reads `benchmark/config.yaml`, writes JSON to `benchmark/results/`)
 
 After any implementation, run format then lint before finishing.
 
@@ -147,6 +148,17 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
 See `config.yaml.template` — it is the canonical reference for all supported keys and their defaults.
 
 Any change that adds, removes, or renames a config key must also update the corresponding Pydantic model in `config.py` so validation stays in sync.
+
+### Benchmark (`benchmark/`)
+
+Standalone script that runs a fixed set of URLs through multiple LLM providers and compares their summaries.
+
+- `benchmark/__main__.py` — entry point; run with `uv run benchmark/`
+- `benchmark/config.yaml` — active config (not committed); copy from `benchmark/config.yaml.template`
+- `benchmark/config.yaml.template` — documents `urls` (list of YouTube or article URLs) and `models` (list of `{provider, model, label}` dicts)
+- `benchmark/results/` — JSON output files (`benchmark_<timestamp>.json`), one per run
+
+Output JSON shape: `{timestamp, models: [{provider, model}], results: [{url, title, kind, fetch_error, summaries: [{provider, model, elapsed, summary, error}]}]}`
 
 ## Conventions worth preserving
 

@@ -4,10 +4,14 @@
 import asyncio
 import json
 import pathlib
+import sys
 import time
 from datetime import UTC, datetime
 
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
+
 import aiohttp
+import yaml
 
 from llm import get_adapter
 from summarize import (
@@ -18,19 +22,7 @@ from summarize import (
     summarize_transcript,
 )
 
-URLS = [
-    "https://www.youtube.com/watch?v=h9dgeM_KuB8",
-    "https://www.anthropic.com/research/tracing-thoughts-language-model",
-    "https://www.youtube.com/watch?v=uFxi7YrbNJQ",
-    "https://www.vaticannews.va/pt/vaticano/news/2026-05/santa-se-chica-arellano-alimentacao-agricultura-fao-fida-pma.html",
-]
-
-MODELS = [
-    ("anthropic", "claude-sonnet-4-6", "Claude Sonnet 4.6 [reference]"),
-    ("openai", "gpt-5.4-nano", "GPT-5.4 Nano"),
-    ("gemini", "gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite Preview"),
-    ("deepseek", "deepseek-v4-flash", "DeepSeek V4 Flash"),
-]
+_CONFIG_PATH = pathlib.Path(__file__).parent / "config.yaml"
 
 _SESSION_HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
@@ -52,13 +44,12 @@ async def fetch_content(url: str, session: aiohttp.ClientSession) -> tuple[str, 
 async def run_model(
     provider: str,
     model: str,
-    label: str,
     url: str,
     title: str,
     content: str,
     is_youtube: bool,
-) -> tuple[str, str, str, str, float, str | None]:
-    """Return (label, provider, model, url, elapsed_seconds, summary)."""
+) -> tuple[str, str, str, float, str | None]:
+    """Return (provider, model, url, elapsed_seconds, summary)."""
     adapter = get_adapter(provider)
     start = time.monotonic()
     if is_youtube:
@@ -66,21 +57,22 @@ async def run_model(
     else:
         summary = await summarize_entry(title or url, content, adapter, model=model)
     elapsed = time.monotonic() - start
-    return label, provider, model, url, elapsed, summary
+    return provider, model, url, elapsed, summary
 
 
 async def main() -> None:
+    cfg = yaml.safe_load(_CONFIG_PATH.read_text())
+    urls: list[str] = cfg["urls"]
+    models: list[tuple[str, str]] = [(m["provider"], m["model"]) for m in cfg["models"]]
+
     ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    out_dir = pathlib.Path("benchmark_results")
+    out_dir = pathlib.Path(__file__).parent / "results"
     out_dir.mkdir(exist_ok=True)
     out_path = out_dir / f"benchmark_{ts}.json"
 
     report: dict = {
         "timestamp": datetime.now(UTC).isoformat(),
-        "models": [
-            {"label": label, "provider": provider, "model": model}
-            for provider, model, label in MODELS
-        ],
+        "models": [{"provider": provider, "model": model} for provider, model in models],
         "results": [],
     }
 
@@ -89,10 +81,10 @@ async def main() -> None:
         headers=_SESSION_HEADERS,
     ) as session:
         print("Fetching content from all URLs…")
-        fetch_tasks = [fetch_content(url, session) for url in URLS]
+        fetch_tasks = [fetch_content(url, session) for url in urls]
         contents = await asyncio.gather(*fetch_tasks)
 
-    print(f"\nFetched {len(contents)} items. Running {len(MODELS)} models on each.\n")
+    print(f"\nFetched {len(contents)} items. Running {len(models)} models on each.\n")
 
     for url, title, content in contents:
         is_youtube = bool(_YOUTUBE_RE.match(url))
@@ -117,18 +109,17 @@ async def main() -> None:
         entry["fetch_error"] = False
 
         model_tasks = [
-            run_model(provider, model, label, url, title, content, is_youtube)
-            for provider, model, label in MODELS
+            run_model(provider, model, url, title, content, is_youtube)
+            for provider, model in models
         ]
         results = await asyncio.gather(*model_tasks, return_exceptions=True)
 
         for i, result in enumerate(results):
-            provider, model, label = MODELS[i][0], MODELS[i][1], MODELS[i][2]
+            provider, model = models[i]
             if isinstance(result, BaseException):
-                print(f"\n  [{label}] ERROR: {result}")
+                print(f"\n  [{provider}/{model}] ERROR: {result}")
                 entry["summaries"].append(
                     {
-                        "label": label,
                         "provider": provider,
                         "model": model,
                         "elapsed": None,
@@ -137,8 +128,8 @@ async def main() -> None:
                     }
                 )
             else:
-                rlabel, rprovider, rmodel, _, elapsed, summary = result
-                print(f"\n  [{rlabel}] ({elapsed:.1f}s)")
+                rprovider, rmodel, _, elapsed, summary = result
+                print(f"\n  [{rprovider}/{rmodel}] ({elapsed:.1f}s)")
                 if summary:
                     for line in summary.splitlines():
                         print(f"  {line}")
@@ -146,7 +137,6 @@ async def main() -> None:
                     print("  (no output)")
                 entry["summaries"].append(
                     {
-                        "label": rlabel,
                         "provider": rprovider,
                         "model": rmodel,
                         "elapsed": round(elapsed, 3),
