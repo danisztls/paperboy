@@ -1,5 +1,4 @@
 import asyncio
-import io
 import json
 import logging
 import re
@@ -64,44 +63,6 @@ async def _scrape_image(url: str, session: aiohttp.ClientSession) -> str | None:
         await asyncio.sleep(_OG_FETCH_DELAY)
         image_url, _ = await _scrape_image_once(url, session)
     return image_url
-
-
-_MAX_BYTES = 4 * 1024 * 1024
-_MAX_DIM = 2000
-
-
-async def _fetch_image(url: str, session: aiohttp.ClientSession) -> bytes | None:
-    try:
-        async with session.get(url) as resp:
-            if resp.status != 200:
-                return None
-            ct = resp.headers.get("Content-Type", "").split(";")[0].strip()
-            if not ct.startswith("image/"):
-                return None
-            return await resp.read()
-    except Exception as exc:
-        log.debug("Could not download image %s: %s", url, exc)
-        return None
-
-
-def _optimize_image(data: bytes) -> bytes | None:
-    try:
-        from PIL import Image
-
-        img = Image.open(io.BytesIO(data))
-        img = img.convert("RGB")
-        needs_resize = max(img.size) > _MAX_DIM
-        if len(data) <= _MAX_BYTES and not needs_resize:
-            return data
-        if needs_resize:
-            img.thumbnail((_MAX_DIM, _MAX_DIM), Image.LANCZOS)
-        buf = io.BytesIO()
-        img.save(buf, format="WEBP", quality=85)
-        result = buf.getvalue()
-        return result if len(result) <= 8 * 1024 * 1024 else None
-    except Exception as exc:
-        log.debug("Could not optimize image: %s", exc)
-        return None
 
 
 async def _post_webhook(
@@ -253,7 +214,6 @@ async def post_to_discord(
     entry: Item,
     session: aiohttp.ClientSession,
     fetch_image: bool = True,
-    download_image: bool = False,
     color: int | None = None,
 ) -> None:
     embed = {
@@ -266,40 +226,21 @@ async def post_to_discord(
     if entry.source:
         embed["footer"] = {"text": entry.source}
 
-    image_url: str | None = None
     if fetch_image:
         image_url = entry.image
         if not image_url and entry.url:
             image_url = await _scrape_image(entry.url, session)
-
-    image_bytes: bytes | None = None
-    if image_url and download_image:
-        raw = await _fetch_image(image_url, session)
-        if raw is not None:
-            image_bytes = _optimize_image(raw)
-
-    log.debug("Posting embed to Discord: %s", embed.get("title", ""))
-
-    def _build_kwargs() -> dict:
-        if image_bytes is not None:
-            embed["image"] = {"url": "attachment://image.webp"}
-            form = aiohttp.FormData()
-            form.add_field(
-                "payload_json", json.dumps({"embeds": [embed]}), content_type="application/json"
-            )
-            form.add_field(
-                "files[0]", image_bytes, filename="image.webp", content_type="image/webp"
-            )
-            return {"data": form}
         if image_url:
             embed["image"] = {"url": image_url}
-        return {
-            "data": json.dumps({"embeds": [embed]}).encode(),
-            "headers": {"Content-Type": "application/json"},
-        }
 
+    log.debug("Posting embed to Discord: %s", embed.get("title", ""))
+    payload = json.dumps({"embeds": [embed]}).encode()
     try:
-        await _post_webhook(session, webhook_url, _build_kwargs)
+        await _post_webhook(
+            session,
+            webhook_url,
+            lambda: {"data": payload, "headers": {"Content-Type": "application/json"}},
+        )
     except aiohttp.ClientResponseError as e:
         log.error("Discord webhook HTTP error: %s - %s", e.status, e.message)
         raise
@@ -326,14 +267,12 @@ class DiscordEmbedTarget(Target):
         items = sorted(ctx.items, key=lambda e: e.published or _FAR_FUTURE)
         for i, item in enumerate(items):
             color = item.meta.get("color") or self._color
-            download_image = item.meta.get("download_image", False)
             try:
                 await post_to_discord(
                     webhook,
                     item,
                     session,
                     fetch_image=self._fetch_image,
-                    download_image=download_image,
                     color=color,
                 )
                 log.info("[%s] Posted: %s", item.source, item.title[:80])

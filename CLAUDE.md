@@ -96,7 +96,7 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
 #### `push/` — target implementations
 
 - `push/discord.py` — Discord webhook targets and underlying posting functions.
-  - `DiscordEmbedTarget(Target)` — posts each item as a Discord embed with optional OG image fetch/download.
+  - `DiscordEmbedTarget(Target)` — posts each item as a Discord embed; if no `image` is set on the Item and `image.skip` is not configured, scrapes the article HTML for an `og:image` URL.
   - `DiscordTextTarget(Target)` — posts each item's body as a plain text message (truncated to 2000 chars).
   - `DiscordMarkdownTarget(Target)` — posts each item as `### [title](<url>) source\nbody` (markdown format, no embed).
   - `DiscordDigestTarget(Target)` — posts `ctx.memory` as ≤2000-char chunks with `[n]` citation markers replaced by `[[Source]](<url>)` Discord masked links.
@@ -192,4 +192,4 @@ Caveats:
 - Only update `last_run` on a successful feed fetch. A `None` from `Source.pull()` must short-circuit the state write so a transiently broken feed retries on the next cron tick rather than waiting `period` hours.
 - LLM filter failures retry once after 10s; on second failure all items are treated as passing (fail-open).
 - All feeds in a given RSS/digest task share one LLM filter call; items are sent grouped by source with monotonically increasing integer IDs across all feeds.
-- `Item.meta` carries per-item display hints (e.g. `color`, `download_og`) set during the pull stage so the target doesn't need to re-resolve them from config.
+- `Item.meta` carries per-item display hints (e.g. `color`) set during the pull stage so the target doesn't need to re-resolve them from config.

@@ -242,7 +242,6 @@ class _FeedDiscord(BaseModel):
 class _Image(BaseModel):
     model_config = ConfigDict(extra="forbid")
     skip: bool | None = None
-    download: bool | None = None
 
 
 class _Summarize(BaseModel):
