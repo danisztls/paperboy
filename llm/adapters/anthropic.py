@@ -1,7 +1,6 @@
 import logging
-import time
 
-from .base import LLMAdapter, LLMResponse
+from .base import LLMAdapter, LLMResponse, timed_call
 
 DEFAULT_MODEL = "claude-haiku-4-5"
 log = logging.getLogger(__name__)
@@ -42,19 +41,19 @@ class AnthropicAdapter(LLMAdapter):
             if isinstance(reasoning, dict):
                 thinking_arg.update(reasoning)
             kwargs["thinking"] = thinking_arg
-        t0 = time.monotonic()
-        try:
+
+        async def _call():
             async with self._client.messages.stream(
                 model=_model,
                 max_tokens=16000,
                 messages=[{"role": "user", "content": prompt}],
                 **kwargs,
             ) as stream:
-                message = await stream.get_final_message()
-        except Exception as exc:
-            log.error("Anthropic completion failed: %s", exc)
+                return await stream.get_final_message()
+
+        message, latency = await timed_call(log, "Anthropic", _call)
+        if message is None:
             return None
-        latency = time.monotonic() - t0
         text = "".join(block.text for block in message.content if block.type == "text").strip()
         if not text:
             return None

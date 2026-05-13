@@ -1,9 +1,8 @@
 import logging
-import time
 
 from openai import AsyncOpenAI
 
-from .base import LLMAdapter, LLMResponse
+from .base import LLMAdapter, LLMResponse, timed_call
 
 DEFAULT_MODEL = "gpt-5.4-mini"
 log = logging.getLogger(__name__)
@@ -34,19 +33,19 @@ class OpenAIAdapter(LLMAdapter):
             reasoning_arg = {"effort": "high", "summary": "auto"}
             if isinstance(reasoning, dict):
                 reasoning_arg.update(reasoning)
-        t0 = time.monotonic()
-        try:
-            response = await self._client.responses.create(
+        response, latency = await timed_call(
+            log,
+            "OpenAI",
+            lambda: self._client.responses.create(
                 model=_model,
                 input=prompt,
                 **({"instructions": instructions} if instructions else {}),
                 **({"tools": tools} if tools else {}),
                 **({"reasoning": reasoning_arg} if reasoning_arg else {}),
-            )
-        except Exception as exc:
-            log.error("OpenAI completion failed: %s", exc)
+            ),
+        )
+        if response is None:
             return None
-        latency = time.monotonic() - t0
         text = (response.output_text or "").strip()
         if not text:
             return None

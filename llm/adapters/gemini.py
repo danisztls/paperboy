@@ -1,7 +1,6 @@
 import logging
-import time
 
-from .base import LLMAdapter, LLMResponse
+from .base import LLMAdapter, LLMResponse, timed_call
 
 DEFAULT_MODEL = "gemini-2.0-flash"
 log = logging.getLogger(__name__)
@@ -40,17 +39,17 @@ class GeminiAdapter(LLMAdapter):
                 thinking_kwargs.update(reasoning)
             config_kwargs["thinking_config"] = types.ThinkingConfig(**thinking_kwargs)
         config = types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
-        t0 = time.monotonic()
-        try:
-            response = await self._client.aio.models.generate_content(
+        response, latency = await timed_call(
+            log,
+            "Gemini",
+            lambda: self._client.aio.models.generate_content(
                 model=_model,
                 contents=prompt,
                 **({"config": config} if config else {}),
-            )
-        except Exception as exc:
-            log.error("Gemini completion failed: %s", exc)
+            ),
+        )
+        if response is None:
             return None
-        latency = time.monotonic() - t0
         text = (response.text or "").strip()
         if not text:
             return None
