@@ -1,4 +1,7 @@
+import logging
+import time
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 
@@ -11,6 +14,23 @@ class LLMResponse:
     latency_s: float
     reasoning: str | None = None
     finish_reason: str | None = None
+
+
+async def timed_call[T](
+    log: logging.Logger,
+    provider: str,
+    call: Callable[[], Awaitable[T]],
+) -> tuple[T | None, float]:
+    """Run an async provider call; return (result_or_None, elapsed_seconds).
+
+    Logs and swallows exceptions so adapters don't repeat the try/except dance.
+    """
+    t0 = time.monotonic()
+    try:
+        return await call(), time.monotonic() - t0
+    except Exception as exc:
+        log.error("%s completion failed: %s", provider, exc)
+        return None, time.monotonic() - t0
 
 
 class LLMAdapter(ABC):

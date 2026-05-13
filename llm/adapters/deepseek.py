@@ -1,10 +1,9 @@
 import logging
 import os
-import time
 
 from openai import AsyncOpenAI
 
-from .base import LLMAdapter, LLMResponse
+from .base import LLMAdapter, LLMResponse, timed_call
 
 DEFAULT_MODEL = "deepseek-v4-flash"
 REASONING_MODEL = "deepseek-reasoner"
@@ -33,16 +32,16 @@ class DeepSeekAdapter(LLMAdapter):
         if instructions:
             messages.append({"role": "system", "content": instructions})
         messages.append({"role": "user", "content": prompt})
-        t0 = time.monotonic()
-        try:
-            response = await self._client.chat.completions.create(
+        response, latency = await timed_call(
+            log,
+            "DeepSeek",
+            lambda: self._client.chat.completions.create(
                 model=_model,
                 messages=messages,
-            )
-        except Exception as exc:
-            log.error("DeepSeek completion failed: %s", exc)
+            ),
+        )
+        if response is None:
             return None
-        latency = time.monotonic() - t0
         message = response.choices[0].message
         text = (message.content or "").strip()
         if not text:
