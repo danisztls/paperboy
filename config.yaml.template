@@ -40,7 +40,8 @@ tasks:
     # image:                 # optional — image settings for this task
     #   skip: true           # skip image fetching entirely (default: false)
     #   download: true       # download+optimize as WebP; overrides global image.download (default: false)
-    # summarize: true        # optional — LLM-summarize each entry's description before filtering/posting (default: false)
+    # summarize: true        # optional — LLM-summarize each entry's description before filtering/posting
+    #                        # default: true for digest tasks, false for RSS/embed tasks
     #                        # per-feed 'summarize' overrides this task-level default
     # summarize:             # long form: 'true' is implicit when using extra options
     #   language: "PT-BR"   # optional — override language for summaries (falls back to llm.language or EN-US)
