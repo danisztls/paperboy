@@ -3,7 +3,7 @@
 
 import argparse
 import asyncio
-import atexit
+import fcntl
 import logging
 import os
 import pathlib
@@ -132,18 +132,15 @@ async def _async_main(args: argparse.Namespace) -> None:
     )
 
     _xdg_runtime = pathlib.Path(os.environ.get("XDG_RUNTIME_DIR", f"/tmp/claudinho-{os.getuid()}"))
+    _xdg_runtime.mkdir(parents=True, exist_ok=True)
     lock_path = _xdg_runtime / "claudinho.lock"
-    if lock_path.exists():
-        raw = lock_path.read_text().strip()
-        try:
-            os.kill(int(raw), 0)
-        except ValueError, ProcessLookupError:
-            log.warning("Removing stale lock file (PID %s)", raw)
-        else:
-            log.error("Another instance is running (PID %s), exiting.", raw)
-            sys.exit(1)
-    lock_path.write_text(str(os.getpid()))
-    atexit.register(lock_path.unlink, missing_ok=True)
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(lock_fd)
+        log.error("Another instance is running, exiting.")
+        sys.exit(1)
 
     if not config_path.exists():
         log.error("Config file not found: %s", config_path)
