@@ -6,7 +6,7 @@ from openai import AsyncOpenAI
 
 from .base import LLMAdapter, LLMResponse
 
-DEFAULT_MODEL = "deepseek-chat"
+DEFAULT_MODEL = "deepseek-v4-flash"
 REASONING_MODEL = "deepseek-reasoner"
 BASE_URL = "https://api.deepseek.com"
 log = logging.getLogger(__name__)
