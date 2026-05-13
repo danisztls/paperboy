@@ -29,6 +29,17 @@ _CITE_STRIP_RE = re.compile(r"\s*\[\d+\]")
 log = logging.getLogger(__name__)
 
 
+def _decode_filter_results(
+    raw_results: dict[str, dict], id_map: dict[int, Item]
+) -> dict[str, dict]:
+    """Map the LLM's int-id results to {item.id: {pass, reason}} using the int→Item map."""
+    decoded: dict[str, dict] = {}
+    for gid, v in raw_results.items():
+        if gid.isdigit() and (item := id_map.get(int(gid))):
+            decoded[item.id] = v
+    return decoded
+
+
 def _merge_filter(task_f: dict, feed_f: dict) -> dict:
     """Combine task-level and feed-level filter dicts, concatenating rules for shared keys."""
     merged = {}
@@ -295,12 +306,7 @@ async def _apply_llm_filter(
             web_search=filter_trace.get("web_search", False),
         )
 
-    # Map LLM results back to Items
-    result_by_item_id: dict[str, dict] = {
-        id_map[int(gid)].id: v
-        for gid, v in raw_results.items()
-        if gid.isdigit() and int(gid) in id_map
-    }
+    result_by_item_id = _decode_filter_results(raw_results, id_map)
 
     annotated = [
         dc_replace(
