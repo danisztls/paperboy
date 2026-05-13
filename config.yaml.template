@@ -4,20 +4,20 @@ discord:                    # optional — global defaults for Discord posting
 llm:                        # optional — global defaults for all LLM tasks
   models:
     reasoning:              # used for RSS/digest LLM filter + summarize; array for ordered fallback
-      provider: openai      # 'openai', 'gemini', 'deepseek', or 'anthropic'
-      model: gpt-5.4-mini
+      provider: deepseek    # 'deepseek', 'openai', 'gemini', or 'anthropic'
+      model: deepseek-v4-flash
     # reasoning:            # array form: tries each in order, falls back on None response
     #   - provider: deepseek
-    #     model: deepseek-reasoner
+    #     model: deepseek-v4-flash
     #   - provider: openai
     #     model: gpt-5.4-mini
-    topic:                  # used for standalone LLM search tasks; array for ordered fallback
-      provider: openai
+    topic:                  # used for standalone LLM search tasks (requires web_search support); array for ordered fallback
+      provider: openai      # deepseek doesn't support web_search yet — use openai/gemini/anthropic
       model: gpt-5.4-nano
-  api_key:                  # per-provider API keys (omit to read from $OPENAI_API_KEY / $GEMINI_API_KEY / $DEEPSEEK_API_KEY env var)
+  api_key:                  # per-provider API keys (omit to read from $DEEPSEEK_API_KEY / $OPENAI_API_KEY / $GEMINI_API_KEY env var)
+    deepseek: !secret deepseek_api_key
     openai: !secret openai_api_key
     # gemini: !secret gemini_api_key
-    # deepseek: !secret deepseek_api_key
   # instructions: "..."      # additional instructions appended to the built-in system prompt for LLM tasks
   # language: "EN-US"        # language for filter memory briefings (default: EN-US; per-filter 'language' overrides)
 
