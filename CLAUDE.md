@@ -27,8 +27,10 @@ The project uses `uv` (see `uv.lock`, `.python-version` pinning Python 3.14).
 - Clean stale state entries and exit: `uv run main.py --clean`
 - Summarize a YouTube video to stdout: `uv run main.py --summarize <url>`
 - Sync deps: `uv sync`
+- Format: `uv run ruff format .`
+- Lint: `uv run ruff check --fix .`
 
-There is no test suite, linter, or formatter configured.
+After any implementation, run format then lint before finishing.
 
 Config is read from `$XDG_CONFIG_HOME/claudinho/config.yaml` (default `~/.config/claudinho/config.yaml`) and state is written to `$XDG_DATA_HOME/claudinho/state.json` (default `~/.local/share/claudinho/state.json`). Both paths can be overridden: pass `--config` and/or `--state`. Copy `config.yaml.template` and fill in webhook URLs and feed URLs.
 
