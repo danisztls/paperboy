@@ -61,29 +61,39 @@ async def _pull_feeds(
     feeds_state: dict,
     task_filter: dict,
     session: aiohttp.ClientSession,
-) -> dict[str, object]:
-    """Fetch all feeds concurrently. Returns {url: PullResult | None}."""
+    *,
+    collector=None,
+) -> tuple[dict[str, object], dict[str, dict]]:
+    """Fetch all feeds concurrently. Returns ({url: PullResult | None}, {url: filter_log})."""
     task_filter = task_filter or {}
 
     async def _fetch_one(fc: dict):
         url = fc["url"]
-        seen = {item["url"] for item in feeds_state.get(url, {}).get("items", [])}
+        seen = set() if collector else {item["url"] for item in feeds_state.get(url, {}).get("items", [])}
         feed_filter = fc.get("filter", {})
         merged_filter = _merge_filter(task_filter, feed_filter) if (task_filter or feed_filter) else {}
         effective_fc = {**fc, "filter": merged_filter} if merged_filter else fc
-        return fc, await source.pull(effective_fc, seen, session)
+        filter_log = (
+            {"url_excluded": [], "title_transforms": [], "description_transforms": [],
+             "total_in_feed": 0, "new_eligible": 0}
+            if collector else None
+        )
+        return fc, await source.pull(effective_fc, seen, session, filter_log=filter_log), filter_log
 
     results = await asyncio.gather(*[_fetch_one(fc) for fc in feed_cfgs], return_exceptions=True)
 
     fetch_map: dict[str, object] = {}
+    filter_log_map: dict[str, dict] = {}
     for item in results:
         if isinstance(item, Exception):
             log.error("Feed fetch failed: %s", item)
             continue
-        fc, pull_result = item
-        fetch_map[fc["url"]] = pull_result  # None means fetch failed
+        fc, pull_result, filter_log = item
+        fetch_map[fc["url"]] = pull_result
+        if filter_log is not None:
+            filter_log_map[fc["url"]] = filter_log
 
-    return fetch_map
+    return fetch_map, filter_log_map
 
 
 async def _summarize_items(
@@ -92,6 +102,8 @@ async def _summarize_items(
     llm_adapter: LLMAdapter | None,
     model: str | None,
     session: aiohttp.ClientSession | None = None,
+    *,
+    collector=None,
 ) -> list[Item]:
     """Replace .summary on items that have fetchable content or a body, concurrently."""
     async def _get_content(e: Item) -> str:
@@ -112,21 +124,32 @@ async def _summarize_items(
     ]
     if not pairs:
         return items
+    captures = [{} for _ in pairs] if collector else [None] * len(pairs)
     results = await asyncio.gather(
         *[summarize_entry(
               e.title, c, llm_adapter,
               model=model,
               language=cfg_by_id[e.id][0],
               instructions=cfg_by_id[e.id][1],
+              capture=cap,
           )
-          for e, c in pairs],
+          for (e, c), cap in zip(pairs, captures)],
         return_exceptions=True,
     )
-    updated = {
-        e.id: dc_replace(e, summary=s)
-        for (e, _), s in zip(pairs, results)
-        if not isinstance(s, Exception) and s
-    }
+    updated = {}
+    for (e, c), cap, s in zip(pairs, captures, results):
+        if not isinstance(s, Exception) and s:
+            updated[e.id] = dc_replace(e, summary=s)
+        if collector and cap is not None:
+            collector.record_summarization(
+                item_id=e.id,
+                title=e.title,
+                url=e.url,
+                fetched_body=c,
+                instructions=cap.get("instructions", ""),
+                input_text=cap.get("input", ""),
+                summary=s if not isinstance(s, Exception) else None,
+            )
     return [updated.get(e.id, e) for e in items]
 
 
@@ -137,6 +160,8 @@ async def _apply_llm_filter(
     language: str,
     memory_history: list[tuple[str, str]] | None,
     llm_adapter: LLMAdapter | None,
+    *,
+    collector=None,
 ) -> FilterResult:
     """Run LLM filter on items. Returns FilterResult with filter_pass set on each item."""
     # Build grouped payload for the LLM (grouped by source)
@@ -172,11 +197,13 @@ async def _apply_llm_filter(
         log.error("LLM filter skipped — llm.models.reasoning is not configured")
         return FilterResult(items=all_items, memory=None, cite_map=cite_map)
 
+    filter_capture: dict | None = {} if collector else None
     _filter_kwargs = dict(
         language=language,
         memory_history=memory_history,
         adapter=llm_adapter,
         extra_instructions=filter_cfg.get("instructions") or None,
+        capture=filter_capture,
     )
     llm_return = await filter_entries(payload_groups, filter_cfg, model, **_filter_kwargs)
     if llm_return is None:
@@ -184,10 +211,43 @@ async def _apply_llm_filter(
         await asyncio.sleep(10)
         llm_return = await filter_entries(payload_groups, filter_cfg, model, **_filter_kwargs)
     if llm_return is None:
+        if collector and filter_capture is not None:
+            collector.record_filter(
+                model=model,
+                instructions=filter_capture.get("instructions", ""),
+                payload=filter_capture.get("payload", []),
+                raw_response=filter_capture.get("raw_response"),
+                parsed=[],
+                memory=None,
+            )
         log.error("Filter failed twice — treating all items as passing")
         return FilterResult(items=all_items, memory=None, cite_map=cite_map)
 
     raw_results, memory_text = llm_return
+
+    if collector and filter_capture is not None:
+        parsed_list = []
+        for gid_str, v in raw_results.items():
+            try:
+                gid_int = int(gid_str)
+                it = id_map.get(gid_int)
+            except ValueError:
+                it = None
+            parsed_list.append({
+                "id": gid_str,
+                "source": it.source if it else "?",
+                "title": it.title if it else "?",
+                "pass": v["pass"],
+                "reason": v["reason"],
+            })
+        collector.record_filter(
+            model=model,
+            instructions=filter_capture.get("instructions", ""),
+            payload=filter_capture.get("payload", []),
+            raw_response=filter_capture.get("raw_response"),
+            parsed=parsed_list,
+            memory=memory_text,
+        )
 
     # Map LLM results back to Items
     result_by_item_id: dict[str, dict] = {
@@ -216,29 +276,50 @@ async def _process_llm_search_task(
     instructions: str | None = None,
     search_model: str | None = None,
     llm_adapter: LLMAdapter | None,
+    collector=None,
 ) -> dict:
     """Pull from LLM web search, post as plain text. Returns {name: task_state} or {}."""
     name = task_cfg["name"]
-    if llm_adapter is None:
-        log.error("[%s] Skipping — llm.models.topic is not configured", name)
-        return {}
-    source = LLMSearchSource(instructions=instructions, global_model=search_model, adapter=llm_adapter)
-    pull_result = await source.pull(task_cfg, set(), session)
-    if pull_result is None or not pull_result.new_items:
-        return {}
-
-    target = DiscordTextTarget()
-    ctx = PushContext(items=pull_result.new_items)
+    if collector:
+        collector.begin_task(name, "llm_search")
     try:
-        await target.push(ctx, task_cfg, session)
-    except Exception:
-        log.error("Skipping LLM task %s due to post failure", name)
-        return {}
+        if llm_adapter is None:
+            log.error("[%s] Skipping — llm.models.topic is not configured", name)
+            return {}
 
-    if _get_file_path(task_cfg):
-        await FileEmbedTarget().push(ctx, task_cfg, session)
+        if collector:
+            cap: dict = {}
+            text = await run_llm_task(task_cfg, instructions, search_model, adapter=llm_adapter, capture=cap)
+            collector.record_llm_search(
+                model=cap.get("model"),
+                instructions=cap.get("instructions"),
+                prompt=cap.get("prompt", ""),
+                raw_response=text,
+            )
+            new_items = [Item(id=f"{name}:llm_result", title=name, source=name, body=text)] if text else []
+            collector.record_push(len(new_items))
+            return {}
 
-    return {name: {"last_run": datetime.now(timezone.utc).replace(microsecond=0).isoformat()}}
+        source = LLMSearchSource(instructions=instructions, global_model=search_model, adapter=llm_adapter)
+        pull_result = await source.pull(task_cfg, set(), session)
+        if pull_result is None or not pull_result.new_items:
+            return {}
+
+        target = DiscordTextTarget()
+        ctx = PushContext(items=pull_result.new_items)
+        try:
+            await target.push(ctx, task_cfg, session)
+        except Exception:
+            log.error("Skipping LLM task %s due to post failure", name)
+            return {}
+
+        if _get_file_path(task_cfg):
+            await FileEmbedTarget().push(ctx, task_cfg, session)
+
+        return {name: {"last_run": datetime.now(timezone.utc).replace(microsecond=0).isoformat()}}
+    finally:
+        if collector:
+            collector.finish_task()
 
 
 async def _process_llm_evaluate_task(
@@ -251,6 +332,7 @@ async def _process_llm_evaluate_task(
     global_color: int | None = None,
     global_language: str = "EN-US",
     global_image_download: bool = False,
+    collector=None,
 ) -> dict:
     """Pull RSS feeds, optionally filter/summarize, push to Discord. Returns {task_name: task_state}."""
     task_name = task_cfg["name"]
@@ -265,189 +347,223 @@ async def _process_llm_evaluate_task(
     task_summarize = task_cfg.get("summarize", False)
     task_type = _task_type(task_cfg)
 
-    feed_cfgs = [fc for fc in _get_feeds(task_cfg) if fc.get("url")]
-    task_state = state.get("tasks", {}).get(task_name, {})
-    feeds_state = task_state.get("feeds", {})
+    if collector:
+        collector.begin_task(task_name, task_type)
 
-    # Memory history (filtered tasks only)
-    raw_history = task_state.get("memory", {}) if filter_cfg else {}
-    memory_history: list[tuple[str, str]] | None = None
-    if raw_history:
-        keys = sorted(raw_history)[-7:]
-        memory_history = [(k, raw_history[k]) for k in keys] or None
+    try:
+        feed_cfgs = [fc for fc in _get_feeds(task_cfg) if fc.get("url")]
+        if collector and collector.limit_feeds > 0:
+            feed_cfgs = feed_cfgs[:collector.limit_feeds]
+        task_state = state.get("tasks", {}).get(task_name, {})
+        feeds_state = task_state.get("feeds", {})
 
-    # --- Pull ---
-    source = RSSSource()
-    fetch_map = await _pull_feeds(source, feed_cfgs, feeds_state, task_filter, session)
+        # Memory history (filtered tasks only)
+        raw_history = task_state.get("memory", {}) if filter_cfg else {}
+        memory_history: list[tuple[str, str]] | None = None
+        if raw_history:
+            keys = sorted(raw_history)[-7:]
+            memory_history = [(k, raw_history[k]) for k in keys] or None
 
-    # Collect all new items, tagged with per-feed display metadata
-    all_new_items: list[Item] = []
-    for fc in feed_cfgs:
-        url = fc["url"]
-        pull_result = fetch_map.get(url)
-        if pull_result is None:
-            continue
-        feed_image_download = (fc.get("image") or {}).get("download")
-        download_image = (
-            feed_image_download if feed_image_download is not None
-            else task_image_download if task_image_download is not None
-            else global_image_download
-        )
-        feed_color = _parse_color(fc.get("discord", {}).get("color")) or task_color or global_color
-        items_with_meta = [
-            dc_replace(item, meta={**item.meta, "color": feed_color, "download_image": download_image})
-            for item in pull_result.new_items
-        ]
-        all_new_items.extend(items_with_meta)
+        # --- Pull ---
+        source = RSSSource()
+        fetch_map, filter_log_map = await _pull_feeds(source, feed_cfgs, feeds_state, task_filter, session, collector=collector)
 
-    # --- Process: summarize ---
-    if all_new_items:
-        # Build per-item summarize config: id -> (language, instructions)
-        summarize_cfg_by_id: dict[str, tuple[str, str | None]] = {}
+        # Collect all new items, tagged with per-feed display metadata
+        items_per_feed: dict[str, list[Item]] = {}
+        all_new_items: list[Item] = []
         for fc in feed_cfgs:
             url = fc["url"]
-            if fetch_map.get(url) is None:
+            pull_result = fetch_map.get(url)
+            if pull_result is None:
+                items_per_feed[url] = []
                 continue
-            feed_summarize = fc.get("summarize")
-            active = feed_summarize if feed_summarize is not None else task_summarize
-            if not active:
-                continue
-            if isinstance(active, dict):
-                sum_lang = active.get("language")
-                sum_instructions = active.get("instructions")
+            feed_items = pull_result.new_items
+            if collector and collector.limit > 0:
+                feed_items = feed_items[-collector.limit:]
+            items_per_feed[url] = feed_items
+
+            if collector:
+                fl = filter_log_map.get(url, {})
+                collector.record_feed(
+                    url=url,
+                    name=fc.get("name") or url,
+                    total_in_feed=fl.get("total_in_feed", 0),
+                    new_eligible=fl.get("new_eligible", 0),
+                    after_limit=len(feed_items),
+                    url_excluded=fl.get("url_excluded", []),
+                    title_transforms=fl.get("title_transforms", []),
+                    description_transforms=fl.get("description_transforms", []),
+                )
+
+            feed_image_download = (fc.get("image") or {}).get("download")
+            download_image = (
+                feed_image_download if feed_image_download is not None
+                else task_image_download if task_image_download is not None
+                else global_image_download
+            )
+            feed_color = _parse_color(fc.get("discord", {}).get("color")) or task_color or global_color
+            all_new_items.extend([
+                dc_replace(item, meta={**item.meta, "color": feed_color, "download_image": download_image})
+                for item in feed_items
+            ])
+
+        # --- Process: summarize ---
+        if all_new_items:
+            # Build per-item summarize config: id -> (language, instructions)
+            summarize_cfg_by_id: dict[str, tuple[str, str | None]] = {}
+            for fc in feed_cfgs:
+                url = fc["url"]
+                if fetch_map.get(url) is None:
+                    continue
+                feed_summarize = fc.get("summarize")
+                active = feed_summarize if feed_summarize is not None else task_summarize
+                if not active:
+                    continue
+                if isinstance(active, dict):
+                    sum_lang = active.get("language")
+                    sum_instructions = active.get("instructions")
+                else:
+                    sum_lang = None
+                    sum_instructions = None
+                effective_lang = sum_lang or (filter_cfg or {}).get("language") or global_language
+                for item in items_per_feed.get(url, []):
+                    summarize_cfg_by_id[item.id] = (effective_lang, sum_instructions)
+
+            if summarize_cfg_by_id:
+                to_summarize = [it for it in all_new_items if it.id in summarize_cfg_by_id]
+                if to_summarize:
+                    summarized = await _summarize_items(to_summarize, summarize_cfg_by_id, llm_adapter, evaluate_model, session, collector=collector)
+                    by_id = {it.id: it for it in summarized}
+                    all_new_items = [by_id.get(it.id, it) for it in all_new_items]
+
+        # --- Process: LLM filter ---
+        filter_result: FilterResult | None = None
+        if filter_cfg and all_new_items:
+            language = filter_cfg.get("language") or global_language
+            filter_result = await _apply_llm_filter(
+                all_new_items, filter_cfg, evaluate_model, language, memory_history, llm_adapter,
+                collector=collector,
+            )
+
+        # Determine passing items and apply explain mode
+        if filter_result is not None:
+            passing = [it for it in filter_result.items if it.filter_pass is not False]
+            if explain:
+                passing = [
+                    dc_replace(it, body=it.filter_reason or it.summary or it.body)
+                    for it in passing
+                ]
+            elif all(it.summary is None for it in passing):
+                pass  # no summaries to apply
             else:
-                sum_lang = None
-                sum_instructions = None
-            effective_lang = sum_lang or (filter_cfg or {}).get("language") or global_language
-            pull_result = fetch_map[url]
-            for item in pull_result.new_items:
-                summarize_cfg_by_id[item.id] = (effective_lang, sum_instructions)
-
-        if summarize_cfg_by_id:
-            to_summarize = [it for it in all_new_items if it.id in summarize_cfg_by_id]
-            if to_summarize:
-                summarized = await _summarize_items(to_summarize, summarize_cfg_by_id, llm_adapter, evaluate_model, session)
-                by_id = {it.id: it for it in summarized}
-                all_new_items = [by_id.get(it.id, it) for it in all_new_items]
-
-    # --- Process: LLM filter ---
-    filter_result: FilterResult | None = None
-    if filter_cfg and all_new_items:
-        language = filter_cfg.get("language") or global_language
-        filter_result = await _apply_llm_filter(
-            all_new_items, filter_cfg, evaluate_model, language, memory_history, llm_adapter
-        )
-
-    # Determine passing items and apply explain mode
-    if filter_result is not None:
-        passing = [it for it in filter_result.items if it.filter_pass is not False]
-        if explain:
-            passing = [
-                dc_replace(it, body=it.filter_reason or it.summary or it.body)
-                for it in passing
-            ]
-        elif all(it.summary is None for it in passing):
-            pass  # no summaries to apply
+                passing = [dc_replace(it, body=it.summary or it.body) for it in passing]
+            all_annotated = filter_result.items
+            memory_text = filter_result.memory
+            cite_map = filter_result.cite_map
         else:
-            passing = [dc_replace(it, body=it.summary or it.body) for it in passing]
-        all_annotated = filter_result.items
-        memory_text = filter_result.memory
-        cite_map = filter_result.cite_map
-    else:
-        # No filter: apply summaries if present
-        passing = [dc_replace(it, body=it.summary or it.body) for it in all_new_items]
-        all_annotated = all_new_items
-        memory_text = None
-        cite_map = {}
+            # No filter: apply summaries if present
+            passing = [dc_replace(it, body=it.summary or it.body) for it in all_new_items]
+            all_annotated = all_new_items
+            memory_text = None
+            cite_map = {}
 
-    # --- Push ---
-    discord_format = task_discord.get("format")
-    if task_type == "digest":
-        target: DiscordEmbedTarget | DiscordDigestTarget | DiscordMarkdownTarget | DiscordTextTarget = DiscordDigestTarget()
-        ctx = PushContext(items=passing, memory=memory_text, cite_map=cite_map)
-        try:
-            failed_ids = await target.push(ctx, task_cfg, session)
-        except Exception:
-            log.error("[%s] Failed to post digest — state not saved", task_name)
+        # --- Analysis mode: record push count and return without posting ---
+        if collector:
+            collector.record_push(len(passing))
             return {}
-        log.info("[%s] Posted digest", task_name)
-        if _get_file_path(task_cfg):
-            await FileDigestTarget().push(ctx, task_cfg, session)
-    elif discord_format == "markdown":
-        target = DiscordMarkdownTarget()
-        ctx = PushContext(items=passing, memory=memory_text, cite_map=cite_map)
-        failed_ids = await target.push(ctx, task_cfg, session)
-        if _get_file_path(task_cfg):
-            await FileEmbedTarget().push(ctx, task_cfg, session)
-    else:
-        target = DiscordEmbedTarget(fetch_image=fetch_image)
-        ctx = PushContext(items=passing, memory=memory_text, cite_map=cite_map)
-        failed_ids = await target.push(ctx, task_cfg, session)
-        if _get_file_path(task_cfg):
-            await FileEmbedTarget().push(ctx, task_cfg, session)
 
-    # --- State update ---
-    now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-    new_feeds_state = dict(feeds_state)
-
-    for fc in feed_cfgs:
-        url = fc["url"]
-        pull_result = fetch_map.get(url)
-        if pull_result is None:
-            continue  # failed fetch — leave existing state untouched
-
-        prev_items = feeds_state.get(url, {}).get("items", [])
-        prev_by_url = {item["url"]: item for item in prev_items}
-        annotated_by_link = {it.id: it for it in all_annotated}
-
-        if filter_cfg:
-            final_items = list(prev_items)
-            for ci in pull_result.current_items:
-                item_url = ci["url"]
-                if item_url not in prev_by_url:
-                    state_item = dict(ci)
-                    it = annotated_by_link.get(item_url)
-                    if it is not None and it.summary:
-                        state_item["summary"] = it.summary
-                    if it is not None and it.filter_pass is not None:
-                        state_item.update({"filter_pass": it.filter_pass, "filter_reason": it.filter_reason or ""})
-                    else:
-                        state_item["filter_pass"] = True
-                    final_items.append(state_item)
+        # --- Push ---
+        discord_format = task_discord.get("format")
+        if task_type == "digest":
+            target: DiscordEmbedTarget | DiscordDigestTarget | DiscordMarkdownTarget | DiscordTextTarget = DiscordDigestTarget()
+            ctx = PushContext(items=passing, memory=memory_text, cite_map=cite_map)
+            try:
+                failed_ids = await target.push(ctx, task_cfg, session)
+            except Exception:
+                log.error("[%s] Failed to post digest — state not saved", task_name)
+                return {}
+            log.info("[%s] Posted digest", task_name)
+            if _get_file_path(task_cfg):
+                await FileDigestTarget().push(ctx, task_cfg, session)
+        elif discord_format == "markdown":
+            target = DiscordMarkdownTarget()
+            ctx = PushContext(items=passing, memory=memory_text, cite_map=cite_map)
+            failed_ids = await target.push(ctx, task_cfg, session)
+            if _get_file_path(task_cfg):
+                await FileEmbedTarget().push(ctx, task_cfg, session)
         else:
-            new_items_state = []
-            for ci in pull_result.current_items:
-                if ci["url"] not in prev_by_url:
-                    state_item = dict(ci)
-                    it = annotated_by_link.get(ci["url"])
-                    if it is not None and it.summary:
-                        state_item["summary"] = it.summary
-                    new_items_state.append(state_item)
-            final_items = list(prev_items) + new_items_state
+            target = DiscordEmbedTarget(fetch_image=fetch_image)
+            ctx = PushContext(items=passing, memory=memory_text, cite_map=cite_map)
+            failed_ids = await target.push(ctx, task_cfg, session)
+            if _get_file_path(task_cfg):
+                await FileEmbedTarget().push(ctx, task_cfg, session)
 
-        # Remove any items that failed to post
-        if failed_ids:
-            final_items = [item for item in final_items if item["url"] not in failed_ids]
+        # --- State update ---
+        now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        new_feeds_state = dict(feeds_state)
 
-        for item in final_items:
-            if "access_date" not in item:
-                item["access_date"] = now_iso
+        for fc in feed_cfgs:
+            url = fc["url"]
+            pull_result = fetch_map.get(url)
+            if pull_result is None:
+                continue  # failed fetch — leave existing state untouched
 
-        new_feeds_state[url] = {"items": final_items, "last_run": now_iso}
+            prev_items = feeds_state.get(url, {}).get("items", [])
+            prev_by_url = {item["url"]: item for item in prev_items}
+            annotated_by_link = {it.id: it for it in all_annotated}
 
-    new_task_state: dict = {"feeds": new_feeds_state}
-    if filter_cfg:
-        history = dict(raw_history)
-        if memory_text is not None:
-            _stripped = _CITE_STRIP_RE.sub('', memory_text)
-            history[now_iso] = " ".join(line.strip() for line in _stripped.splitlines() if line.strip())
-            if len(history) > 20:
-                for old_key in sorted(history)[:len(history) - 20]:
-                    del history[old_key]
-            log.info("[%s] Memory updated (%d chars)", task_name, len(memory_text))
-        new_task_state["memory"] = history
+            if filter_cfg:
+                final_items = list(prev_items)
+                for ci in pull_result.current_items:
+                    item_url = ci["url"]
+                    if item_url not in prev_by_url:
+                        state_item = dict(ci)
+                        it = annotated_by_link.get(item_url)
+                        if it is not None and it.summary:
+                            state_item["summary"] = it.summary
+                        if it is not None and it.filter_pass is not None:
+                            state_item.update({"filter_pass": it.filter_pass, "filter_reason": it.filter_reason or ""})
+                        else:
+                            state_item["filter_pass"] = True
+                        final_items.append(state_item)
+            else:
+                new_items_state = []
+                for ci in pull_result.current_items:
+                    if ci["url"] not in prev_by_url:
+                        state_item = dict(ci)
+                        it = annotated_by_link.get(ci["url"])
+                        if it is not None and it.summary:
+                            state_item["summary"] = it.summary
+                        new_items_state.append(state_item)
+                final_items = list(prev_items) + new_items_state
 
-    return {task_name: new_task_state}
+            # Remove any items that failed to post
+            if failed_ids:
+                final_items = [item for item in final_items if item["url"] not in failed_ids]
+
+            for item in final_items:
+                if "access_date" not in item:
+                    item["access_date"] = now_iso
+
+            new_feeds_state[url] = {"items": final_items, "last_run": now_iso}
+
+        new_task_state: dict = {"feeds": new_feeds_state}
+        if filter_cfg:
+            history = dict(raw_history)
+            if memory_text is not None:
+                _stripped = _CITE_STRIP_RE.sub('', memory_text)
+                history[now_iso] = " ".join(line.strip() for line in _stripped.splitlines() if line.strip())
+                if len(history) > 20:
+                    for old_key in sorted(history)[:len(history) - 20]:
+                        del history[old_key]
+                log.info("[%s] Memory updated (%d chars)", task_name, len(memory_text))
+            new_task_state["memory"] = history
+
+        return {task_name: new_task_state}
+
+    finally:
+        if collector:
+            collector.finish_task()
 
 
 async def _process_scraper_task(

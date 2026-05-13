@@ -15,6 +15,7 @@ async def filter_entries(
     memory_history: list[tuple[str, str]] | None = None,
     adapter: LLMAdapter,
     extra_instructions: str | None = None,
+    capture: dict | None = None,
 ) -> tuple[dict[str, dict], str | None] | None:
     """Filter feed entries through LLM and optionally update memory.
 
@@ -67,6 +68,10 @@ async def filter_entries(
         )
         + "\nReturn ONLY a valid JSON object, no other text."
     )
+    if capture is not None:
+        capture["instructions"] = instructions
+        capture["payload"] = items
+
     payload = json.dumps(items, ensure_ascii=False)
     total = sum(len(g.get("items", [])) for g in items)
     log.info("Filtering %d entries with LLM (model=%s)", total, model)
@@ -79,6 +84,8 @@ async def filter_entries(
         instructions=instructions,
         web_search=web_search or False,
     )
+    if capture is not None:
+        capture["raw_response"] = text
     if not text:
         log.error("LLM filter returned empty response")
         return None
