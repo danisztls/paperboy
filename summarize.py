@@ -1,4 +1,4 @@
-"""YouTube transcript fetch, SponsorBlock filtering, and LLM summarization."""
+"""Transcript/article fetch and LLM summarization for YouTube and arbitrary URLs."""
 
 import asyncio
 import logging
@@ -286,15 +286,14 @@ async def fetch_item_content(url: str, session: aiohttp.ClientSession) -> str | 
 async def run_summarize(
     url: str, adapter: LLMAdapter, model: str | None, language: str = "EN-US"
 ) -> None:
-    if not _YOUTUBE_RE.match(url):
-        log.error("--summarize only supports youtube.com URLs")
-        sys.exit(1)
+    is_youtube = bool(_YOUTUBE_RE.match(url))
 
-    try:
-        import yt_dlp  # noqa: F401 — check before opening session
-    except ImportError:
-        log.error("yt-dlp is not installed — run: uv sync")
-        sys.exit(1)
+    if is_youtube:
+        try:
+            import yt_dlp  # noqa: F401 — check before opening session
+        except ImportError:
+            log.error("yt-dlp is not installed — run: uv sync")
+            sys.exit(1)
 
     async with aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=15),
@@ -302,14 +301,22 @@ async def run_summarize(
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
         },
     ) as session:
-        result = await _fetch_youtube_data(url, session)
+        if is_youtube:
+            result = await _fetch_youtube_data(url, session)
+            if not result:
+                log.error("Could not fetch transcript for %s", url)
+                sys.exit(1)
+            title, transcript = result
+            summary = await summarize_transcript(
+                title, transcript, adapter, model=model, language=language
+            )
+        else:
+            content = await _fetch_article_content(url, session)
+            if not content:
+                log.error("Could not fetch article content for %s", url)
+                sys.exit(1)
+            summary = await summarize_entry(url, content, adapter, model=model, language=language)
 
-    if not result:
-        log.error("Could not fetch transcript for %s", url)
-        sys.exit(1)
-
-    title, transcript = result
-    summary = await summarize_transcript(title, transcript, adapter, model=model, language=language)
     if summary:
         print(summary)
     else:
