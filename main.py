@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 
 import aiohttp
 
+from analysis import AnalysisCollector
 from config import _parse_color, _parse_period, _task_type, _get_feeds, _get_discord_cfg, _get_llm_pull_cfg, load_config, validate_config, _resolve_model_spec, _get_api_key_for_provider
 from llm import get_adapter
 from state import _auto_clean, _remove_unknown, load_state, save_state
@@ -199,6 +200,7 @@ async def _async_main(args: argparse.Namespace) -> None:
             now = datetime.now(timezone.utc)
             feed_tasks = []
             force_task = args.task
+            collector = AnalysisCollector(limit=args.analysis_limit_items, limit_feeds=args.analysis_limit_feeds) if args.analysis else None
 
             task_list = tasks
             if force_task:
@@ -221,7 +223,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                         log.warning("[%s] Skipping LLM task: llm.web_search not configured (no input source)", name)
                         continue
                     task_state = state.get("tasks", {}).get(name, {"last_run": None})
-                    if not force_task and not _is_due(task_state, period, now):
+                    if not force_task and not collector and not _is_due(task_state, period, now):
                         last = datetime.fromisoformat(task_state["last_run"])
                         mins = int((now - last).total_seconds() // 60)
                         log.info(
@@ -229,11 +231,14 @@ async def _async_main(args: argparse.Namespace) -> None:
                             name, mins, period,
                         )
                         continue
-                    feed_tasks.append(_process_llm_search_task(task_cfg, state, session, instructions=instructions, search_model=search_model, llm_adapter=search_adapter))
+                    feed_tasks.append(_process_llm_search_task(task_cfg, state, session, instructions=instructions, search_model=search_model, llm_adapter=search_adapter, collector=collector))
                 elif _task_type(task_cfg) == "scraper":
                     task_name = task_cfg.get("name")
                     if not task_name:
                         log.warning("Skipping scraper task with no name")
+                        continue
+                    if collector:
+                        log.info("[%s] Skipping scraper task in analysis mode", task_name)
                         continue
                     task_state = state.get("tasks", {}).get(task_name, {"last_run": None})
                     if not force_task and not _is_due(task_state, period, now):
@@ -249,14 +254,22 @@ async def _async_main(args: argparse.Namespace) -> None:
                         continue
                     feeds_state = state.get("tasks", {}).get(task_name, {}).get("feeds", {})
                     feed_urls = [f["url"] for f in _get_feeds(task_cfg) if f.get("url")]
-                    if not force_task and not any(
+                    if not force_task and not collector and not any(
                         _is_due(feeds_state.get(u, {"last_run": None}), period, now) for u in feed_urls
                     ):
                         log.info("[%s] Skipping — no feeds are due", task_name)
                         continue
-                    feed_tasks.append(_process_llm_evaluate_task(task_cfg, state, session, evaluate_model=evaluate_model, llm_adapter=evaluate_adapter, global_color=global_color, global_language=global_language, global_image_download=global_image_download))
+                    feed_tasks.append(_process_llm_evaluate_task(task_cfg, state, session, evaluate_model=evaluate_model, llm_adapter=evaluate_adapter, global_color=global_color, global_language=global_language, global_image_download=global_image_download, collector=collector))
 
             results = await asyncio.gather(*feed_tasks, return_exceptions=True)
+
+            if collector:
+                if args.human:
+                    print(collector.to_human())
+                else:
+                    print(collector.to_json())
+                return
+
             tasks_state = state.setdefault("tasks", {})
             for result in results:
                 if isinstance(result, Exception):
@@ -318,6 +331,30 @@ def main():
         "--summarize",
         metavar="URL",
         help="Fetch transcript from a YouTube video and print a summary to stdout",
+    )
+    parser.add_argument(
+        "--analysis",
+        action="store_true",
+        help="Dry-run analysis mode: fetch and process without pushing or updating state. Outputs JSON to stdout. Typically combined with --task.",
+    )
+    parser.add_argument(
+        "--analysis-limit-items",
+        type=int,
+        default=7,
+        metavar="N",
+        help="Analysis mode: max entries per feed to process (default: 7, newest first). 0 = unlimited.",
+    )
+    parser.add_argument(
+        "--analysis-limit-feeds",
+        type=int,
+        default=7,
+        metavar="N",
+        help="Analysis mode: max feeds per task to process (default: 7). 0 = unlimited.",
+    )
+    parser.add_argument(
+        "--human",
+        action="store_true",
+        help="With --analysis: output human-readable text instead of JSON.",
     )
     args = parser.parse_args()
 

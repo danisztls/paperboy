@@ -20,6 +20,7 @@ async def summarize_entry(
     model: str | None = None,
     language: str = "EN-US",
     instructions: str | None = None,
+    capture: dict | None = None,
 ) -> str | None:
     base_instructions = (
         f"You are a precise, concise summarizer. Write in {language}. "
@@ -28,12 +29,15 @@ async def summarize_entry(
         "Keep the summary under 1024 characters."
     )
     combined = f"{base_instructions} {instructions}" if instructions else base_instructions
+    input_text = f"Title: {title}\n\nDescription:\n{description}"
+    if capture is not None:
+        capture["instructions"] = combined
+        capture["input"] = input_text
     log.info("Summarizing entry (model=%s): %s", model, title[:80])
-    return await adapter.complete(
-        f"Title: {title}\n\nDescription:\n{description}",
-        model=model,
-        instructions=combined,
-    )
+    result = await adapter.complete(input_text, model=model, instructions=combined)
+    if capture is not None:
+        capture["output"] = result
+    return result
 
 
 async def summarize_transcript(

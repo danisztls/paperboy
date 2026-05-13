@@ -123,6 +123,7 @@ async def get_new_entries(
     feed_cfg: dict,
     seen: set[str],
     session: aiohttp.ClientSession,
+    filter_log: dict | None = None,
 ) -> tuple[list[dict], list[Item]] | None:
     """Fetch feed, return (current_items, new_entries) or None on failure.
 
@@ -161,6 +162,7 @@ async def get_new_entries(
     filter_url = feed_filter.get("url")
 
     now = datetime.now(timezone.utc)
+    _new_eligible = 0
     for entry in parsed.entries:
         eid = entry.get("link")
         if not eid:
@@ -172,11 +174,18 @@ async def get_new_entries(
             continue
         current_items.append({"url": entry.get("link", ""), "title": _entry_title(entry)})
         if eid not in seen:
+            _new_eligible += 1
             if _url_filtered(eid, filter_url):
                 log.debug("[%s] URL-filtered: %s", feed_title, eid[:120])
+                if filter_log is not None:
+                    filter_log["url_excluded"].append({"url": eid})
             else:
                 unseen_raw.append((eid, entry))
                 log.debug("[%s] New entry: %s", feed_title, eid[:120])
+
+    if filter_log is not None:
+        filter_log["total_in_feed"] = len(current_items)
+        filter_log["new_eligible"] = _new_eligible
 
     log.info("[%s] New entries to post: %d", feed_title, len(unseen_raw))
 
@@ -193,7 +202,10 @@ async def get_new_entries(
         )
         body = _strip_html(raw_desc).strip()
         if filter_description:
+            _orig_body = body
             body = _apply_regex(filter_description, body)
+            if filter_log is not None and body != _orig_body:
+                filter_log["description_transforms"].append({"id": eid, "before": _orig_body[:300], "after": body[:300]})
         body = "\n".join(line for line in body.splitlines() if line.strip())
         if len(body) > DESCRIPTION_MAX:
             body = body[:DESCRIPTION_MAX].rstrip() + "…"
@@ -204,7 +216,10 @@ async def get_new_entries(
 
         title = (_entry_title(entry) or "(no title)")[:256]
         if filter_title:
+            _orig_title = title
             title = _apply_regex(filter_title, title)
+            if filter_log is not None and title != _orig_title:
+                filter_log["title_transforms"].append({"id": eid, "before": _orig_title, "after": title})
 
         new_entries.append(Item(
             id=eid,
@@ -227,8 +242,10 @@ class RSSSource(Source):
         cfg: dict,
         seen: set[str],
         session,
+        *,
+        filter_log: dict | None = None,
     ) -> PullResult | None:
-        result = await get_new_entries(cfg, seen, session)
+        result = await get_new_entries(cfg, seen, session, filter_log=filter_log)
         if result is None:
             return None
         current_items, new_items = result

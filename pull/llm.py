@@ -36,6 +36,7 @@ async def run_llm_task(
     global_model: str | None = None,
     *,
     adapter: LLMAdapter,
+    capture: dict | None = None,
 ) -> str | None:
     """Call LLM with web search. Returns response text or None on failure."""
     name = task_cfg.get("name")
@@ -45,6 +46,10 @@ async def run_llm_task(
     web_search = llm_cfg.get("web_search", True)
     task_instructions = llm_cfg.get("instructions")
     combined_instructions = "\n\n".join(filter(None, [instructions, task_instructions])) or None
+    if capture is not None:
+        capture["model"] = model
+        capture["instructions"] = combined_instructions
+        capture["prompt"] = prompt
     log.info("[%s] Calling LLM (model=%s): %s", name, model, prompt[:120])
     log.debug("[%s] Full prompt: %s", name, prompt)
     if combined_instructions:
