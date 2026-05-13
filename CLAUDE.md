@@ -173,7 +173,7 @@ Output JSON shape: `{timestamp, models: [{provider, model}], results: [{url, tit
 Every run leaves a per-task JSONL of LLM calls under `<state_dir>/evals/<task>/<run_iso>.jsonl`, one record per call. Record shape:
 
 - Common keys: `task`, `call_type` (`filter` | `summarize` | `llm_search`), `ts`, `model_used`, `instructions`, `response`, `input_tokens`, `output_tokens`, `latency_s`, `reasoning`, `web_search`.
-- `filter` adds: `payload` (list of source groups with items), `parsed` (per-item pass/reason), `memory`, `source_groups_count`, `items_count`, `passing_count`, `model` (configured spec).
+- `filter` adds: `payload` (list of source groups with items, each item has `id`, `title`, `url`, optional `description`), `parsed` (per-item `id`, `source`, `title`, `url`, `pass`, `reason`), `memory`, `source_groups_count`, `items_count`, `passing_count`, `model` (configured spec).
 - `summarize` adds: `input` (text sent to the LLM), `item_id`, `item_title`, `item_url`, `fetched_body`.
 - `llm_search` adds: `prompt`, `model` (configured spec).
 
