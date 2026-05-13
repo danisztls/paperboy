@@ -139,7 +139,7 @@ class _GlobalDiscord(BaseModel):
 
 class _ModelSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    provider: Literal["openai", "gemini"] | None = None
+    provider: Literal["openai", "gemini", "deepseek"] | None = None
     model: str
 
 
@@ -153,6 +153,7 @@ class _ApiKeys(BaseModel):
     model_config = ConfigDict(extra="forbid")
     openai: str | None = None
     gemini: str | None = None
+    deepseek: str | None = None
 
 
 class _GlobalLLM(BaseModel):
