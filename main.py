@@ -20,12 +20,12 @@ from config import (
     _get_llm_pull_cfg,
     _parse_color,
     _parse_period,
-    _resolve_model_spec,
+    _resolve_model_specs,
     _task_type,
     load_config,
     validate_config,
 )
-from llm import get_adapter
+from llm import FallbackAdapter, get_adapter
 from migrate import CURRENT_VERSION, migrate, needs_migration
 from pull.feed import RSSSource
 from state import _auto_clean, _remove_unknown, load_state, save_state
@@ -83,6 +83,22 @@ def _setup_log_file(logs_dir: pathlib.Path, ts: datetime) -> None:
     handler = logging.FileHandler(logs_dir / f"{stamp}.log", encoding="utf-8")
     handler.setFormatter(_LOG_FORMAT)
     logging.getLogger().addHandler(handler)
+
+
+def _build_adapter(specs: list[tuple[str | None, str | None]], api_key_cfg: dict | None) -> tuple:
+    """Return (adapter, model) from a list of (provider, model) specs.
+
+    Single spec: returns a plain adapter + model string (preserves per-task model overrides).
+    Multiple specs: returns a FallbackAdapter with bundled models + None.
+    """
+    valid = [(p, m) for p, m in specs if p]
+    if not valid:
+        return None, None
+    if len(valid) == 1:
+        p, m = valid[0]
+        return get_adapter(p, _get_api_key_for_provider(api_key_cfg, p)), m
+    entries = [(get_adapter(p, _get_api_key_for_provider(api_key_cfg, p)), m) for p, m in valid]
+    return FallbackAdapter(entries), None
 
 
 def _xdg_config_path() -> pathlib.Path:
@@ -164,17 +180,11 @@ async def _async_main(args: argparse.Namespace) -> None:
     instructions = llm_cfg.get("instructions") or None
     api_key_cfg = llm_cfg.get("api_key") or None
     llm_models = llm_cfg.get("models") or {}
-    reasoning_provider, evaluate_model = _resolve_model_spec(llm_models.get("reasoning"))
-    topic_provider, search_model = _resolve_model_spec(llm_models.get("topic"))
-    evaluate_adapter = (
-        get_adapter(reasoning_provider, _get_api_key_for_provider(api_key_cfg, reasoning_provider))
-        if reasoning_provider
-        else None
+    evaluate_adapter, evaluate_model = _build_adapter(
+        _resolve_model_specs(llm_models.get("reasoning")), api_key_cfg
     )
-    search_adapter = (
-        get_adapter(topic_provider, _get_api_key_for_provider(api_key_cfg, topic_provider))
-        if topic_provider
-        else None
+    search_adapter, search_model = _build_adapter(
+        _resolve_model_specs(llm_models.get("topic")), api_key_cfg
     )
     global_language = llm_cfg.get("language") or "EN-US"
     discord_cfg = config.get("discord", {})
@@ -466,7 +476,7 @@ def main():
         return
 
     if args.summarize:
-        _sum_provider = None
+        _sum_adapter = None
         _sum_api_key_cfg = None
         _sum_model = None
         _sum_language = "EN-US"
@@ -481,17 +491,13 @@ def main():
                 llm_cfg = cfg.get("llm") or {}
                 _sum_api_key_cfg = llm_cfg.get("api_key") or None
                 _sum_language = llm_cfg.get("language") or "EN-US"
-                _sum_provider, _sum_model = _resolve_model_spec(
-                    (llm_cfg.get("models") or {}).get("topic")
-                )
+                _sum_specs = _resolve_model_specs((llm_cfg.get("models") or {}).get("topic"))
+                _sum_adapter, _sum_model = _build_adapter(_sum_specs, _sum_api_key_cfg)
             except Exception:
                 pass
-        if not _sum_provider:
+        if _sum_adapter is None:
             log.error("--summarize requires llm.models.topic with a provider configured")
             sys.exit(1)
-        _sum_adapter = get_adapter(
-            _sum_provider, _get_api_key_for_provider(_sum_api_key_cfg, _sum_provider)
-        )
         asyncio.run(
             run_summarize(
                 args.summarize, adapter=_sum_adapter, model=_sum_model, language=_sum_language
