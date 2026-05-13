@@ -10,14 +10,15 @@ from datetime import datetime
 @dataclass
 class Item:
     """Generic content item produced by a Source and consumed by a Target."""
+
     id: str
     title: str
-    source: str                      # display name of the originating source
+    source: str  # display name of the originating source
     url: str | None = None
-    body: str | None = None          # sanitized text content
+    body: str | None = None  # sanitized text content
     image: str | None = None
     published: datetime | None = None
-    summary: str | None = None       # optional LLM-generated summary
+    summary: str | None = None  # optional LLM-generated summary
     filter_pass: bool | None = None
     filter_reason: str | None = None
     meta: dict = field(default_factory=dict)
@@ -26,21 +27,24 @@ class Item:
 @dataclass
 class PullResult:
     """Output of Source.pull()."""
-    new_items: list[Item]            # unseen items in chronological order
-    current_items: list[dict]        # all items currently in source (url+title, for state)
+
+    new_items: list[Item]  # unseen items in chronological order
+    current_items: list[dict]  # all items currently in source (url+title, for state)
 
 
 @dataclass
 class FilterResult:
     """Output of the LLM filter step."""
-    items: list[Item]                # all input items with filter_pass/filter_reason set
-    memory: str | None               # new memory briefing text (for digest targets)
+
+    items: list[Item]  # all input items with filter_pass/filter_reason set
+    memory: str | None  # new memory briefing text (for digest targets)
     cite_map: dict[int, tuple[str, str | None]]  # LLM int ID → (source, url)
 
 
 @dataclass
 class PushContext:
     """Input to Target.push()."""
+
     items: list[Item]
     memory: str | None = None
     cite_map: dict[int, tuple[str, str | None]] | None = None

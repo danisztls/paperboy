@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import textwrap
+from datetime import UTC, datetime
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -33,13 +34,21 @@ async def _scrape_image_once(url: str, session: aiohttp.ClientSession) -> tuple[
             log.debug("image scrape: got %d bytes (bot-detection?) from %s", len(chunk), url)
             return None, True
         text = chunk.decode("utf-8", errors="replace")
-        log.debug("image scrape: fetched %d bytes (status=%d, ct=%s) from %s", len(chunk), status, content_type, url)
+        log.debug(
+            "image scrape: fetched %d bytes (status=%d, ct=%s) from %s",
+            len(chunk),
+            status,
+            content_type,
+            url,
+        )
         meta = BeautifulSoup(text, "html.parser").find("meta", property="og:image")
         image_url = meta.get("content") if meta else None
         if image_url:
             log.debug("image scrape: found %s", image_url)
         else:
-            log.debug("image scrape: no og:image tag found in first %d bytes of %s", len(chunk), url)
+            log.debug(
+                "image scrape: no og:image tag found in first %d bytes of %s", len(chunk), url
+            )
         return image_url, False
     except Exception as exc:
         log.debug("image scrape: exception fetching %s: %s: %s", url, type(exc).__name__, exc)
@@ -54,6 +63,7 @@ async def _scrape_image(url: str, session: aiohttp.ClientSession) -> str | None:
         await asyncio.sleep(_OG_FETCH_DELAY)
         image_url, _ = await _scrape_image_once(url, session)
     return image_url
+
 
 _MAX_BYTES = 4 * 1024 * 1024
 _MAX_DIM = 2000
@@ -132,7 +142,8 @@ async def post_text_to_discord(
     log.debug("Posting text to Discord (%d chars)", len(text))
     try:
         await _post_webhook(
-            session, webhook_url,
+            session,
+            webhook_url,
             data=payload,
             headers={"Content-Type": "application/json"},
         )
@@ -146,19 +157,23 @@ async def post_text_to_discord(
 
 _CONTENT_LIMIT = 2000
 _LINE_WIDTH = 70
-_CITE_RE = re.compile(r'\[(\d+)\]')
-_SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?])\s+')
+_CITE_RE = re.compile(r"\[(\d+)\]")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
 
 def _wrap_text(text: str) -> str:
-    lines = text.split('\n')
+    lines = text.split("\n")
     result = []
     for line in lines:
-        if len(line) <= _LINE_WIDTH or line.startswith('#'):
+        if len(line) <= _LINE_WIDTH or line.startswith("#"):
             result.append(line)
         else:
-            result.append(textwrap.fill(line, width=_LINE_WIDTH, break_long_words=False, break_on_hyphens=False))
-    return '\n'.join(result)
+            result.append(
+                textwrap.fill(
+                    line, width=_LINE_WIDTH, break_long_words=False, break_on_hyphens=False
+                )
+            )
+    return "\n".join(result)
 
 
 def _apply_cite_map(text: str, cite_map: dict[int, tuple[str, str | None]]) -> str:
@@ -170,7 +185,6 @@ def _apply_cite_map(text: str, cite_map: dict[int, tuple[str, str | None]]) -> s
         return f"[[{name}](<{url}>)]" if url else f"[{name}]"
 
     return _CITE_RE.sub(replace, text)
-
 
 
 def _build_digest_chunks(
@@ -248,16 +262,24 @@ async def post_to_discord(
 
     log.debug("Posting embed to Discord: %s", embed.get("title", ""))
     try:
+
         def _build_kwargs() -> dict:
             if image_bytes is not None:
                 embed["image"] = {"url": "attachment://image.webp"}
                 form = aiohttp.FormData()
-                form.add_field("payload_json", json.dumps({"embeds": [embed]}), content_type="application/json")
-                form.add_field("files[0]", image_bytes, filename="image.webp", content_type="image/webp")
+                form.add_field(
+                    "payload_json", json.dumps({"embeds": [embed]}), content_type="application/json"
+                )
+                form.add_field(
+                    "files[0]", image_bytes, filename="image.webp", content_type="image/webp"
+                )
                 return {"data": form}
             if image_url:
                 embed["image"] = {"url": image_url}
-            return {"data": json.dumps({"embeds": [embed]}).encode(), "headers": {"Content-Type": "application/json"}}
+            return {
+                "data": json.dumps({"embeds": [embed]}).encode(),
+                "headers": {"Content-Type": "application/json"},
+            }
 
         for attempt in range(2):
             async with session.post(webhook_url, **_build_kwargs()) as resp:
@@ -307,7 +329,9 @@ class DiscordEmbedTarget(Target):
             download_image = item.meta.get("download_image", False)
             try:
                 await post_to_discord(
-                    webhook, item, session,
+                    webhook,
+                    item,
+                    session,
                     fetch_image=self._fetch_image,
                     download_image=download_image,
                     color=color,
@@ -374,12 +398,13 @@ class DiscordDigestTarget(Target):
         if not ctx.memory:
             return set()
         try:
-            await post_digest_to_discord(webhook, session, memory_text=ctx.memory, cite_map=ctx.cite_map)
+            await post_digest_to_discord(
+                webhook, session, memory_text=ctx.memory, cite_map=ctx.cite_map
+            )
         except Exception:
             log.error("Failed to post digest")
             raise
         return set()
 
 
-from datetime import datetime, timezone
-_FAR_FUTURE = datetime.max.replace(tzinfo=timezone.utc)
+_FAR_FUTURE = datetime.max.replace(tzinfo=UTC)

@@ -19,3 +19,13 @@ dependencies = [
 
 [project.scripts]
 claudinho = "main:main"
+
+[dependency-groups]
+dev = ["ruff>=0.9"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501"]

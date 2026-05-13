@@ -5,6 +5,7 @@ import re
 from playwright.async_api import Page
 
 from pipeline import Item
+
 from .base import SiteAdapter
 
 log = logging.getLogger(__name__)
@@ -126,8 +127,12 @@ class VivaRealAdapter(SiteAdapter):
             offers = item.get("offers") or {}
             price_raw = offers.get("price")
             try:
-                price_str = f"R$ {int(float(price_raw)):,}".replace(",", ".") if price_raw else "Sob consulta"
-            except (ValueError, TypeError):
+                price_str = (
+                    f"R$ {int(float(price_raw)):,}".replace(",", ".")
+                    if price_raw
+                    else "Sob consulta"
+                )
+            except ValueError, TypeError:
                 price_str = str(price_raw) if price_raw else "Sob consulta"
 
             title_parts = [ltype]
@@ -147,7 +152,11 @@ class VivaRealAdapter(SiteAdapter):
                 body_parts.append(f"{parking} vaga")
 
             images = item.get("image") or []
-            image = images[0] if isinstance(images, list) and images else (images if isinstance(images, str) else None)
+            image = (
+                images[0]
+                if isinstance(images, list) and images
+                else (images if isinstance(images, str) else None)
+            )
 
             return Item(
                 id=url,
@@ -225,8 +234,12 @@ class VivaRealAdapter(SiteAdapter):
             pricing = _first(listing.get("pricingInfos"))
             price_raw = (pricing or {}).get("price") or (pricing or {}).get("monthlyCondoFee")
             try:
-                price_str = f"R$ {int(float(price_raw)):,}".replace(",", ".") if price_raw else "Sob consulta"
-            except (ValueError, TypeError):
+                price_str = (
+                    f"R$ {int(float(price_raw)):,}".replace(",", ".")
+                    if price_raw
+                    else "Sob consulta"
+                )
+            except ValueError, TypeError:
                 price_str = str(price_raw) if price_raw else "Sob consulta"
 
             title_parts = [ltype]
@@ -269,5 +282,7 @@ class VivaRealAdapter(SiteAdapter):
                 },
             )
         except Exception as exc:
-            log.debug("[vivareal] Failed to parse __NEXT_DATA__ entry: %s — %s", exc, str(entry)[:120])
+            log.debug(
+                "[vivareal] Failed to parse __NEXT_DATA__ entry: %s — %s", exc, str(entry)[:120]
+            )
             return None

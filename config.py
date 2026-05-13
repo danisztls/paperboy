@@ -1,13 +1,11 @@
 import json
-import re
 import pathlib
+import re
 from datetime import timedelta
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from pydantic import field_validator, model_validator
-from pydantic.functional_validators import BeforeValidator, AfterValidator
-
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic.functional_validators import AfterValidator, BeforeValidator
 
 _PERIOD_UNITS = {"m": "minutes", "h": "hours", "d": "days"}
 
@@ -88,13 +86,9 @@ def _make_secret_loader(secrets: dict | None, secrets_path: pathlib.Path) -> typ
     def _secret_constructor(loader, node):
         key = loader.construct_scalar(node)
         if secrets is None:
-            raise ValueError(
-                f"!secret {key!r} used in config but {secrets_path} does not exist"
-            )
+            raise ValueError(f"!secret {key!r} used in config but {secrets_path} does not exist")
         if key not in secrets:
-            raise ValueError(
-                f"!secret {key!r} not found in {secrets_path}"
-            )
+            raise ValueError(f"!secret {key!r} not found in {secrets_path}")
         return secrets[key]
 
     _SecretLoader.add_constructor("!secret", _secret_constructor)
@@ -105,6 +99,7 @@ def load_config(path: pathlib.Path) -> dict:
     text = path.read_text()
     if path.suffix in (".yaml", ".yml"):
         import yaml
+
         secrets_path = path.parent / "secrets.yaml"
         secrets = yaml.safe_load(secrets_path.read_text()) or {} if secrets_path.exists() else None
         return yaml.load(text, Loader=_make_secret_loader(secrets, secrets_path))
@@ -112,6 +107,7 @@ def load_config(path: pathlib.Path) -> dict:
 
 
 # --- Annotated constraint types ---
+
 
 def _color_validator(v):
     result = _parse_color(v)
@@ -124,10 +120,8 @@ def _period_validator(v):
     if v is not None:
         try:
             _parse_period(v)
-        except (ValueError, TypeError):
-            raise ValueError(
-                f"invalid value {v!r} — expected e.g. '30m', '6h', '1d'"
-            )
+        except ValueError, TypeError:
+            raise ValueError(f"invalid value {v!r} — expected e.g. '30m', '6h', '1d'")
     return v
 
 
@@ -137,31 +131,32 @@ _Period = Annotated[str | None, AfterValidator(_period_validator)]
 
 # --- Models ---
 
+
 class _GlobalDiscord(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     color: _Color = None
 
 
 class _ModelSpec(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-    provider: Literal['openai', 'gemini'] | None = None
+    model_config = ConfigDict(extra="forbid")
+    provider: Literal["openai", "gemini"] | None = None
     model: str
 
 
 class _GlobalModels(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     reasoning: _ModelSpec | None = None
     topic: _ModelSpec | None = None
 
 
 class _ApiKeys(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     openai: str | None = None
     gemini: str | None = None
 
 
 class _GlobalLLM(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     models: _GlobalModels | None = None
     language: str | None = None
     api_key: _ApiKeys | None = None
@@ -169,22 +164,28 @@ class _GlobalLLM(BaseModel):
 
 
 class _FilterOp(BaseModel):
-    model_config = ConfigDict(extra='forbid', populate_by_name=True)
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
     remove_phrases_with_urls: Any = None
     remove_phrases_containing: Any = None
     extract: str | None = None
     replace: str | None = None
-    with_: str | None = Field(None, alias='with')
+    with_: str | None = Field(None, alias="with")
     clear: bool | None = None
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def _has_op(self):
-        ops = {'remove_phrases_with_urls', 'remove_phrases_containing', 'extract', 'replace', 'clear'}
+        ops = {
+            "remove_phrases_with_urls",
+            "remove_phrases_containing",
+            "extract",
+            "replace",
+            "clear",
+        }
         if not (ops & self.model_fields_set):
             raise ValueError("no recognized operation key")
         return self
 
-    @field_validator('extract', 'replace', mode='before')
+    @field_validator("extract", "replace", mode="before")
     @classmethod
     def _valid_regex(cls, v):
         if isinstance(v, str):
@@ -196,10 +197,10 @@ class _FilterOp(BaseModel):
 
 
 class _UrlFilter(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     skip_containing: str | list[str] | None = None
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def _has_op(self):
         if not self.model_fields_set:
             raise ValueError("no recognized operation key")
@@ -207,31 +208,31 @@ class _UrlFilter(BaseModel):
 
 
 class _FilterDict(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     title: list[_FilterOp] | _FilterOp | None = None
     description: list[_FilterOp] | _FilterOp | None = None
     url: _UrlFilter | None = None
 
 
 class _FeedDiscord(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     color: _Color = None
 
 
 class _Image(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     skip: bool | None = None
     download: bool | None = None
 
 
 class _Summarize(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     language: str | None = None
     instructions: str | None = None
 
 
 class _PullFeedItem(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     name: str | None = None
     url: str
     discord: _FeedDiscord = Field(default_factory=_FeedDiscord)
@@ -241,7 +242,7 @@ class _PullFeedItem(BaseModel):
 
 
 class _PullLLMItem(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     prompt: str
     model: str | None = None
     web_search: bool | dict
@@ -249,39 +250,41 @@ class _PullLLMItem(BaseModel):
 
 
 class _PullScraperItem(BaseModel):
-    model_config = ConfigDict(extra='allow')  # adapter-specific keys are allowed
+    model_config = ConfigDict(extra="allow")  # adapter-specific keys are allowed
     adapter: str
     url: str
     max_items: int | None = None
 
 
 class _PullItem(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     feed: _PullFeedItem | None = None
     llm: _PullLLMItem | None = None
     scraper: _PullScraperItem | None = None
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def _exactly_one(self):
-        present = [k for k in ('feed', 'llm', 'scraper') if k in self.model_fields_set]
+        present = [k for k in ("feed", "llm", "scraper") if k in self.model_fields_set]
         if len(present) != 1:
-            raise ValueError("each pull item must have exactly one key: 'feed', 'llm', or 'scraper'")
+            raise ValueError(
+                "each pull item must have exactly one key: 'feed', 'llm', or 'scraper'"
+            )
         return self
 
 
 class _PushDiscordItem(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     webhook: str
     color: _Color = None
-    format: Literal['embed', 'markdown'] | None = None
+    format: Literal["embed", "markdown"] | None = None
 
 
 class _PushItem(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     discord: _PushDiscordItem | None = None
     file: str | None = None
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def _has_target(self):
         if not self.model_fields_set:
             raise ValueError("each push item must have a target key (e.g. 'discord', 'file')")
@@ -289,7 +292,7 @@ class _PushItem(BaseModel):
 
 
 class _TaskLLM(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     prompt: str
     model: str | None = None
     language: str | None = None
@@ -299,9 +302,9 @@ class _TaskLLM(BaseModel):
 
 
 class _Task(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     name: str
-    type: Literal['digest', 'scraper'] | None = None
+    type: Literal["digest", "scraper"] | None = None
     period: _Period = None
     pull: list[_PullItem]
     push: list[_PushItem]
@@ -310,7 +313,7 @@ class _Task(BaseModel):
     llm: _TaskLLM | None = None
     summarize: bool | _Summarize | None = None
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def _check_task(self):
         has_llm_pull = any(item.llm is not None for item in self.pull)
         has_feed_pull = any(item.feed is not None for item in self.pull)
@@ -329,7 +332,7 @@ class _Task(BaseModel):
 
 
 class _Config(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
     discord: _GlobalDiscord | None = None
     llm: _GlobalLLM | None = None
     image: _Image | None = None
@@ -345,6 +348,7 @@ def _fmt_loc(loc: tuple) -> str:
 
 def _build_line_map(node, path: tuple = (), result: dict | None = None) -> dict:
     import yaml
+
     if result is None:
         result = {}
     result[path] = node.start_mark.line + 1
@@ -361,6 +365,7 @@ def validate_config(config: dict, config_path: pathlib.Path | None = None) -> li
     line_map: dict = {}
     if config_path is not None and config_path.suffix in (".yaml", ".yml"):
         import yaml
+
         try:
             node = yaml.compose(config_path.read_text())
             if node is not None:
@@ -375,7 +380,9 @@ def validate_config(config: dict, config_path: pathlib.Path | None = None) -> li
         errors = []
         for e in exc.errors():
             loc = e["loc"]
-            line = next((line_map[loc[:n]] for n in range(len(loc), 0, -1) if loc[:n] in line_map), None)
+            line = next(
+                (line_map[loc[:n]] for n in range(len(loc), 0, -1) if loc[:n] in line_map), None
+            )
             suffix = f" (line {line})" if line else ""
             errors.append(f"{_fmt_loc(loc)}{suffix}: {e['msg'].removeprefix('Value error, ')}")
         return errors
