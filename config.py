@@ -70,6 +70,15 @@ def _resolve_model_spec(spec) -> tuple[str | None, str | None]:
     return spec.get("provider") or None, spec.get("model") or None
 
 
+def _resolve_model_specs(spec) -> list[tuple[str | None, str | None]]:
+    """Return list of (provider, model_name) from a single or list model spec."""
+    if spec is None:
+        return []
+    if isinstance(spec, list):
+        return [_resolve_model_spec(s) for s in spec]
+    return [_resolve_model_spec(spec)]
+
+
 def _get_api_key_for_provider(api_key_cfg, provider: str | None) -> str | None:
     """Return the API key for a given provider from an {openai, gemini} dict."""
     if api_key_cfg is None or not provider:
@@ -143,10 +152,19 @@ class _ModelSpec(BaseModel):
     model: str
 
 
+def _normalize_model_spec_list(v):
+    if v is None or isinstance(v, list):
+        return v
+    return [v]
+
+
+_ModelSpecList = Annotated[list[_ModelSpec] | None, BeforeValidator(_normalize_model_spec_list)]
+
+
 class _GlobalModels(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    reasoning: _ModelSpec | None = None
-    topic: _ModelSpec | None = None
+    reasoning: _ModelSpecList = None
+    topic: _ModelSpecList = None
 
 
 class _ApiKeys(BaseModel):
