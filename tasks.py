@@ -204,7 +204,7 @@ async def _apply_llm_filter(
     for source_name, items in seen_sources.items():
         group: dict = {"source": source_name, "items": []}
         for item in items:
-            payload_item: dict = {"id": global_id, "title": item.title}
+            payload_item: dict = {"id": global_id, "title": item.title, "url": item.url}
             desc = item.summary or item.body
             if desc:
                 payload_item["description"] = desc
@@ -275,6 +275,7 @@ async def _apply_llm_filter(
                     "id": gid_str,
                     "source": it.source if it else "?",
                     "title": it.title if it else "?",
+                    "url": it.url if it else None,
                     "pass": v["pass"],
                     "reason": v["reason"],
                 }
