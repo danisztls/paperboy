@@ -20,7 +20,8 @@ async def summarize_entry(
     model: str | None = None,
     language: str = "EN-US",
     instructions: str | None = None,
-    capture: dict | None = None,
+    reasoning: bool | dict = False,
+    trace: dict | None = None,
 ) -> str | None:
     base_instructions = (
         f"You are a precise, concise summarizer. Write in {language}. "
@@ -30,14 +31,26 @@ async def summarize_entry(
     )
     combined = f"{base_instructions} {instructions}" if instructions else base_instructions
     input_text = f"Title: {title}\n\nDescription:\n{description}"
-    if capture is not None:
-        capture["instructions"] = combined
-        capture["input"] = input_text
+    if trace is not None:
+        trace["instructions"] = combined
+        trace["input"] = input_text
     log.info("Summarizing entry (model=%s): %s", model, title[:80])
-    result = await adapter.complete(input_text, model=model, instructions=combined)
-    if capture is not None:
-        capture["output"] = result
-    return result
+    resp = await adapter.complete(
+        input_text, model=model, instructions=combined, reasoning=reasoning
+    )
+    if resp is None:
+        if trace is not None:
+            trace["output"] = None
+        return None
+    if trace is not None:
+        trace["output"] = resp.text
+        trace["input_tokens"] = resp.input_tokens
+        trace["output_tokens"] = resp.output_tokens
+        trace["latency_s"] = resp.latency_s
+        trace["model_used"] = resp.model
+        if resp.reasoning:
+            trace["reasoning"] = resp.reasoning
+    return resp.text
 
 
 async def summarize_transcript(
@@ -56,11 +69,12 @@ async def summarize_transcript(
     log.info(
         "Summarizing transcript (model=%s, language=%s, %d chars)", model, language, len(transcript)
     )
-    return await adapter.complete(
+    resp = await adapter.complete(
         f"Title: {title}\n\nTranscript:\n{transcript[:12000]}",
         model=model,
         instructions=instructions,
     )
+    return resp.text if resp else None
 
 
 _VTT_CUE_RE = re.compile(r"^(\d{2}):(\d{2}):(\d{2})[.,](\d{3})\s*-->")

@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 
 import aiohttp
 
-from analysis import AnalysisCollector
+from capture import RunCapture
 from config import (
     _get_api_key_for_provider,
     _get_discord_cfg,
@@ -33,7 +33,7 @@ from summarize import run_summarize
 from tasks import (
     DEFAULT_PERIOD,
     _is_due,
-    _process_llm_evaluate_task,
+    _process_llm_curate_task,
     _process_llm_search_task,
     _process_scraper_task,
 )
@@ -248,12 +248,10 @@ async def _async_main(args: argparse.Namespace) -> None:
             now = datetime.now(UTC)
             feed_tasks = []
             force_task = args.task
-            collector = (
-                AnalysisCollector(
-                    limit=args.analysis_limit_items, limit_feeds=args.analysis_limit_feeds
-                )
-                if args.analysis
-                else None
+            analysis = args.analysis
+            collector = RunCapture(
+                limit=args.analysis_limit_items if analysis else 0,
+                limit_feeds=args.analysis_limit_feeds if analysis else 0,
             )
 
             task_list = tasks
@@ -280,7 +278,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                         )
                         continue
                     task_state = state.get("tasks", {}).get(name, {"last_run": None})
-                    if not force_task and not collector and not _is_due(task_state, period, now):
+                    if not force_task and not analysis and not _is_due(task_state, period, now):
                         last = datetime.fromisoformat(task_state["last_run"])
                         mins = int((now - last).total_seconds() // 60)
                         log.info(
@@ -299,6 +297,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                             search_model=search_model,
                             llm_adapter=search_adapter,
                             collector=collector,
+                            analysis=analysis,
                         )
                     )
                 elif _task_type(task_cfg) == "scraper":
@@ -306,7 +305,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     if not task_name:
                         log.warning("Skipping scraper task with no name")
                         continue
-                    if collector:
+                    if analysis:
                         log.info("[%s] Skipping scraper task in analysis mode", task_name)
                         continue
                     task_state = state.get("tasks", {}).get(task_name, {"last_run": None})
@@ -332,7 +331,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     feed_urls = [f["url"] for f in _get_feeds(task_cfg) if f.get("url")]
                     if (
                         not force_task
-                        and not collector
+                        and not analysis
                         and not any(
                             _is_due(feeds_state.get(u, {"last_run": None}), period, now)
                             for u in feed_urls
@@ -341,7 +340,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                         log.info("[%s] Skipping — no feeds are due", task_name)
                         continue
                     feed_tasks.append(
-                        _process_llm_evaluate_task(
+                        _process_llm_curate_task(
                             task_cfg,
                             state,
                             session,
@@ -351,12 +350,19 @@ async def _async_main(args: argparse.Namespace) -> None:
                             global_language=global_language,
                             global_image_download=global_image_download,
                             collector=collector,
+                            analysis=analysis,
                         )
                     )
 
             results = await asyncio.gather(*feed_tasks, return_exceptions=True)
 
-            if collector:
+            evals_dir = state_path.parent / "evals"
+            run_stamp = _run_ts.strftime("%Y-%m-%dT%H-%M-%S")
+            written = collector.write_jsonl(evals_dir, run_stamp)
+            if written:
+                log.info("Wrote eval traces: %d file(s) under %s", len(written), evals_dir)
+
+            if analysis:
                 if args.human:
                     collector.display()
                 else:
@@ -429,10 +435,25 @@ def main():
         metavar="URL",
         help="Fetch transcript from a YouTube video and print a summary to stdout",
     )
+    mode.add_argument(
+        "--replay",
+        metavar="JSONL",
+        help="Replay captured LLM calls in JSONL against alternative models (requires --models)",
+    )
+    parser.add_argument(
+        "--models",
+        metavar="LIST",
+        help="Comma-separated provider:model pairs to replay against, e.g. openai:gpt-4o-mini,gemini:gemini-2.5-flash",
+    )
+    parser.add_argument(
+        "--call",
+        choices=["filter", "summarize", "llm_search"],
+        help="With --replay: only re-issue calls of this type (default: all)",
+    )
     parser.add_argument(
         "--analysis",
         action="store_true",
-        help="Dry-run analysis mode: fetch and process without pushing or updating state. Outputs JSON to stdout. Typically combined with --task.",
+        help="Inspection mode: enables LLM reasoning + ELI5 filter reasons, dry-run (no posting / no state update), renders to stdout. Costs more tokens. Typically combined with --task.",
     )
     parser.add_argument(
         "--analysis-limit-items",
@@ -451,7 +472,7 @@ def main():
     parser.add_argument(
         "--human",
         action="store_true",
-        help="With --analysis: output human-readable text instead of JSON.",
+        help="With --analysis: render rich/human-readable output to stdout instead of JSON.",
     )
     args = parser.parse_args()
 
@@ -482,6 +503,38 @@ def main():
                 log.error("Config error: %s", err)
             sys.exit(1)
         log.info("Config is valid: %s", config_path)
+        return
+
+    if args.replay:
+        if not args.models:
+            log.error("--replay requires --models")
+            sys.exit(1)
+        from replay import replay as _replay
+
+        jsonl_path = pathlib.Path(args.replay).expanduser().resolve()
+        config_path = (
+            _xdg_config_path()
+            if args.config is None
+            else pathlib.Path(args.config).expanduser().resolve()
+        )
+        if not config_path.exists():
+            log.error("Config file not found: %s", config_path)
+            sys.exit(1)
+        state_path = (
+            pathlib.Path(args.state).expanduser().resolve()
+            if args.state
+            else (_xdg_state_path() if args.config is None else config_path.parent / "state.json")
+        )
+        model_specs = [s.strip() for s in args.models.split(",") if s.strip()]
+        asyncio.run(
+            _replay(
+                jsonl_path,
+                model_specs,
+                args.call,
+                state_path.parent,
+                config_path,
+            )
+        )
         return
 
     if args.summarize:

@@ -38,7 +38,8 @@ async def run_llm_task(
     global_model: str | None = None,
     *,
     adapter: LLMAdapter,
-    capture: dict | None = None,
+    reasoning: bool | dict = False,
+    trace: dict | None = None,
 ) -> str | None:
     """Call LLM with web search. Returns response text or None on failure."""
     name = task_cfg.get("name")
@@ -48,20 +49,31 @@ async def run_llm_task(
     web_search = llm_cfg.get("web_search", True)
     task_instructions = llm_cfg.get("instructions")
     combined_instructions = "\n\n".join(filter(None, [instructions, task_instructions])) or None
-    if capture is not None:
-        capture["model"] = model
-        capture["instructions"] = combined_instructions
-        capture["prompt"] = prompt
+    if trace is not None:
+        trace["model"] = model
+        trace["instructions"] = combined_instructions
+        trace["prompt"] = prompt
+        trace["web_search"] = bool(web_search)
     log.info("[%s] Calling LLM (model=%s): %s", name, model, prompt[:120])
     log.debug("[%s] Full prompt: %s", name, prompt)
     if combined_instructions:
         log.debug("[%s] Instructions: %s", name, combined_instructions[:200])
-    text = await adapter.complete(
+    resp = await adapter.complete(
         prompt,
         model=model,
         instructions=combined_instructions,
         web_search=web_search,
+        reasoning=reasoning,
     )
+    text = resp.text if resp else None
+    if trace is not None and resp is not None:
+        trace["raw_response"] = text
+        trace["input_tokens"] = resp.input_tokens
+        trace["output_tokens"] = resp.output_tokens
+        trace["latency_s"] = resp.latency_s
+        trace["model_used"] = resp.model
+        if resp.reasoning:
+            trace["reasoning"] = resp.reasoning
     if text:
         log.info("[%s] LLM response received (%d chars): %s", name, len(text), text[:120])
         log.debug("[%s] Full response:\n%s", name, text)

@@ -30,6 +30,8 @@ The project uses `uv` (see `uv.lock`, `.python-version` pinning Python 3.14).
 - Format: `uv run ruff format .`
 - Lint: `uv run ruff check --fix .`
 - Run benchmark: `uv run benchmark/` (reads `benchmark/config.yaml`, writes JSON to `benchmark/results/`)
+- Inspect a run with chain-of-thought + ELI5 filter reasons (extra tokens, dry-run): `uv run main.py --analysis --task <name>`
+- Replay captured LLM calls against alternative models: `uv run main.py --replay <state_dir>/evals/<task>/<run_iso>.jsonl --models openai:gpt-4o-mini,gemini:gemini-2.5-flash --call filter`
 
 After any implementation, run format then lint before finishing.
 
@@ -37,9 +39,11 @@ Config is read from `$XDG_CONFIG_HOME/claudinho/config.yaml` (default `~/.config
 
 Logs are written to `<state_dir>/logs/<timestamp>.log` on every run.
 
+Eval traces (every LLM call's prompt, response, tokens, latency, optional reasoning) are written to `<state_dir>/evals/<task_name>/<run_iso>.jsonl` on every run — one record per LLM call. Replay output goes to `<state_dir>/evals/replays/<basename>__replay_<ts>.json`. No rotation policy ships yet; clean up manually if disk pressure becomes an issue.
+
 ## Architecture
 
-Eight root modules plus three subpackages (`pull/`, `push/`, `llm/`). The execution model follows a **pull → process → push** pipeline:
+Ten root modules plus three subpackages (`pull/`, `push/`, `llm/`). The execution model follows a **pull → process → push** pipeline, with always-on capture writing every LLM call's I/O to disk:
 
 ```
 Source.pull()  →  _summarize_items() + _apply_llm_filter()  →  Target.push()
@@ -60,17 +64,19 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
 
 ### Module overview
 
-- `main.py` — CLI entry point and orchestration. Resolves config/state paths, manages a lock file, loads config + state, opens a single shared `aiohttp.ClientSession`, then dispatches to one of five modes: normal (run due tasks in parallel), `--regenerate-state`, `--clean`/`--migrate`, `--validate`, or `--summarize`.
+- `main.py` — CLI entry point and orchestration. Resolves config/state paths, manages a lock file, loads config + state, opens a single shared `aiohttp.ClientSession`, then dispatches to one of these short-circuit modes (`--regenerate-state`, `--clean`/`--migrate`, `--validate`, `--summarize`, `--replay`) or the normal run-due-tasks-in-parallel path. A `RunCapture` is constructed unconditionally; after tasks finish, captured LLM calls are flushed to `<state_dir>/evals/<task>/<run_iso>.jsonl`. `--analysis` reshapes the run into "expensive inspection mode" (reasoning on, ELI5 filter reasons, item/feed truncation, dry-run, render to stdout).
+- `replay.py` — reads a JSONL produced by `RunCapture` and re-issues each captured call against a list of `provider:model` pairs (only the model varies; instructions/input are used verbatim). Writes a side-by-side JSON report to `<state_dir>/evals/replays/`.
+- `capture.py` — `RunCapture` collects every LLM call's instructions, input, response, tokens, latency, optional reasoning. Exposes `to_jsonl_records()`, `write_jsonl()`, `to_json()`, and rich `display()`.
 - `config.py` — config loading and validation. `load_config(path)` reads YAML or JSON. `validate_config(config)` uses Pydantic models to validate the full config and returns a list of error strings. Also houses `_parse_color`, `_parse_period`, `_task_type` (returns the explicit `type:` key if present; otherwise infers from `pull` list: `scraper` item → scraper, `llm` item → LLM, else feeds), `_resolve_model_spec` (returns `(provider, model_name)` from a `{provider, model}` dict), `_get_api_key_for_provider`, and helpers: `_get_feeds`, `_get_discord_cfg`, `_get_llm_pull_cfg`, `_get_scraper_cfg`, `_get_file_path`.
 - `state.py` — state I/O and maintenance. `load_state`, `save_state` (writes `.old` backup, stamps `_version` and `_last_run`), `_auto_clean` (removes malformed items), and `_remove_unknown` (prunes tasks/feeds absent from config).
 - `migrate.py` — state schema migrations. `needs_migration(state)` checks `state["_version"]` against `CURRENT_VERSION` (2). `migrate(state)` steps through `_STEPS` until current. The v2 migration nests all task keys under a top-level `"tasks"` key.
-- `tasks.py` — task orchestration. Implements the pipeline stages:
-  - `_pull_feeds(source, feed_cfgs, feeds_state, task_filter, session)` — fetches all feeds concurrently via `RSSSource`, merges heuristic filters, returns `{url: PullResult | None}`.
-  - `_summarize_items(items, ...)` — concurrently fetches item content and summarizes via LLM; sets `item.summary`.
-  - `_apply_llm_filter(items, filter_cfg, ...)` — groups items by source, calls `filter_entries`, maps results back onto items as `filter_pass`/`filter_reason`, retries once on failure; returns `FilterResult`.
-  - `_process_llm_search_task` — LLM web-search pipeline: `LLMSearchSource.pull()` → `DiscordTextTarget.push()` (+ `FileEmbedTarget` if configured).
-  - `_process_llm_evaluate_task` — RSS/digest pipeline: pull → summarize → filter → `DiscordEmbedTarget`, `DiscordMarkdownTarget`, or `DiscordDigestTarget` (+ file target if configured) → state update.
-  - `_process_scraper_task` — scraper pipeline: `ScraperSource.pull()` → `DiscordEmbedTarget` or `DiscordMarkdownTarget` → state update.
+- `tasks.py` — task orchestration. Every LLM-touching stage takes a `collector=` (always-on `RunCapture`) and an `analysis: bool = False`. `analysis` controls dry-run, item/feed truncation, `reasoning=True` on adapter calls, and forcing `explain=True` on the filter prompt; the collector controls only what gets recorded.
+  - `_pull_feeds(source, feed_cfgs, feeds_state, task_filter, session, *, collector, analysis)` — fetches all feeds concurrently via `RSSSource`, merges heuristic filters, returns `{url: PullResult | None}`. Under `analysis`, `seen` is empty so all items look fresh.
+  - `_summarize_items(items, ..., *, collector, analysis)` — concurrently fetches item content and summarizes via LLM; sets `item.summary`. Passes `reasoning=analysis` through.
+  - `_apply_llm_filter(items, filter_cfg, ..., *, collector, analysis)` — groups items by source, calls `filter_entries` (with `reasoning=analysis` and `explain` forced when `analysis`), maps results back onto items as `filter_pass`/`filter_reason`, retries once on failure; returns `FilterResult`.
+  - `_process_llm_search_task` — LLM web-search pipeline: `LLMSearchSource.pull()` → `DiscordTextTarget.push()` (+ `FileEmbedTarget` if configured). Skipped under `analysis` after recording.
+  - `_process_llm_curate_task` — RSS/digest pipeline: pull → summarize → filter → `DiscordEmbedTarget`, `DiscordMarkdownTarget`, or `DiscordDigestTarget` (+ file target if configured) → state update. Push step short-circuits under `analysis`.
+  - `_process_scraper_task` — scraper pipeline: `ScraperSource.pull()` → `DiscordEmbedTarget` or `DiscordMarkdownTarget` → state update. Skipped entirely under `analysis`.
   - `_is_due` checks period with 60s grace. `_merge_filter` combines task-level and feed-level heuristic filter dicts.
 - `llm_filter.py` — LLM-based feed entry classifier. `filter_entries(items, filter_cfg, ...)` classifies items grouped by source; returns `(results_dict, memory_text) | None`. `results_dict` maps `str(id)` → `{"pass": bool, "reason": str}`; `memory_text` is the new memory log entry. When `explain: true`, passing-item reasons are ELI5-style (2–3 sentences). Uses the LLM adapter resolved from config.
 - `summarize.py` — LLM summarization helpers. `summarize_entry(title, body, adapter, ...)` summarizes a feed entry. `summarize_transcript(transcript, adapter, ...)` summarizes a YouTube transcript. `fetch_item_content(url, session)` fetches and extracts readable text from an article URL.
@@ -101,10 +107,12 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
 
 #### `llm/` — LLM provider adapters
 
-- `llm/__init__.py` — `get_adapter(provider, api_key)` factory; returns an `OpenAIAdapter` or `GeminiAdapter`.
-- `llm/adapters/base.py` — `LLMAdapter` ABC with a single `complete(messages, ...)` method.
-- `llm/adapters/openai.py` — OpenAI adapter (Responses API, supports `web_search_preview`).
-- `llm/adapters/gemini.py` — Gemini adapter.
+- `llm/__init__.py` — `get_adapter(provider, api_key)` factory; returns `OpenAIAdapter`, `GeminiAdapter`, `AnthropicAdapter`, or `DeepSeekAdapter`. Also exports `FallbackAdapter` (tries entries in order until one returns non-None).
+- `llm/adapters/base.py` — `LLMAdapter` ABC with `complete(...) -> LLMResponse | None`, plus the `LLMResponse` dataclass (`text`, `model`, `input_tokens`, `output_tokens`, `latency_s`, `reasoning`, `finish_reason`). `complete()` accepts `web_search: bool | dict = False` and `reasoning: bool | dict = False`; truthy `reasoning` maps to the provider's thinking/extended-reasoning API and populates `LLMResponse.reasoning`.
+- `llm/adapters/openai.py` — OpenAI adapter (Responses API, supports `web_search_preview` and `reasoning={"effort": "high", "summary": "auto"}`).
+- `llm/adapters/gemini.py` — Gemini adapter (`google-genai`, supports Google Search tool and `ThinkingConfig(include_thoughts=True)`).
+- `llm/adapters/anthropic.py` — Anthropic adapter (streaming Messages API, supports `web_search` tool and `thinking={"type": "enabled", "budget_tokens": ...}`).
+- `llm/adapters/deepseek.py` — DeepSeek adapter (OpenAI-compatible Chat Completions; reasoning routes to `deepseek-reasoner` and captures `reasoning_content`).
 
 ### State shape
 
@@ -159,6 +167,22 @@ Standalone script that runs a fixed set of URLs through multiple LLM providers a
 - `benchmark/results/` — JSON output files (`benchmark_<timestamp>.json`), one per run
 
 Output JSON shape: `{timestamp, models: [{provider, model}], results: [{url, title, kind, fetch_error, summaries: [{provider, model, elapsed, summary, error}]}]}`
+
+### Eval data
+
+Every run leaves a per-task JSONL of LLM calls under `<state_dir>/evals/<task>/<run_iso>.jsonl`, one record per call. Record shape:
+
+- Common keys: `task`, `call_type` (`filter` | `summarize` | `llm_search`), `ts`, `model_used`, `instructions`, `response`, `input_tokens`, `output_tokens`, `latency_s`, `reasoning`, `web_search`.
+- `filter` adds: `payload` (list of source groups with items), `parsed` (per-item pass/reason), `memory`, `source_groups_count`, `items_count`, `passing_count`, `model` (configured spec).
+- `summarize` adds: `input` (text sent to the LLM), `item_id`, `item_title`, `item_url`, `fetched_body`.
+- `llm_search` adds: `prompt`, `model` (configured spec).
+
+Replay output at `<state_dir>/evals/replays/<source_basename>__replay_<ts>.json` has shape `{source_run, replayed_at, models, call_filter, calls: [{call_type, task, ts, web_search, item_id?, item_title?, results: [{model, text, input_tokens, output_tokens, latency_s, reasoning, is_original?, error?}, ...]}]}`. The first entry in `results` is the original captured response (`is_original: true`); subsequent entries are one per replayed `provider:model`.
+
+Caveats:
+- Replays of calls with `web_search: true` (always for `llm_search`, configurable for `filter`) are noisy because each run gets different search results.
+- Replay uses captured `instructions` + `input` verbatim — only the model varies. Prompt-change comparisons require capturing a new run after the change.
+- `reasoning` is provider-dependent: only populated when the provider returns a reasoning trace (OpenAI o-series summary, Anthropic thinking blocks, Gemini thoughts, DeepSeek `reasoning_content`). Non-reasoning models return `reasoning: null` even under `--analysis`.
 
 ## Conventions worth preserving
 

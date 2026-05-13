@@ -15,7 +15,8 @@ async def filter_entries(
     memory_history: list[tuple[str, str]] | None = None,
     adapter: LLMAdapter,
     extra_instructions: str | None = None,
-    capture: dict | None = None,
+    reasoning: bool | dict = False,
+    trace: dict | None = None,
 ) -> tuple[dict[str, dict], str | None] | None:
     """Filter feed entries through LLM and optionally update memory.
 
@@ -69,9 +70,10 @@ async def filter_entries(
         )
         + "\nReturn ONLY a valid JSON object, no other text."
     )
-    if capture is not None:
-        capture["instructions"] = instructions
-        capture["payload"] = items
+    if trace is not None:
+        trace["instructions"] = instructions
+        trace["payload"] = items
+        trace["web_search"] = bool(filter_cfg.get("web_search"))
 
     payload = json.dumps(items, ensure_ascii=False)
     total = sum(len(g.get("items", [])) for g in items)
@@ -79,14 +81,27 @@ async def filter_entries(
     log.debug("Filter criteria: %s", criteria)
     web_search = filter_cfg.get("web_search")
 
-    text = await adapter.complete(
+    resp = await adapter.complete(
         payload,
         model=model,
         instructions=instructions,
         web_search=web_search or False,
+        reasoning=reasoning,
     )
-    if capture is not None:
-        capture["raw_response"] = text
+    if resp is None:
+        log.error("LLM filter returned empty response")
+        if trace is not None:
+            trace["raw_response"] = None
+        return None
+    text = resp.text
+    if trace is not None:
+        trace["raw_response"] = text
+        trace["input_tokens"] = resp.input_tokens
+        trace["output_tokens"] = resp.output_tokens
+        trace["latency_s"] = resp.latency_s
+        trace["model_used"] = resp.model
+        if resp.reasoning:
+            trace["reasoning"] = resp.reasoning
     if not text:
         log.error("LLM filter returned empty response")
         return None
