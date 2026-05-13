@@ -62,6 +62,15 @@ if _under_systemd():
     _handler = logging.StreamHandler()
     _handler.setFormatter(_JournaldFormatter("[%(name)s] %(message)s"))
     logging.basicConfig(handlers=[_handler], level=logging.INFO)
+elif sys.stderr.isatty():
+    from rich.logging import RichHandler
+
+    logging.basicConfig(
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(rich_tracebacks=True, show_path=False)],
+        level=logging.INFO,
+    )
 else:
     logging.basicConfig(
         format="%(asctime)s [%(levelname)s] %(message)s",
@@ -349,7 +358,7 @@ async def _async_main(args: argparse.Namespace) -> None:
 
             if collector:
                 if args.human:
-                    print(collector.to_human())
+                    collector.display()
                 else:
                     print(collector.to_json())
                 return

@@ -12,6 +12,21 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
 import aiohttp
 import yaml
+from rich import box
+from rich.console import Console
+from rich.markup import escape
+from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
+from rich.rule import Rule
+from rich.table import Table
+from rich.text import Text
 
 from llm import get_adapter
 from summarize import (
@@ -27,6 +42,8 @@ _CONFIG_PATH = pathlib.Path(__file__).parent / "config.yaml"
 _SESSION_HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
 }
+
+console = Console()
 
 
 async def fetch_content(url: str, session: aiohttp.ClientSession) -> tuple[str, str, str]:
@@ -122,6 +139,72 @@ async def process_url(
     return entry
 
 
+def _print_entry(entry: dict) -> None:
+    kind = entry["kind"].capitalize()
+    title_or_url = entry["title"] if entry["title"] else entry["url"]
+    border = "cyan" if entry["kind"] == "youtube" else "green"
+
+    if entry.get("fetch_error"):
+        console.print(
+            Panel(
+                f"[dim]{escape(entry['url'])}[/dim]\n\n[red]ERROR: could not fetch content[/red]",
+                title=f"[bold]{kind}:[/bold] {escape(title_or_url[:80])}",
+                border_style="red",
+            )
+        )
+        return
+
+    parts: list[str] = []
+    for s in entry["summaries"]:
+        label = f"[bold]{escape(s['provider'])}/{escape(s['model'])}[/bold]"
+        if s["error"]:
+            parts.append(f"{label}\n[red]ERROR: {escape(s['error'])}[/red]")
+        else:
+            elapsed_str = f"[dim]{s['elapsed']:.1f}s[/dim]"
+            body = (s["summary"] or "(no output)").strip()
+            parts.append(f"{label} {elapsed_str}\n{escape(body)}")
+
+    console.print(
+        Panel(
+            "\n\n".join(parts),
+            title=f"[bold]{kind}:[/bold] {escape(title_or_url[:80])}",
+            subtitle=f"[dim]{escape(entry['url'][:100])}[/dim]",
+            border_style=border,
+        )
+    )
+
+
+def _print_summary_table(all_entries: list[dict], models: list[tuple[str, str]]) -> None:
+    table = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold")
+    table.add_column("URL", max_width=40, no_wrap=True)
+
+    model_labels = [f"{p}/{m}" for p, m in models]
+    for label in model_labels:
+        table.add_column(label, justify="right", min_width=10)
+
+    for entry in all_entries:
+        title_or_url = (entry["title"] or entry["url"])[:40]
+        if entry.get("fetch_error"):
+            row = [Text(title_or_url, style="dim")] + [Text("fetch err", style="red")] * len(models)
+            table.add_row(*row)
+            continue
+
+        by_model = {f"{s['provider']}/{s['model']}": s for s in entry["summaries"]}
+        cells: list[Text] = [Text(title_or_url)]
+        for label in model_labels:
+            s = by_model.get(label)
+            if s is None:
+                cells.append(Text("—", style="dim"))
+            elif s["error"]:
+                cells.append(Text("error", style="red"))
+            else:
+                cells.append(Text(f"{s['elapsed']:.1f}s", style="green"))
+        table.add_row(*cells)
+
+    console.print(Rule("[bold]Elapsed times[/bold]"))
+    console.print(table)
+
+
 async def main() -> None:
     cfg = yaml.safe_load(_CONFIG_PATH.read_text())
     urls: list[str] = cfg["urls"]
@@ -134,7 +217,7 @@ async def main() -> None:
 
     report: dict = {
         "timestamp": datetime.now(UTC).isoformat(),
-        "models": [{"provider": provider, "model": model} for provider, model in models],
+        "models": [{"provider": p, "model": m} for p, m in models],
         "results": [],
     }
 
@@ -142,39 +225,54 @@ async def main() -> None:
         timeout=aiohttp.ClientTimeout(total=60),
         headers=_SESSION_HEADERS,
     ) as session:
-        print("Fetching content from all URLs…")
-        fetch_tasks = [fetch_content(url, session) for url in urls]
-        contents = await asyncio.gather(*fetch_tasks)
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            fetch_task = progress.add_task("Fetching content…", total=len(urls))
 
-    print(f"\nFetched {len(contents)} items. Running {len(models)} models on each.\n")
+            async def _fetch_one(url: str) -> tuple[str, str, str]:
+                result = await fetch_content(url, session)
+                progress.advance(fetch_task)
+                return result
 
-    all_entries = await asyncio.gather(
-        *[process_url(url, title, content, models) for url, title, content in contents],
-    )
+            contents = await asyncio.gather(*[_fetch_one(url) for url in urls])
 
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        run_task = progress.add_task(
+            f"Running {len(models)} model(s) on each URL…", total=len(contents)
+        )
+
+        async def _process_one(url: str, title: str, content: str) -> dict:
+            entry = await process_url(url, title, content, models)
+            progress.advance(run_task)
+            return entry
+
+        all_entries = await asyncio.gather(
+            *[_process_one(url, title, content) for url, title, content in contents]
+        )
+
+    console.print()
     for entry in all_entries:
-        is_youtube = entry["kind"] == "youtube"
-        display = entry["title"] if entry["title"] else entry["url"]
-        print(f"\n{'YouTube' if is_youtube else 'Article'}: {display}")
-        print(f"URL: {entry['url']}")
-        if entry.get("fetch_error"):
-            print("  ERROR: could not fetch content — skipping")
-        else:
-            for s in entry["summaries"]:
-                if s["error"]:
-                    print(f"\n  [{s['provider']}/{s['model']}] ERROR: {s['error']}")
-                else:
-                    print(f"\n  [{s['provider']}/{s['model']}] ({s['elapsed']:.1f}s)")
-                    if s["summary"]:
-                        for line in s["summary"].splitlines():
-                            print(f"  {line}")
-                    else:
-                        print("  (no output)")
+        _print_entry(entry)
         report["results"].append(entry)
 
-    print("\nBenchmark complete.")
+    if len(all_entries) > 1:
+        _print_summary_table(list(all_entries), models)
+
     out_path.write_text(json.dumps(report, indent=2, ensure_ascii=False))
-    print(f"Saved to {out_path}")
+    console.print(f"\n[dim]Saved to {out_path}[/dim]")
 
 
 if __name__ == "__main__":
