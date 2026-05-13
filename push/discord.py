@@ -156,9 +156,21 @@ async def post_text_to_discord(
 
 
 _CONTENT_LIMIT = 2000
-_LINE_WIDTH = 70
+_LINE_WIDTH = 120
 _CITE_RE = re.compile(r"\[(\d+)\]")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+_LINK_RE = re.compile(r"\[+[^\]]*\]\(<[^>]*>\)\]*")
+
+
+def _protect_links(line: str) -> tuple[str, list[str]]:
+    """Replace masked Discord links with placeholders so textwrap won't break them."""
+    originals: list[str] = []
+
+    def _sub(m: re.Match) -> str:
+        originals.append(m.group(0))
+        return f"\x00{len(originals) - 1:04d}\x00"
+
+    return _LINK_RE.sub(_sub, line), originals
 
 
 def _wrap_text(text: str) -> str:
@@ -168,11 +180,13 @@ def _wrap_text(text: str) -> str:
         if len(line) <= _LINE_WIDTH or line.startswith("#"):
             result.append(line)
         else:
-            result.append(
-                textwrap.fill(
-                    line, width=_LINE_WIDTH, break_long_words=False, break_on_hyphens=False
-                )
+            protected, originals = _protect_links(line)
+            wrapped = textwrap.fill(
+                protected, width=_LINE_WIDTH, break_long_words=False, break_on_hyphens=False
             )
+            for i, original in enumerate(originals):
+                wrapped = wrapped.replace(f"\x00{i:04d}\x00", original)
+            result.append(wrapped)
     return "\n".join(result)
 
 

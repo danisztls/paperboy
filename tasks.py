@@ -372,8 +372,8 @@ async def _process_llm_evaluate_task(
     fetch_image = not task_image_cfg.get("skip", False)
     task_image_download = task_image_cfg.get("download")
     task_filter = task_cfg.get("filter", {})
-    task_summarize = task_cfg.get("summarize", False)
     task_type = _task_type(task_cfg)
+    task_summarize = task_cfg.get("summarize", task_type == "digest")
 
     if collector:
         collector.begin_task(task_name, task_type)
@@ -389,7 +389,7 @@ async def _process_llm_evaluate_task(
         raw_history = task_state.get("memory", {}) if filter_cfg else {}
         memory_history: list[tuple[str, str]] | None = None
         if raw_history:
-            keys = sorted(raw_history)[-7:]
+            keys = sorted(raw_history)[-5:]
             memory_history = [(k, raw_history[k]) for k in keys] or None
 
         # --- Pull ---
