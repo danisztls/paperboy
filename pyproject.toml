@@ -23,7 +23,16 @@ dependencies = [
 claudinho = "main:main"
 
 [dependency-groups]
-dev = ["ruff>=0.9"]
+dev = [
+    "ruff>=0.9",
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "aioresponses>=0.7.6",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100

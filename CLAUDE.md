@@ -29,6 +29,7 @@ The project uses `uv` (see `uv.lock`, `.python-version` pinning Python 3.14).
 - Sync deps: `uv sync`
 - Format: `uv run ruff format .`
 - Lint: `uv run ruff check --fix .`
+- Run tests: `uv run pytest`
 - Run benchmark: `uv run benchmark/` (reads `benchmark/config.yaml`, writes JSON to `benchmark/results/`)
 - Inspect a run with chain-of-thought + ELI5 filter reasons (extra tokens, dry-run): `uv run main.py --analysis --task <name>`
 - Replay captured LLM calls against alternative models: `uv run main.py --replay <state_dir>/evals/<task>/<run_iso>.jsonl --models openai:gpt-4o-mini,gemini:gemini-2.5-flash --call filter`
@@ -172,6 +173,25 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
 See `config/config.yaml.template` — it is the canonical reference for all supported keys and their defaults.
 
 Any change that adds, removes, or renames a config key must also update the corresponding Pydantic model in `config/__init__.py` so validation stays in sync.
+
+### Tests (`tests/`)
+
+Pipeline-only e2e suite (6 tests, ~0.3s). Run with `uv run pytest`.
+
+Tests call `_process_llm_curate_task` and `_process_llm_search_task` directly (not the `_async_main` orchestrator, not the CLI). Two boundaries are faked; everything else is real:
+- **`FakeLLMAdapter`** (`tests/conftest.py`) — `LLMAdapter` subclass with a `queue()`-driven response list. Passed as the `llm_adapter=` parameter on the task functions — no monkeypatching needed. Exhausted queues raise loudly so missing canned responses fail the test rather than hanging.
+- **`aioresponses`** — intercepts at the `aiohttp` transport layer. Real `RSSSource`, real `Discord*Target` (including `_post_webhook` retry-on-429 and OG image scraping), real `File*Target`, real `fetch_item_content` all run; only the network is mocked.
+
+Fixtures live in `tests/fixtures/` (`feed_basic.xml`, `feed_b.xml`, `article_basic.html`). Helpers `make_curate_cfg` / `make_search_cfg` build task config dicts inline.
+
+Scenarios covered:
+- Curate happy path, already-seen dedup, single-feed pull failure (`None` from `Source.pull()` must not update `last_run`), filter-fails-twice fail-open.
+- Digest with `cite_map` resolution (`[n]` → `[Source](url)` in `FileDigestTarget`; cite markers stripped from stored memory per `_CITE_STRIP_RE`).
+- LLM search happy path.
+
+Not covered: scraper task (Playwright), orchestrator-level invariants (`asyncio.gather(..., return_exceptions=True)` isolation, `save_state` only on success). The only `monkeypatch` in the suite is `asyncio.sleep` in the fail-open test (to skip the 10s filter retry delay) — stdlib, not a production class.
+
+`get_new_entries` reverses feedparser's order (oldest-first), so the LLM filter sees XML items in reverse: the first item in the XML is `id=N-1`, the last is `id=0`. Keep this in mind when wiring `queue_filter` responses.
 
 ### Benchmark (`benchmark/`)
 
