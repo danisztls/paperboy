@@ -213,8 +213,6 @@ class VivaRealAdapter(SiteAdapter):
             price_raw = offers.get("price")
             condo_raw = _extract_condo_fee(offers.get("propertyValue"))
 
-            description = (item.get("description") or "").replace("]]>", "").strip() or None
-
             title_parts = [ltype]
             if bedrooms:
                 title_parts.append(f"{bedrooms}q")
@@ -234,14 +232,13 @@ class VivaRealAdapter(SiteAdapter):
                 source="VivaReal",
                 url=url,
                 body=_format_body(
-                    price_raw, condo_raw, None, area, bedrooms, bathrooms, parking, description
+                    price_raw, condo_raw, None, area, bedrooms, bathrooms, parking, None
                 ),
                 image=image,
                 meta={
                     "price": price_raw,
                     "condo_fee": condo_raw,
                     "iptu": None,
-                    "description": description,
                     "area": area,
                     "bedrooms": bedrooms,
                     "bathrooms": bathrooms,
