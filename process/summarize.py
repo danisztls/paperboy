@@ -93,15 +93,20 @@ _YOUTUBE_RE = re.compile(r"https?://(?:[a-z0-9-]+\.)*youtube\.com(?:\.[a-z]{2,})
 def _parse_vtt(content: str) -> list[tuple[float, str]]:
     """Extract (start_seconds, text) tuples from a WebVTT subtitle file.
 
-    YouTube auto-captions emit overlapping rolling cues; consecutive
-    identical lines are deduplicated within each cue block.
+    YouTube auto-captions use a rolling-window format with two cue types:
+    - Regular blocks: carryover sentence (no tags) + new words with timing tags.
+    - Transition blocks (10ms): a single clean, completed sentence with no tags.
+    Only transition blocks are emitted; they form a clean, non-duplicated transcript.
     """
     cues: list[tuple[float, str]] = []
     current_start: float | None = None
     current_lines: list[str] = []
+    current_has_tags: bool = False
 
     def _flush():
         if current_start is None or not current_lines:
+            return
+        if current_has_tags:
             return
         deduped: list[str] = []
         for ln in current_lines:
@@ -117,6 +122,7 @@ def _parse_vtt(content: str) -> list[tuple[float, str]]:
             _flush()
             current_start = None
             current_lines = []
+            current_has_tags = False
             continue
         if _VTT_META_RE.match(line) or line.isdigit():
             continue
@@ -126,7 +132,10 @@ def _parse_vtt(content: str) -> list[tuple[float, str]]:
             h, mn, s, ms = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
             current_start = h * 3600 + mn * 60 + s + ms / 1000
             current_lines = []
+            current_has_tags = False
             continue
+        if "<" in line:
+            current_has_tags = True
         cleaned = _VTT_TAGS_RE.sub("", line).strip()
         if cleaned:
             current_lines.append(cleaned)
@@ -187,13 +196,17 @@ async def _fetch_youtube_data(url: str, session: aiohttp.ClientSession) -> tuple
     auto = info.get("automatic_captions") or {}
 
     lang_track = None
-    for src in (subs, auto):
-        for lang in ("en", "en-orig", *src.keys()):
-            if lang in src:
-                lang_track = src[lang]
-                break
-        if lang_track:
+    # Prefer human subtitles, then original-language auto-captions, then translated fallback
+    for lang in ("en", "en-orig", *subs.keys()):
+        if lang in subs:
+            lang_track = subs[lang]
             break
+    if not lang_track:
+        orig_keys = [k for k in auto if k.endswith("-orig")]
+        for lang in (*orig_keys, "en", *auto.keys()):
+            if lang in auto:
+                lang_track = auto[lang]
+                break
 
     if not lang_track:
         log.warning("No subtitles or captions found for %s", url)

@@ -9,7 +9,7 @@ import aiohttp
 from config import get_discord_cfg, get_feeds, get_file_path, parse_color, task_kind
 from pipeline import FilterResult, Item, PushContext
 from process.curate import curate_entries
-from process.summarize import fetch_item_content, summarize_entry
+from process.summarize import _YOUTUBE_RE, fetch_item_content, summarize_entry
 from providers.llm.base import LLMAdapter
 from pull.feed import RSSSource
 from pull.scraper import ScraperSource
@@ -185,6 +185,8 @@ async def _summarize_items(
             fetched = await fetch_item_content(e.url, session)
             if fetched:
                 return fetched
+            if _YOUTUBE_RE.match(e.url):
+                return None, None
         return e.body, None
 
     if summarize_adapter is None:
