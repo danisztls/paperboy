@@ -1,20 +1,35 @@
 import logging
 import os
+from typing import TYPE_CHECKING, TypeVar
 
 from openai import AsyncOpenAI
+from pydantic import BaseModel
 
 from .base import LLMAdapter, LLMResponse, timed_call
+
+if TYPE_CHECKING:
+    import instructor
 
 DEFAULT_MODEL = "deepseek-v4-flash"
 REASONING_MODEL = "deepseek-reasoner"
 BASE_URL = "https://api.deepseek.com"
 log = logging.getLogger(__name__)
 
+T = TypeVar("T", bound=BaseModel)
+
 
 class DeepSeekAdapter(LLMAdapter):
     def __init__(self, api_key: str | None = None) -> None:
         key = api_key or os.environ.get("DEEPSEEK_API_KEY")
         self._client = AsyncOpenAI(api_key=key, base_url=BASE_URL)
+        self._instructor: instructor.AsyncInstructor | None = None
+
+    def _get_instructor(self):
+        if self._instructor is None:
+            import instructor
+
+            self._instructor = instructor.from_openai(self._client, mode=instructor.Mode.TOOLS)
+        return self._instructor
 
     async def complete(
         self,
@@ -57,3 +72,48 @@ class DeepSeekAdapter(LLMAdapter):
             reasoning=reasoning_text,
             finish_reason=getattr(response.choices[0], "finish_reason", None),
         )
+
+    async def complete_structured(
+        self,
+        prompt: str,
+        response_model: type[T],
+        *,
+        model: str | None = None,
+        instructions: str | None = None,
+        reasoning: bool | dict = False,
+        trace: dict | None = None,
+    ) -> T | None:
+        # deepseek-reasoner has no function-calling support; fall back to chat for structured output.
+        _model = model or DEFAULT_MODEL
+        if _model == REASONING_MODEL:
+            log.warning(
+                "DeepSeek reasoner does not support function calling; using %s for structured output",
+                DEFAULT_MODEL,
+            )
+            _model = DEFAULT_MODEL
+        client = self._get_instructor()
+        messages: list[dict] = []
+        if instructions:
+            messages.append({"role": "system", "content": instructions})
+        messages.append({"role": "user", "content": prompt})
+
+        async def _call():
+            return await client.chat.completions.create_with_completion(
+                model=_model,
+                messages=messages,
+                response_model=response_model,
+                max_retries=2,
+            )
+
+        result, latency = await timed_call(log, "DeepSeek", _call)
+        if result is None:
+            return None
+        obj, completion = result
+        if trace is not None:
+            trace["latency_s"] = latency
+            trace["model_used"] = getattr(completion, "model", _model)
+            usage = getattr(completion, "usage", None)
+            if usage:
+                trace["input_tokens"] = getattr(usage, "prompt_tokens", None)
+                trace["output_tokens"] = getattr(usage, "completion_tokens", None)
+        return obj

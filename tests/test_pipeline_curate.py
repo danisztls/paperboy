@@ -166,8 +166,8 @@ async def test_curate_filter_fails_open(mock_http, fake_adapter, tmp_path, monke
     mock_http.post(WEBHOOK_URL, status=204, repeat=True)
 
     # Filter call returns None twice → fail-open.
-    fake_adapter.queue(None)
-    fake_adapter.queue(None)
+    fake_adapter.queue_structured(None)
+    fake_adapter.queue_structured(None)
 
     out_file = tmp_path / "out.md"
     cfg = make_curate_cfg(

@@ -1,16 +1,31 @@
 import logging
+from typing import TYPE_CHECKING, TypeVar
 
 from openai import AsyncOpenAI
+from pydantic import BaseModel
 
 from .base import LLMAdapter, LLMResponse, timed_call
 
+if TYPE_CHECKING:
+    import instructor
+
 DEFAULT_MODEL = "gpt-5.4-mini"
 log = logging.getLogger(__name__)
+
+T = TypeVar("T", bound=BaseModel)
 
 
 class OpenAIAdapter(LLMAdapter):
     def __init__(self, api_key: str | None = None) -> None:
         self._client = AsyncOpenAI(api_key=api_key) if api_key else AsyncOpenAI()
+        self._instructor: instructor.AsyncInstructor | None = None
+
+    def _get_instructor(self):
+        if self._instructor is None:
+            import instructor
+
+            self._instructor = instructor.from_openai(self._client, mode=instructor.Mode.TOOLS)
+        return self._instructor
 
     async def complete(
         self,
@@ -67,3 +82,41 @@ class OpenAIAdapter(LLMAdapter):
             latency_s=latency,
             reasoning=reasoning_text,
         )
+
+    async def complete_structured(
+        self,
+        prompt: str,
+        response_model: type[T],
+        *,
+        model: str | None = None,
+        instructions: str | None = None,
+        reasoning: bool | dict = False,
+        trace: dict | None = None,
+    ) -> T | None:
+        _model = model or DEFAULT_MODEL
+        client = self._get_instructor()
+        messages: list[dict] = []
+        if instructions:
+            messages.append({"role": "system", "content": instructions})
+        messages.append({"role": "user", "content": prompt})
+
+        async def _call():
+            return await client.chat.completions.create_with_completion(
+                model=_model,
+                messages=messages,
+                response_model=response_model,
+                max_retries=2,
+            )
+
+        result, latency = await timed_call(log, "OpenAI", _call)
+        if result is None:
+            return None
+        obj, completion = result
+        if trace is not None:
+            trace["latency_s"] = latency
+            trace["model_used"] = getattr(completion, "model", _model)
+            usage = getattr(completion, "usage", None)
+            if usage:
+                trace["input_tokens"] = getattr(usage, "prompt_tokens", None)
+                trace["output_tokens"] = getattr(usage, "completion_tokens", None)
+        return obj
