@@ -17,7 +17,6 @@ from config import (
     get_api_key_for_provider,
     get_discord_cfg,
     get_feeds,
-    get_search_cfg,
     load_config,
     parse_color,
     parse_period,
@@ -322,12 +321,6 @@ async def _async_main(args: argparse.Namespace) -> None:
                 task_state = state.get("tasks", {}).get(name, {})
 
                 if kind == "search":
-                    if not get_search_cfg(task_cfg).get("web_search"):
-                        log.warning(
-                            "[%s] Skipping search task: search.web_search not configured (no input source)",
-                            name,
-                        )
-                        continue
                     if (
                         not force_task
                         and not analysis

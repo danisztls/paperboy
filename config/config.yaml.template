@@ -41,7 +41,7 @@ tasks:
     period: 1h
     # kind: digest           # posts a single digest message instead of individual embeds; affects LLM processing
     # curate:                # optional — LLM pre-post filter applied to all feeds in this task
-    #   prompt: "Only keep items about AI and machine learning"
+    #   criteria: "Only keep items about AI and machine learning"
     #   model:               # optional; overrides curate.model
     #     openai: gpt-4o-mini
     #   language: "PT-BR"    # optional; language for memory briefings; falls back to curate.language then EN-US
@@ -97,7 +97,7 @@ tasks:
   #   type: digest
   #   period: 24h
   #   curate:
-  #     prompt: "Only keep items about AI and machine learning"
+  #     criteria: "Only keep items about AI and machine learning"
   #   pull:
   #     - feed:
   #         name: My Feed
@@ -122,17 +122,16 @@ tasks:
   #         # color: "#00b894"
 
   # Search task: calls an LLM with web search and posts the plain-text response to Discord.
-  # Detected by pull containing a search item (web_search is required).
+  # Detected by pull containing a search item. Web search is always on.
   - name: world-news
     period: 24h
     pull:
       - search:
           prompt: "Today news. World. Filter for signal > noise."
-          web_search: true      # required; dict = options for web_search_preview
           # model:              # optional; overrides search.model
           #   openai: gpt-5.4-mini
           # instructions: "..."  # optional; extra instructions appended to the built-in system prompt
-          # web_search:
+          # web_search:         # optional; pass a dict to configure web_search_preview options
           #   allowed_domains:
           #     - reuters.com
           #   user_location:

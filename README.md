@@ -7,7 +7,7 @@ A personal notifier that polls feeds and posts to Discord webhooks on a cron sch
 - **RSS** — fetches feeds, posts new entries as Discord embeds with OG images.
 - **Digest** — like RSS but collects all passing entries into a single text message (splits at 2000 chars). No OG images. Uses `[Title](<url>)` to suppress Discord link previews.
 - **Scraper** — browser-based extraction from JavaScript-heavy sites; posts new listings as Discord embeds.
-- **LLM** — calls the OpenAI Responses API with a prompt and `web_search_preview`, posts the plain-text response.
+- **Search** — calls an LLM with web search enabled and posts the plain-text response.
 
 RSS and Digest tasks support an optional LLM filter step that classifies items before posting.
 
@@ -88,10 +88,10 @@ tasks:
 ```yaml
 tasks:
   - name: my-digest
-    type: digest
+    kind: digest
     period: 24h
-    llm:
-      prompt: "Only keep items about AI and machine learning"
+    curate:
+      criteria: "Only keep items about AI and machine learning"
     pull:
       - feed:
           name: My Feed
@@ -117,29 +117,29 @@ tasks:
           webhook: !secret discord_webhook_listings
 ```
 
-### LLM task
+### Search task
 
 ```yaml
 tasks:
   - name: world-news
     period: 24h
     pull:
-      - llm:
+      - search:
           prompt: "Today's news. Filter for signal > noise."
-          web_search: true
     push:
       - discord:
           webhook: !secret discord_webhook_world_news
 ```
 
-## LLM filter (RSS/Digest)
+## LLM curation (RSS/Digest)
 
-Add an `llm` block to any RSS or Digest task to classify items before posting:
+Add a `curate` block to any RSS or Digest task to classify items before posting:
 
 ```yaml
-llm:
-  prompt: "Only keep items about AI and machine learning"
-  model: gpt-4o-mini       # optional; overrides llm.models.reasoning
+curate:
+  criteria: "Only keep items about AI and machine learning"
+  model:                   # optional; overrides curate.model
+    openai: gpt-4o-mini
   language: "PT-BR"        # optional; language for memory briefings
   web_search: true         # optional; let the LLM search for context
   explain: true            # optional; use filter_reason as item body

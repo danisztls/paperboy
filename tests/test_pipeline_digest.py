@@ -39,7 +39,7 @@ async def test_digest_cite_map(mock_http, fake_adapter, tmp_path):
         kind="digest",
         feeds=[{"url": FEED_URL, "name": "Example"}],
         file_path=str(out_file),
-        llm_filter={"prompt": "pass everything"},
+        llm_filter={"criteria": "pass everything"},
     )
 
     async with aiohttp.ClientSession() as session:
