@@ -54,7 +54,20 @@ _NEXT_DATA_PATHS = [
     ["results", "listings"],
 ]
 
-_DESC_TRUNCATE = 500
+# Curated whitelist for `offers.amenityFeature`. Drops table-stakes amenities
+# (Kitchen, Laundry, Garage, Service Area) and keeps the differentiators.
+# Keys are the English values VivaReal emits; values are the rendered labels.
+_AMENITY_LABELS = {
+    "Pool": "Piscina",
+    "Gated Community": "Condomínio Fechado",
+    "Elevator": "Elevador",
+    "Balcony": "Varanda",
+    "Furnished": "Mobiliado",
+    "Party Hall": "Salão de Festas",
+    "Barbecue Grill": "Churrasqueira",
+    "Playground": "Playground",
+    "Pets Allowed": "Aceita Pets",
+}
 
 
 def _fmt_brl(value) -> str | None:
@@ -92,13 +105,6 @@ def _format_price(rent, condo, iptu) -> str:
     return f"{chain} = {_fmt_brl(total)}"
 
 
-def _truncate(text: str, n: int = _DESC_TRUNCATE) -> str:
-    text = (text or "").strip()
-    if len(text) <= n:
-        return text
-    return text[:n].rstrip() + "…"
-
-
 def _extract_condo_fee(pv) -> int | None:
     """Pull the Condominium Fee value out of `offers.propertyValue` (dict or list)."""
     if isinstance(pv, dict):
@@ -112,8 +118,32 @@ def _extract_condo_fee(pv) -> int | None:
     return None
 
 
+def _extract_amenities(features) -> list[str]:
+    """Map `amenityFeature` entries through the whitelist; drop unknowns."""
+    if not isinstance(features, list):
+        return []
+    out: list[str] = []
+    for f in features:
+        if not isinstance(f, dict):
+            continue
+        key = f.get("value") or f.get("name")
+        label = _AMENITY_LABELS.get(key)
+        if label and label not in out:
+            out.append(label)
+    return out
+
+
 def _format_body(
-    rent, condo, iptu, area, bedrooms, bathrooms, parking, description: str | None
+    rent,
+    condo,
+    iptu,
+    area,
+    bedrooms,
+    bathrooms,
+    parking,
+    *,
+    street: str | None = None,
+    amenities: list[str] | None = None,
 ) -> str:
     parts: list[str] = [_format_price(rent, condo, iptu)]
     if area:
@@ -124,9 +154,12 @@ def _format_body(
         parts.append(f"{bathrooms} ban.")
     if parking:
         parts.append(f"{parking} vaga")
-    line = " · ".join(parts)
-    desc = _truncate(description or "")
-    return f"{line}\n\n{desc}" if desc else line
+    lines = [" · ".join(parts)]
+    if amenities:
+        lines.append(" · ".join(amenities))
+    if street:
+        lines.append(street)
+    return "\n".join(lines)
 
 
 @register_adapter("vivareal")
@@ -143,9 +176,9 @@ class VivaRealAdapter(SiteAdapter):
             pass
 
         # Primary: JSON-LD ItemList — carries everything we need per listing
-        # (rent via offers.price, condo fee via offers.propertyValue, description,
-        # first gallery image). Detail pages are gated by Cloudflare; we don't
-        # visit them.
+        # (rent via offers.price, condo fee via offers.propertyValue, first gallery
+        # image, address.streetAddress, curated amenityFeature values). Detail pages
+        # are gated by Cloudflare; we don't visit them.
         jsonld_blocks = await page.evaluate(
             "() => Array.from(document.querySelectorAll('script[type=\"application/ld+json\"]'))"
             ".map(s => s.textContent)"
@@ -203,6 +236,7 @@ class VivaRealAdapter(SiteAdapter):
 
             addr = item.get("address") or {}
             city = addr.get("addressLocality") or ""
+            street = (addr.get("streetAddress") or "").strip() or None
             location = ", ".join(p for p in [neighborhood, city] if p)
 
             # Parking not in JSON-LD schema; parse from name
@@ -212,6 +246,8 @@ class VivaRealAdapter(SiteAdapter):
             offers = item.get("offers") or {}
             price_raw = offers.get("price")
             condo_raw = _extract_condo_fee(offers.get("propertyValue"))
+
+            amenities = _extract_amenities(item.get("amenityFeature"))
 
             title_parts = [ltype]
             if bedrooms:
@@ -232,7 +268,15 @@ class VivaRealAdapter(SiteAdapter):
                 source="VivaReal",
                 url=url,
                 body=_format_body(
-                    price_raw, condo_raw, None, area, bedrooms, bathrooms, parking, None
+                    price_raw,
+                    condo_raw,
+                    None,
+                    area,
+                    bedrooms,
+                    bathrooms,
+                    parking,
+                    street=street,
+                    amenities=amenities,
                 ),
                 image=image,
                 meta={
@@ -245,6 +289,8 @@ class VivaRealAdapter(SiteAdapter):
                     "parking": parking,
                     "neighborhood": neighborhood,
                     "city": city,
+                    "street": street,
+                    "amenities": amenities,
                 },
             )
         except Exception as exc:
@@ -308,7 +354,7 @@ class VivaRealAdapter(SiteAdapter):
             condo_raw = pricing.get("monthlyCondoFee")
             iptu_yearly = _as_int(pricing.get("yearlyIptu"))
             iptu_raw = pricing.get("monthlyIptu") or (iptu_yearly // 12 if iptu_yearly else None)
-            description = listing.get("description")
+            street = (addr.get("street") or "").strip() or None
 
             title_parts = [ltype]
             if bedrooms:
@@ -335,20 +381,20 @@ class VivaRealAdapter(SiteAdapter):
                     bedrooms,
                     bathrooms,
                     parking,
-                    description,
+                    street=street,
                 ),
                 image=image,
                 meta={
                     "price": price_raw,
                     "condo_fee": condo_raw,
                     "iptu": iptu_raw,
-                    "description": description,
                     "area": area,
                     "bedrooms": bedrooms,
                     "bathrooms": bathrooms,
                     "parking": parking,
                     "neighborhood": neighborhood,
                     "city": city,
+                    "street": street,
                 },
             )
         except Exception as exc:
