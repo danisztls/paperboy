@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A personal notifier that posts to Discord webhooks on a cron schedule. Supports four task types:
 - **RSS tasks**: polls feeds, posts new entries as Discord embeds, tracks seen entries.
 - **Digest tasks**: like RSS tasks but all passing entries are collected and posted as a single text message (splits on 2000-char limit). No OG image fetching. Uses `[Title](<url>)` to suppress Discord link previews.
-- **Scraper tasks**: browser-based extraction from JavaScript-heavy sites via Playwright; posts new listings as Discord embeds.
+- **Scraper tasks**: browser-based extraction from JavaScript-heavy sites via Camoufox (hardened Firefox, drop-in Playwright API); posts new listings as Discord embeds. One-time setup: `uv run camoufox fetch` to download the ~700MB browser binary.
 - **LLM tasks**: calls a configurable LLM (OpenAI or Gemini) with a prompt + web search, posts the plain-text response. Good for scheduled digests ("today's news, filter for signal > noise").
 
 Each task can push to any combination of targets. Supported targets: `discord` (webhook), `file` (local markdown file).
@@ -100,8 +100,8 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
 - `pull/llm.py` — LLM web-search source.
   - `LLMSearchSource(Source)` — calls `run_llm_task` and wraps the response as a single `Item`.
   - `run_llm_task(task_cfg, instructions, model, adapter)` — calls the configured LLM with web search enabled, returns plain-text response or `None`.
-- `pull/scraper.py` — browser-based extraction via Playwright.
-  - `ScraperSource(Source)` — launches a headless Chromium browser, delegates to a site adapter, returns new listings as `Item`s.
+- `pull/scraper.py` — browser-based extraction via Camoufox (hardened Firefox build with C++-level anti-detection patches). Drop-in Playwright API; the `SiteAdapter.scrape()` contract is unchanged.
+  - `ScraperSource(Source)` — launches a headless Camoufox browser, delegates to a site adapter, returns new listings as `Item`s. Camoufox manages the fingerprint itself — adapters must not set a custom User-Agent.
 - `pull/scrapers/base.py` — `SiteAdapter` ABC and the `@register_adapter` decorator-based registry (`get_adapter`, `available_adapters`).
 - `pull/scrapers/vivareal.py` — `VivaRealAdapter`: parses property listings from VivaReal search pages.
 
@@ -192,7 +192,7 @@ Scenarios covered:
 - `main._merge_task_results` orchestrator invariant — empty / exception task results leave state untouched.
 - `main._prune_old_files` retention sweep.
 
-Not covered: scraper task (Playwright), `asyncio.gather(..., return_exceptions=True)` isolation at the `_async_main` level. The only `monkeypatch` in the suite is `asyncio.sleep` in the fail-open test (to skip the 10s filter retry delay) — stdlib, not a production class.
+Not covered: scraper task (Camoufox), `asyncio.gather(..., return_exceptions=True)` isolation at the `_async_main` level. The only `monkeypatch` in the suite is `asyncio.sleep` in the fail-open test (to skip the 10s filter retry delay) — stdlib, not a production class.
 
 `get_new_entries` reverses feedparser's order (oldest-first), so the LLM filter sees XML items in reverse: the first item in the XML is `id=N-1`, the last is `id=0`. Keep this in mind when wiring `queue_filter` responses.
 
