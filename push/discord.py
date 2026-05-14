@@ -73,6 +73,7 @@ _CONTENT_LIMIT = 2000
 _LINE_WIDTH = 120
 _CITE_RE = re.compile(r"\[(\d+)\]")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+_PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n+")
 _LINK_RE = re.compile(r"\[+[^\]]*\]\(<[^>]*>\)\]*")
 
 
@@ -115,6 +116,24 @@ def _apply_cite_map(text: str, cite_map: dict[int, tuple[str, str | None]]) -> s
     return _CITE_RE.sub(replace, text)
 
 
+def _pack(units: list[str], sep: str, limit: int) -> list[str]:
+    """Greedy pack `units` into chunks no longer than `limit`, joined by `sep`."""
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for unit in units:
+        addition = len(unit) + (len(sep) if current else 0)
+        if current and current_len + addition > limit:
+            chunks.append(sep.join(current))
+            current, current_len = [unit], len(unit)
+        else:
+            current.append(unit)
+            current_len += addition
+    if current:
+        chunks.append(sep.join(current))
+    return chunks
+
+
 def _build_digest_chunks(
     memory_text: str | None,
     cite_map: dict[int, tuple[str, str | None]] | None = None,
@@ -123,22 +142,18 @@ def _build_digest_chunks(
         return []
     text = _apply_cite_map(memory_text, cite_map) if cite_map else memory_text
 
-    sentences = [s for s in _SENTENCE_SPLIT_RE.split(text.strip()) if s.strip()]
+    paragraphs = [p.strip() for p in _PARAGRAPH_SPLIT_RE.split(text.strip()) if p.strip()]
 
-    chunks: list[str] = []
-    current: list[str] = []
-    current_len = 0
-    for sent in sentences:
-        addition = len(sent) + (1 if current else 0)
-        if current and current_len + addition > _CONTENT_LIMIT:
-            chunks.append(" ".join(current))
-            current, current_len = [sent], len(sent)
-        else:
-            current.append(sent)
-            current_len += addition
-    if current:
-        chunks.append(" ".join(current))
+    # Pre-split any paragraph that's too long on its own into sentence-packed sub-chunks.
+    units: list[str] = []
+    for para in paragraphs:
+        if len(para) <= _CONTENT_LIMIT:
+            units.append(para)
+            continue
+        sentences = [s for s in _SENTENCE_SPLIT_RE.split(para) if s.strip()]
+        units.extend(_pack(sentences, " ", _CONTENT_LIMIT))
 
+    chunks = _pack(units, "\n\n", _CONTENT_LIMIT)
     return [c for c in chunks if c.strip()]
 
 

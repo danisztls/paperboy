@@ -1,5 +1,7 @@
 """E2E test for the digest pipeline (summarize → filter → DiscordDigest + FileDigest)."""
 
+import json
+
 import aiohttp
 
 from tasks import _process_llm_curate_task
@@ -29,7 +31,7 @@ async def test_digest_cite_map(mock_http, fake_adapter, tmp_path):
             {"id": 0, "pass": True, "reason": "Cats."},
             {"id": 1, "pass": True, "reason": "Quantum."},
         ],
-        memory="Cat update [0]. Quantum advance [1].",
+        memory="Cat update [0].\n\nQuantum advance [1].",
     )
 
     out_file = tmp_path / "digest.md"
@@ -60,5 +62,13 @@ async def test_digest_cite_map(mock_http, fake_adapter, tmp_path):
     assert "Cat update" in entry
 
     # Real DiscordDigestTarget posted the digest chunk(s).
-    posts = [c for c in mock_http.requests if c[0] == "POST"]
-    assert len(posts) >= 1
+    post_calls = [
+        call for key, calls in mock_http.requests.items() if key[0] == "POST" for call in calls
+    ]
+    assert len(post_calls) >= 1
+    contents = [json.loads(call.kwargs["data"].decode())["content"] for call in post_calls]
+    # Both stories landed in the same chunk, separated by a blank line (one paragraph each).
+    assert any("Cat update" in c and "\n\nQuantum advance" in c for c in contents)
+    joined = "\n\n".join(contents)
+    assert "[[Example](<https://example.com/posts/1>)]" in joined
+    assert "[[Example](<https://example.com/posts/2>)]" in joined
