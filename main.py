@@ -12,7 +12,6 @@ from datetime import UTC, datetime, timedelta
 
 import aiohttp
 
-from capture import RunCapture
 from config import (
     get_api_key_for_provider,
     get_discord_cfg,
@@ -25,11 +24,12 @@ from config import (
     task_kind,
     validate_config,
 )
-from llm import FallbackAdapter, get_adapter
-from migrate import CURRENT_VERSION, migrate, needs_migration
+from evals.capture import RunCapture
+from process.summarize import run_summarize
+from providers.llm import FallbackAdapter, get_adapter
 from pull.feed import RSSSource
 from state import _auto_clean, _remove_unknown, load_state, save_state
-from summarize import run_summarize
+from state.migrate import CURRENT_VERSION, migrate, needs_migration
 from tasks import (
     DEFAULT_PERIOD,
     _is_due,
@@ -469,7 +469,7 @@ def main():
             "pull.llm",
             "push.discord",
             "pull.scraper",
-            "pull.adapters.vivareal",
+            "pull.scrapers.vivareal",
         ):
             logging.getLogger(name).setLevel(logging.DEBUG)
 
@@ -495,7 +495,7 @@ def main():
         if not args.models:
             log.error("--replay requires --models")
             sys.exit(1)
-        from replay import replay as _replay
+        from evals.replay import replay as _replay
 
         jsonl_path = pathlib.Path(args.replay).expanduser().resolve()
         config_path = (

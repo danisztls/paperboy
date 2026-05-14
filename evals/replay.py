@@ -12,7 +12,7 @@ import pathlib
 from datetime import UTC, datetime
 
 from config import get_api_key_for_provider, load_config
-from llm import get_adapter
+from providers.llm import get_adapter
 
 log = logging.getLogger(__name__)
 

@@ -7,7 +7,7 @@ import sys
 
 import aiohttp
 
-from llm.adapters.base import LLMAdapter
+from providers.llm.base import LLMAdapter
 
 log = logging.getLogger(__name__)
 

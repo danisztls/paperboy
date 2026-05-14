@@ -1,6 +1,6 @@
 import logging
 
-from llm.adapters.base import LLMAdapter, LLMResponse
+from providers.llm.base import LLMAdapter, LLMResponse
 
 log = logging.getLogger(__name__)
 
@@ -47,18 +47,18 @@ class FallbackAdapter(LLMAdapter):
 
 def get_adapter(provider: str | None = None, api_key: str | None = None) -> LLMAdapter:
     if provider == "openai":
-        from llm.adapters.openai import OpenAIAdapter
+        from providers.llm.openai import OpenAIAdapter
 
         return OpenAIAdapter(api_key=api_key)
     if provider == "gemini":
-        from llm.adapters.gemini import GeminiAdapter
+        from providers.llm.gemini import GeminiAdapter
 
         return GeminiAdapter(api_key=api_key)
     if provider == "anthropic":
-        from llm.adapters.anthropic import AnthropicAdapter
+        from providers.llm.anthropic import AnthropicAdapter
 
         return AnthropicAdapter(api_key=api_key)
-    from llm.adapters.deepseek import DeepSeekAdapter
+    from providers.llm.deepseek import DeepSeekAdapter
 
     return DeepSeekAdapter(api_key=api_key)
 
