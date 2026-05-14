@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import aiohttp
 
-from config import _get_discord_cfg, _get_feeds, _get_file_path, _parse_color, _task_type
+from config import get_discord_cfg, get_feeds, get_file_path, parse_color, task_kind
 from llm.adapters.base import LLMAdapter
 from llm_filter import filter_entries
 from pipeline import FilterResult, Item, PushContext
@@ -428,7 +428,7 @@ async def _process_llm_search_task(
             log.error("Skipping LLM task %s due to post failure", name)
             return {}
 
-        if _get_file_path(task_cfg):
+        if get_file_path(task_cfg):
             await FileEmbedTarget().push(ctx, task_cfg, session)
 
         if collector:
@@ -453,8 +453,8 @@ async def _process_llm_curate_task(
 ) -> dict:
     """Pull RSS feeds, optionally filter/summarize, push to Discord. Returns {task_name: task_state}."""
     task_name = task_cfg["name"]
-    task_discord = _get_discord_cfg(task_cfg)
-    task_color = _parse_color(task_discord.get("color"))
+    task_discord = get_discord_cfg(task_cfg)
+    task_color = parse_color(task_discord.get("color"))
     filter_cfg = task_cfg.get("llm") or None
     explain = bool(filter_cfg.get("explain")) if filter_cfg else False
     if analysis and filter_cfg:
@@ -462,14 +462,14 @@ async def _process_llm_curate_task(
     task_image_cfg = task_cfg.get("image") or {}
     fetch_image = not task_image_cfg.get("skip", False)
     task_filter = task_cfg.get("filter", {})
-    task_type = _task_type(task_cfg)
-    task_summarize = task_cfg.get("summarize", task_type == "digest")
+    kind = task_kind(task_cfg)
+    task_summarize = task_cfg.get("summarize", kind == "digest")
 
     if collector:
-        collector.begin_task(task_name, task_type)
+        collector.begin_task(task_name, kind)
 
     try:
-        feed_cfgs = [fc for fc in _get_feeds(task_cfg) if fc.get("url")]
+        feed_cfgs = [fc for fc in get_feeds(task_cfg) if fc.get("url")]
         if analysis and collector and collector.limit_feeds > 0:
             feed_cfgs = feed_cfgs[: collector.limit_feeds]
         task_state = state.get("tasks", {}).get(task_name, {})
@@ -522,7 +522,7 @@ async def _process_llm_curate_task(
                 )
 
             feed_color = (
-                _parse_color(fc.get("discord", {}).get("color")) or task_color or global_color
+                parse_color(fc.get("discord", {}).get("color")) or task_color or global_color
             )
             all_new_items.extend(
                 [dc_replace(item, meta={**item.meta, "color": feed_color}) for item in feed_items]
@@ -609,7 +609,7 @@ async def _process_llm_curate_task(
 
         # --- Push ---
         discord_format = task_discord.get("format")
-        if task_type == "digest":
+        if kind == "digest":
             target: (
                 DiscordEmbedTarget | DiscordDigestTarget | DiscordMarkdownTarget | DiscordTextTarget
             ) = DiscordDigestTarget()
@@ -620,19 +620,19 @@ async def _process_llm_curate_task(
                 log.error("[%s] Failed to post digest — state not saved", task_name)
                 return {}
             log.info("[%s] Posted digest", task_name)
-            if _get_file_path(task_cfg):
+            if get_file_path(task_cfg):
                 await FileDigestTarget().push(ctx, task_cfg, session)
         elif discord_format == "markdown":
             target = DiscordMarkdownTarget()
             ctx = PushContext(items=passing, memory=memory_text, cite_map=cite_map)
             failed_ids = await target.push(ctx, task_cfg, session)
-            if _get_file_path(task_cfg):
+            if get_file_path(task_cfg):
                 await FileEmbedTarget().push(ctx, task_cfg, session)
         else:
             target = DiscordEmbedTarget(fetch_image=fetch_image)
             ctx = PushContext(items=passing, memory=memory_text, cite_map=cite_map)
             failed_ids = await target.push(ctx, task_cfg, session)
-            if _get_file_path(task_cfg):
+            if get_file_path(task_cfg):
                 await FileEmbedTarget().push(ctx, task_cfg, session)
 
         # --- State update ---
@@ -686,8 +686,8 @@ async def _process_scraper_task(
 ) -> dict:
     """Scrape a site, post new listings as Discord embeds. Returns {task_name: task_state}."""
     task_name = task_cfg["name"]
-    task_discord = _get_discord_cfg(task_cfg)
-    task_color = _parse_color(task_discord.get("color")) or global_color
+    task_discord = get_discord_cfg(task_cfg)
+    task_color = parse_color(task_discord.get("color")) or global_color
 
     task_state = state.get("tasks", {}).get(task_name, {})
     prev_items = task_state.get("items", [])
@@ -713,7 +713,7 @@ async def _process_scraper_task(
         failed_ids = await DiscordMarkdownTarget().push(ctx, task_cfg, session)
     else:
         failed_ids = await DiscordEmbedTarget(fetch_image=False).push(ctx, task_cfg, session)
-    if _get_file_path(task_cfg):
+    if get_file_path(task_cfg):
         await FileEmbedTarget().push(ctx, task_cfg, session)
 
     prev_by_url = {item["url"]: item for item in prev_items}

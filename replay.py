@@ -11,7 +11,7 @@ import logging
 import pathlib
 from datetime import UTC, datetime
 
-from config import _get_api_key_for_provider, load_config
+from config import get_api_key_for_provider, load_config
 from llm import get_adapter
 
 log = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ async def _replay_one(provider: str, model: str, record: dict, api_key_cfg) -> d
     instructions = record.get("instructions")
     web_search = bool(record.get("web_search", False))
     input_text = _input_for(call_type, record)
-    adapter = get_adapter(provider, _get_api_key_for_provider(api_key_cfg, provider))
+    adapter = get_adapter(provider, get_api_key_for_provider(api_key_cfg, provider))
     try:
         resp = await adapter.complete(
             input_text,

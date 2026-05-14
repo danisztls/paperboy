@@ -1,6 +1,6 @@
 import logging
 
-from config import _get_llm_pull_cfg
+from config import get_llm_pull_cfg
 from llm.adapters.base import LLMAdapter
 from pipeline import Item, PullResult, Source
 
@@ -43,7 +43,7 @@ async def run_llm_task(
 ) -> str | None:
     """Call LLM with web search. Returns response text or None on failure."""
     name = task_cfg.get("name")
-    llm_cfg = _get_llm_pull_cfg(task_cfg)
+    llm_cfg = get_llm_pull_cfg(task_cfg)
     model = llm_cfg.get("model") or global_model or None
     prompt = llm_cfg["prompt"]
     web_search = llm_cfg.get("web_search", True)

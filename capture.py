@@ -116,10 +116,10 @@ class RunCapture:
     _tasks: list[TaskCapture] = field(default_factory=list, repr=False)
     _current: TaskCapture | None = field(default=None, repr=False)
 
-    def begin_task(self, name: str, task_type: str) -> None:
+    def begin_task(self, name: str, kind: str) -> None:
         self._current = TaskCapture(
             task=name,
-            type=task_type,
+            type=kind,
             timestamp=datetime.now(UTC).replace(microsecond=0).isoformat(),
         )
 

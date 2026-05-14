@@ -14,15 +14,15 @@ import aiohttp
 
 from capture import RunCapture
 from config import (
-    _get_api_key_for_provider,
-    _get_discord_cfg,
-    _get_feeds,
-    _get_llm_pull_cfg,
-    _parse_color,
-    _parse_period,
-    _resolve_model_specs,
-    _task_type,
+    get_api_key_for_provider,
+    get_discord_cfg,
+    get_feeds,
+    get_llm_pull_cfg,
     load_config,
+    parse_color,
+    parse_period,
+    resolve_model_specs,
+    task_kind,
     validate_config,
 )
 from llm import FallbackAdapter, get_adapter
@@ -116,8 +116,8 @@ def _build_adapter(specs: list[tuple[str | None, str | None]], api_key_cfg: dict
         return None, None
     if len(valid) == 1:
         p, m = valid[0]
-        return get_adapter(p, _get_api_key_for_provider(api_key_cfg, p)), m
-    entries = [(get_adapter(p, _get_api_key_for_provider(api_key_cfg, p)), m) for p, m in valid]
+        return get_adapter(p, get_api_key_for_provider(api_key_cfg, p)), m
+    entries = [(get_adapter(p, get_api_key_for_provider(api_key_cfg, p)), m) for p, m in valid]
     return FallbackAdapter(entries), None
 
 
@@ -184,7 +184,7 @@ async def _async_main(args: argparse.Namespace) -> None:
         _auto_clean(state)
         known_tasks = {t["name"] for t in config.get("tasks", []) if t.get("name")}
         known_feeds = {
-            t["name"]: {f["url"] for f in _get_feeds(t) if f.get("url")}
+            t["name"]: {f["url"] for f in get_feeds(t) if f.get("url")}
             for t in config.get("tasks", [])
             if t.get("name") and t.get("pull")
         }
@@ -198,14 +198,14 @@ async def _async_main(args: argparse.Namespace) -> None:
     api_key_cfg = llm_cfg.get("api_key") or None
     llm_models = llm_cfg.get("models") or {}
     evaluate_adapter, evaluate_model = _build_adapter(
-        _resolve_model_specs(llm_models.get("reasoning")), api_key_cfg
+        resolve_model_specs(llm_models.get("reasoning")), api_key_cfg
     )
     search_adapter, search_model = _build_adapter(
-        _resolve_model_specs(llm_models.get("topic")), api_key_cfg
+        resolve_model_specs(llm_models.get("topic")), api_key_cfg
     )
     global_language = llm_cfg.get("language") or "EN-US"
     discord_cfg = config.get("discord", {})
-    global_color = _parse_color(discord_cfg.get("color"))
+    global_color = parse_color(discord_cfg.get("color"))
 
     tasks = config.get("tasks", [])
     if not tasks:
@@ -222,7 +222,7 @@ async def _async_main(args: argparse.Namespace) -> None:
         if args.regenerate_state:
             now = datetime.now(UTC).replace(microsecond=0).isoformat()
             for task_cfg in tasks:
-                if _task_type(task_cfg) != "feeds":
+                if task_kind(task_cfg) != "feeds":
                     continue
                 task_name = task_cfg.get("name")
                 if not task_name:
@@ -231,7 +231,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                 task_state = state.setdefault("tasks", {}).setdefault(task_name, {})
                 feeds_state = task_state.setdefault("feeds", {})
                 source = RSSSource()
-                for feed_cfg in _get_feeds(task_cfg):
+                for feed_cfg in get_feeds(task_cfg):
                     url = feed_cfg.get("url")
                     if not url:
                         continue
@@ -269,19 +269,19 @@ async def _async_main(args: argparse.Namespace) -> None:
                     sys.exit(1)
 
             for task_cfg in task_list:
-                webhook = _get_discord_cfg(task_cfg).get("webhook")
+                webhook = get_discord_cfg(task_cfg).get("webhook")
                 if not webhook:
                     continue
-                period = _parse_period(task_cfg.get("period", DEFAULT_PERIOD))
-                task_type = _task_type(task_cfg)
+                period = parse_period(task_cfg.get("period", DEFAULT_PERIOD))
+                kind = task_kind(task_cfg)
                 name = task_cfg.get("name")
                 if not name:
-                    log.warning("Skipping %s task with no name", task_type)
+                    log.warning("Skipping %s task with no name", kind)
                     continue
                 task_state = state.get("tasks", {}).get(name, {})
 
-                if task_type == "llm":
-                    if not _get_llm_pull_cfg(task_cfg).get("web_search"):
+                if kind == "llm":
+                    if not get_llm_pull_cfg(task_cfg).get("web_search"):
                         log.warning(
                             "[%s] Skipping LLM task: llm.web_search not configured (no input source)",
                             name,
@@ -305,7 +305,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                             analysis=analysis,
                         )
                     )
-                elif task_type == "scraper":
+                elif kind == "scraper":
                     if analysis:
                         log.info("[%s] Skipping scraper task in analysis mode", name)
                         continue
@@ -318,7 +318,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     )
                 else:
                     feeds_state = task_state.get("feeds", {})
-                    feed_urls = [f["url"] for f in _get_feeds(task_cfg) if f.get("url")]
+                    feed_urls = [f["url"] for f in get_feeds(task_cfg) if f.get("url")]
                     if (
                         not force_task
                         and not analysis
@@ -539,7 +539,7 @@ def main():
                 llm_cfg = cfg.get("llm") or {}
                 _sum_api_key_cfg = llm_cfg.get("api_key") or None
                 _sum_language = llm_cfg.get("language") or "EN-US"
-                _sum_specs = _resolve_model_specs((llm_cfg.get("models") or {}).get("topic"))
+                _sum_specs = resolve_model_specs((llm_cfg.get("models") or {}).get("topic"))
                 _sum_adapter, _sum_model = _build_adapter(_sum_specs, _sum_api_key_cfg)
             except Exception:
                 pass
