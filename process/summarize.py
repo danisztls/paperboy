@@ -6,7 +6,10 @@ import re
 import sys
 
 import aiohttp
+import trafilatura
+import yt_dlp
 
+from constants import USER_AGENT
 from providers.llm.base import LLMAdapter
 
 log = logging.getLogger(__name__)
@@ -164,11 +167,6 @@ async def _fetch_sponsorblock(video_id: str, session: aiohttp.ClientSession) -> 
 
 async def _fetch_youtube_data(url: str, session: aiohttp.ClientSession) -> tuple[str, str] | None:
     """Return (title, transcript) for a YouTube URL, or None on failure."""
-    try:
-        import yt_dlp
-    except ImportError:
-        log.warning("yt-dlp is not installed — transcript fetch skipped")
-        return None
 
     def _extract():
         with yt_dlp.YoutubeDL({"skip_download": True, "quiet": True, "no_warnings": True}) as ydl:
@@ -252,12 +250,6 @@ async def _fetch_article(
 ) -> tuple[str, str] | str | None:
     """Extract article text (and optionally title) from a URL using trafilatura."""
     try:
-        import trafilatura
-    except ImportError:
-        log.warning("trafilatura is not installed — article fetch skipped")
-        return None
-
-    try:
         async with session.get(url, allow_redirects=True) as resp:
             resp.raise_for_status()
             html = await resp.text()
@@ -310,18 +302,9 @@ async def run_summarize(
 ) -> None:
     is_youtube = bool(_YOUTUBE_RE.match(url))
 
-    if is_youtube:
-        try:
-            import yt_dlp  # noqa: F401 — check before opening session
-        except ImportError:
-            log.error("yt-dlp is not installed — run: uv sync")
-            sys.exit(1)
-
     async with aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=15),
-        headers={
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
-        },
+        headers={"User-Agent": USER_AGENT},
     ) as session:
         if is_youtube:
             result = await _fetch_youtube_data(url, session)

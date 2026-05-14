@@ -587,9 +587,7 @@ async def _process_llm_curate_task(
                 passing = [
                     dc_replace(it, body=it.filter_reason or it.summary or it.body) for it in passing
                 ]
-            elif all(it.summary is None for it in passing):
-                pass  # no summaries to apply
-            else:
+            elif any(it.summary for it in passing):
                 passing = [dc_replace(it, body=it.summary or it.body) for it in passing]
             all_annotated = filter_result.items
             memory_text = filter_result.memory

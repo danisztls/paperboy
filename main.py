@@ -24,6 +24,7 @@ from config import (
     task_kind,
     validate_config,
 )
+from constants import USER_AGENT
 from evals.capture import RunCapture
 from process.summarize import run_summarize
 from providers.llm import FallbackAdapter, get_adapter
@@ -215,9 +216,7 @@ async def _async_main(args: argparse.Namespace) -> None:
     async with aiohttp.ClientSession(
         connector=aiohttp.TCPConnector(limit=20),
         timeout=aiohttp.ClientTimeout(total=15),
-        headers={
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
-        },
+        headers={"User-Agent": USER_AGENT},
     ) as session:
         if args.regenerate_state:
             now = datetime.now(UTC).replace(microsecond=0).isoformat()
