@@ -108,6 +108,20 @@ def _prune_old_files(root: pathlib.Path, days: int) -> int:
     return removed
 
 
+def _merge_task_results(state: dict, results: list) -> None:
+    """Fold per-task result dicts into state. Empty/Exception results leave state untouched."""
+    tasks_state = state.setdefault("tasks", {})
+    for result in results:
+        if isinstance(result, Exception):
+            log.error("Feed task failed: %s", result)
+        elif result:
+            for task_name, task_state in result.items():
+                if task_name in tasks_state:
+                    tasks_state[task_name] = {**tasks_state[task_name], **task_state}
+                else:
+                    tasks_state[task_name] = task_state
+
+
 def _check_due_or_skip(name: str, last_run: str | None, period: timedelta, now: datetime) -> bool:
     """True if the task is due. Otherwise log a skip message and return False."""
     if _is_due({"last_run": last_run}, period, now):
@@ -378,16 +392,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     print(collector.to_json())
                 return
 
-            tasks_state = state.setdefault("tasks", {})
-            for result in results:
-                if isinstance(result, Exception):
-                    log.error("Feed task failed: %s", result)
-                elif result:
-                    for task_name, task_state in result.items():
-                        if task_name in tasks_state:
-                            tasks_state[task_name] = {**tasks_state[task_name], **task_state}
-                        else:
-                            tasks_state[task_name] = task_state
+            _merge_task_results(state, results)
             save_state(state_path, state)
             log.info("Done. State saved to %s", state_path)
 
