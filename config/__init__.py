@@ -377,43 +377,11 @@ def _fmt_loc(loc: tuple) -> str:
     return "".join(parts)
 
 
-def _build_line_map(node, path: tuple = (), result: dict | None = None) -> dict:
-    import yaml
-
-    if result is None:
-        result = {}
-    result[path] = node.start_mark.line + 1
-    if isinstance(node, yaml.MappingNode):
-        for key_node, value_node in node.value:
-            _build_line_map(value_node, path + (key_node.value,), result)
-    elif isinstance(node, yaml.SequenceNode):
-        for i, item_node in enumerate(node.value):
-            _build_line_map(item_node, path + (i,), result)
-    return result
-
-
-def validate_config(config: dict, config_path: pathlib.Path | None = None) -> list[str]:
-    line_map: dict = {}
-    if config_path is not None and config_path.suffix in (".yaml", ".yml"):
-        import yaml
-
-        try:
-            node = yaml.compose(config_path.read_text())
-            if node is not None:
-                line_map = _build_line_map(node)
-        except Exception:
-            pass
-
+def validate_config(config: dict) -> list[str]:
     try:
         _Config.model_validate(config)
         return []
     except ValidationError as exc:
-        errors = []
-        for e in exc.errors():
-            loc = e["loc"]
-            line = next(
-                (line_map[loc[:n]] for n in range(len(loc), 0, -1) if loc[:n] in line_map), None
-            )
-            suffix = f" (line {line})" if line else ""
-            errors.append(f"{_fmt_loc(loc)}{suffix}: {e['msg'].removeprefix('Value error, ')}")
-        return errors
+        return [
+            f"{_fmt_loc(e['loc'])}: {e['msg'].removeprefix('Value error, ')}" for e in exc.errors()
+        ]
