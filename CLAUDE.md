@@ -88,9 +88,9 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
 
 #### `process/` — between-pull-and-push processing stages
 
-- `process/filter_llm.py` — LLM-based feed entry classifier. `filter_entries(items, filter_cfg, ...)` classifies items grouped by source; returns `(results_dict, memory_text) | None`. `results_dict` maps `str(id)` → `{"pass": bool, "reason": str}`; `memory_text` is the new memory log entry. When `explain: true`, passing-item reasons are ELI5-style (2–3 sentences). Uses the LLM adapter resolved from config.
+- `process/filter_llm.py` — LLM-based feed entry classifier. Defines the `FilterDecisions(items: list[FilterItem], memory: str)` Pydantic schema; `filter_entries(items, filter_cfg, ...)` classifies items grouped by source via `adapter.complete_structured(payload, FilterDecisions, ...)` — provider-native structured output (`instructor` in tool-calling mode) handles the JSON parse + schema validation + retry. Returns `(results_dict, memory_text) | None`. `results_dict` maps `str(id)` → `{"pass": bool, "reason": str}`; `memory_text` is the new memory log entry. When `explain: true`, passing-item reasons are ELI5-style (2–3 sentences).
 - `process/filter_heuristic.py` — pure regex-based filters used by `pull/feed.py` during feed parsing. `apply_regex(cfg, text)` runs `extract` / `replace` / `remove_phrases_with_urls` / `remove_phrases_containing` / `clear` ops; `url_filtered(url, cfg)` checks `skip_containing`.
-- `process/summarize.py` — LLM summarization helpers. `summarize_entry(title, body, adapter, ...)` summarizes a feed entry. `summarize_transcript(transcript, adapter, ...)` summarizes a YouTube transcript. `fetch_item_content(url, session)` fetches and extracts readable text from an article URL.
+- `process/summarize.py` — LLM summarization + article/transcript extraction. `summarize_entry(title, body, adapter, ...)` summarizes a feed entry. `summarize_transcript(transcript, adapter, ...)` summarizes a YouTube transcript. `fetch_item_content(url, session)` returns `(content, og_image)` — article text via trafilatura plus the article's `og:image` URL scraped from the same HTML; YouTube URLs return the transcript with `og_image=None`. `extract_og_image(html)` is the standalone helper used at end of the trafilatura extraction.
 
 #### `pull/` — source implementations
 
@@ -108,11 +108,11 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
 #### `push/` — target implementations
 
 - `push/discord.py` — Discord webhook targets and underlying posting functions.
-  - `DiscordEmbedTarget(Target)` — posts each item as a Discord embed; if no `image` is set on the Item and `image.skip` is not configured, scrapes the article HTML for an `og:image` URL.
+  - `DiscordEmbedTarget(Target)` — posts each item as a Discord embed. The embed image is `Item.image` (set during pull from the feed entry or during summarize from the article's `og:image`); `item.meta["skip_image"]` (from task/feed `image.skip`) suppresses it.
   - `DiscordTextTarget(Target)` — posts each item's body as a plain text message (truncated to 2000 chars).
   - `DiscordMarkdownTarget(Target)` — posts each item as `### [title](<url>) source\nbody` (markdown format, no embed).
   - `DiscordDigestTarget(Target)` — posts `ctx.memory` as ≤2000-char chunks with `[n]` citation markers replaced by `[[Source]](<url>)` Discord masked links.
-  - All use `_post_webhook` which retries once on 429. OG image fetching retries once after 2s on bot-detection (response < 2 KB).
+  - All use `_post_webhook` which retries once on 429.
 - `push/file.py` — file-based target implementations. Path is expanded (`~`, env vars) and parent dirs are created on first write.
   - `FileEmbedTarget(Target)` — appends each item as `## [Title](url)\n*source · date*\n\nbody\n\n---` blocks to the configured file.
   - `FileDigestTarget(Target)` — appends `## YYYY-MM-DD\n\ndigest text\n\n---` to the configured file, with `[n]` citation markers resolved to standard markdown `[Source](url)` links.
@@ -120,7 +120,7 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
 #### `providers/llm/` — LLM provider adapters
 
 - `providers/llm/__init__.py` — `get_adapter(provider, api_key)` factory; returns `OpenAIAdapter`, `GeminiAdapter`, `AnthropicAdapter`, or `DeepSeekAdapter`. Also exports `FallbackAdapter` (tries entries in order until one returns non-None).
-- `providers/llm/base.py` — `LLMAdapter` ABC with `complete(...) -> LLMResponse | None`, plus the `LLMResponse` dataclass (`text`, `model`, `input_tokens`, `output_tokens`, `latency_s`, `reasoning`, `finish_reason`). `complete()` accepts `web_search: bool | dict = False` and `reasoning: bool | dict = False`; truthy `reasoning` maps to the provider's thinking/extended-reasoning API and populates `LLMResponse.reasoning`.
+- `providers/llm/base.py` — `LLMAdapter` ABC with two abstract methods: `complete(...) -> LLMResponse | None` for free-form text and `complete_structured(prompt, response_model, ...) -> BaseModel | None` for provider-native structured output (via `instructor`, see filter docs below). Plus the `LLMResponse` dataclass (`text`, `model`, `input_tokens`, `output_tokens`, `latency_s`, `reasoning`, `finish_reason`). `complete()` accepts `web_search: bool | dict = False` and `reasoning: bool | dict = False`; truthy `reasoning` maps to the provider's thinking/extended-reasoning API and populates `LLMResponse.reasoning`.
 - `providers/llm/openai.py` — OpenAI adapter (Responses API, supports `web_search_preview` and `reasoning={"effort": "high", "summary": "auto"}`).
 - `providers/llm/gemini.py` — Gemini adapter (`google-genai`, supports Google Search tool and `ThinkingConfig(include_thoughts=True)`).
 - `providers/llm/anthropic.py` — Anthropic adapter (streaming Messages API, supports `web_search` tool and `thinking={"type": "enabled", "budget_tokens": ...}`).
@@ -176,11 +176,11 @@ Any change that adds, removes, or renames a config key must also update the corr
 
 ### Tests (`tests/`)
 
-Pipeline-only e2e suite (6 tests, ~0.3s). Run with `uv run pytest`.
+Pipeline + helper test suite (21 tests, ~0.3s). Run with `uv run pytest`.
 
 Tests call `_process_llm_curate_task` and `_process_llm_search_task` directly (not the `_async_main` orchestrator, not the CLI). Two boundaries are faked; everything else is real:
-- **`FakeLLMAdapter`** (`tests/conftest.py`) — `LLMAdapter` subclass with a `queue()`-driven response list. Passed as the `llm_adapter=` parameter on the task functions — no monkeypatching needed. Exhausted queues raise loudly so missing canned responses fail the test rather than hanging.
-- **`aioresponses`** — intercepts at the `aiohttp` transport layer. Real `RSSSource`, real `Discord*Target` (including `_post_webhook` retry-on-429 and OG image scraping), real `File*Target`, real `fetch_item_content` all run; only the network is mocked.
+- **`FakeLLMAdapter`** (`tests/conftest.py`) — `LLMAdapter` subclass with two queues: `queue()` / `queue_text()` for `complete()` calls and `queue_structured()` / `queue_filter()` for `complete_structured()` calls. Passed as the `llm_adapter=` parameter on the task functions — no monkeypatching needed. Exhausted queues raise loudly so missing canned responses fail the test rather than hanging.
+- **`aioresponses`** — intercepts at the `aiohttp` transport layer. Real `RSSSource`, real `Discord*Target` (including `_post_webhook` retry-on-429), real `File*Target`, real `fetch_item_content` (article + `og:image` extraction via trafilatura) all run; only the network is mocked.
 
 Fixtures live in `tests/fixtures/` (`feed_basic.xml`, `feed_b.xml`, `article_basic.html`). Helpers `make_curate_cfg` / `make_search_cfg` build task config dicts inline.
 
@@ -188,8 +188,11 @@ Scenarios covered:
 - Curate happy path, already-seen dedup, single-feed pull failure (`None` from `Source.pull()` must not update `last_run`), filter-fails-twice fail-open.
 - Digest with `cite_map` resolution (`[n]` → `[Source](url)` in `FileDigestTarget`; cite markers stripped from stored memory per `_CITE_STRIP_RE`).
 - LLM search happy path.
+- `tasks._merge_filter` (task-level vs feed-level filter merging across single/list shapes).
+- `main._merge_task_results` orchestrator invariant — empty / exception task results leave state untouched.
+- `main._prune_old_files` retention sweep.
 
-Not covered: scraper task (Playwright), orchestrator-level invariants (`asyncio.gather(..., return_exceptions=True)` isolation, `save_state` only on success). The only `monkeypatch` in the suite is `asyncio.sleep` in the fail-open test (to skip the 10s filter retry delay) — stdlib, not a production class.
+Not covered: scraper task (Playwright), `asyncio.gather(..., return_exceptions=True)` isolation at the `_async_main` level. The only `monkeypatch` in the suite is `asyncio.sleep` in the fail-open test (to skip the 10s filter retry delay) — stdlib, not a production class.
 
 `get_new_entries` reverses feedparser's order (oldest-first), so the LLM filter sees XML items in reverse: the first item in the XML is `id=N-1`, the last is `id=0`. Keep this in mind when wiring `queue_filter` responses.
 
@@ -224,7 +227,7 @@ Caveats:
 
 - Errors posting one entry must not kill the run — `main.py` catches per-task exceptions, the gather uses `return_exceptions=True`.
 - Keep the 2-second sleep between posts in the same task (Discord webhook rate limits).
-- Don't add a sync HTTP path; the OG-image fetch and feed posting are deliberately concurrent via the shared session.
+- Don't add a sync HTTP path; feed fetching and article+og:image extraction during summarize all run concurrently via the shared aiohttp session.
 - Only update `last_run` on a successful feed fetch. A `None` from `Source.pull()` must short-circuit the state write so a transiently broken feed retries on the next cron tick rather than waiting `period` hours.
 - LLM filter failures retry once after 10s; on second failure all items are treated as passing (fail-open).
 - All feeds in a given RSS/digest task share one LLM filter call; items are sent grouped by source with monotonically increasing integer IDs across all feeds.
