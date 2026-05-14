@@ -1,8 +1,14 @@
-"""Web scraping source: browser-based extraction via site adapters."""
+"""Web scraping source: browser-based extraction via site adapters.
+
+Uses Camoufox (hardened Firefox) as the engine so adapters get past anti-bot
+protections like Cloudflare without per-adapter stealth plumbing. Camoufox
+manages the fingerprint itself — don't set a custom User-Agent. Requires the
+binary downloaded once via `uv run camoufox fetch`.
+"""
 
 import logging
 
-from playwright.async_api import async_playwright
+from camoufox.async_api import AsyncCamoufox
 
 from pipeline import PullResult, Source
 from pull.scrapers import vivareal  # noqa: F401 — registers via @register_adapter
@@ -34,21 +40,9 @@ class ScraperSource(Source):
 
         log.info("[scraper] %s → %s", adapter_name, url)
         try:
-            async with async_playwright() as pw:
-                browser = await pw.chromium.launch(headless=True)
-                try:
-                    context = await browser.new_context(
-                        user_agent=(
-                            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-                        ),
-                        locale="pt-BR",
-                        viewport={"width": 1280, "height": 900},
-                    )
-                    page = await context.new_page()
-                    all_items = await adapter_cls().scrape(url, scraper_cfg, seen, page)
-                finally:
-                    await browser.close()
+            async with AsyncCamoufox(headless=True, locale="pt-BR", os="linux") as browser:
+                page = await browser.new_page()
+                all_items = await adapter_cls().scrape(url, scraper_cfg, seen, page)
         except Exception as exc:
             log.error("[scraper] %s failed: %s", adapter_name, exc)
             return None
