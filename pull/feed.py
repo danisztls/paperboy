@@ -11,7 +11,7 @@ from pipeline import Item, PullResult, Source
 from process.filter_heuristic import apply_regex, url_filtered
 
 DESCRIPTION_MAX = 512
-ENTRY_MAX_AGE_SECONDS = 7 * 86400
+DEFAULT_ENTRY_MAX_AGE_SECONDS = 7 * 86400
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +59,8 @@ async def get_new_entries(
     seen: set[str],
     session: aiohttp.ClientSession,
     filter_log: dict | None = None,
+    *,
+    max_age_seconds: int = DEFAULT_ENTRY_MAX_AGE_SECONDS,
 ) -> tuple[list[dict], list[Item]] | None:
     """Fetch feed, return (current_items, new_entries) or None on failure.
 
@@ -104,7 +106,7 @@ async def get_new_entries(
             continue
         pt = entry.get("published_parsed") or entry.get("updated_parsed")
         published = datetime(*pt[:6], tzinfo=UTC) if pt else None
-        if published and (now - published).total_seconds() > ENTRY_MAX_AGE_SECONDS:
+        if published and (now - published).total_seconds() > max_age_seconds:
             log.debug("[%s] Skipping old entry (%s): %s", feed_title, published.date(), eid[:80])
             continue
         current_items.append({"url": entry.get("link", ""), "title": _entry_title(entry)})
@@ -178,6 +180,9 @@ async def get_new_entries(
 class RSSSource(Source):
     """Pulls items from an RSS/Atom feed."""
 
+    def __init__(self, max_age_seconds: int = DEFAULT_ENTRY_MAX_AGE_SECONDS) -> None:
+        self._max_age_seconds = max_age_seconds
+
     async def pull(
         self,
         cfg: dict,
@@ -186,7 +191,9 @@ class RSSSource(Source):
         *,
         filter_log: dict | None = None,
     ) -> PullResult | None:
-        result = await get_new_entries(cfg, seen, session, filter_log=filter_log)
+        result = await get_new_entries(
+            cfg, seen, session, filter_log=filter_log, max_age_seconds=self._max_age_seconds
+        )
         if result is None:
             return None
         current_items, new_items = result

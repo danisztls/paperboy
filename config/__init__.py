@@ -146,6 +146,11 @@ class _GlobalDiscord(BaseModel):
     color: _Color = None
 
 
+class _Feeds(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    max_age_days: int = 7
+
+
 class _ModelSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
     provider: Literal["openai", "gemini", "deepseek", "anthropic"] | None = None
@@ -353,6 +358,7 @@ class _Task(BaseModel):
 class _Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
     discord: _GlobalDiscord | None = None
+    feeds: _Feeds | None = None
     llm: _GlobalLLM | None = None
     image: _Image | None = None
     tasks: list[_Task]
