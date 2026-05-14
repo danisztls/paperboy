@@ -35,7 +35,7 @@ The project uses `uv` (see `uv.lock`, `.python-version` pinning Python 3.14).
 
 After any implementation, run format then lint before finishing.
 
-Config is read from `$XDG_CONFIG_HOME/claudinho/config.yaml` (default `~/.config/claudinho/config.yaml`) and state is written to `$XDG_DATA_HOME/claudinho/state.json` (default `~/.local/share/claudinho/state.json`). Both paths can be overridden: pass `--config` and/or `--state`. Copy `config.yaml.template` and fill in webhook URLs and feed URLs.
+Config is read from `$XDG_CONFIG_HOME/claudinho/config.yaml` (default `~/.config/claudinho/config.yaml`) and state is written to `$XDG_DATA_HOME/claudinho/state.json` (default `~/.local/share/claudinho/state.json`). Both paths can be overridden: pass `--config` and/or `--state`. Copy `config/config.yaml.template` and fill in webhook URLs and feed URLs.
 
 Logs are written to `<state_dir>/logs/<timestamp>.log` on every run.
 
@@ -43,7 +43,7 @@ Eval traces (every LLM call's prompt, response, tokens, latency, optional reason
 
 ## Architecture
 
-Ten root modules plus three subpackages (`pull/`, `push/`, `llm/`). The execution model follows a **pull → process → push** pipeline, with always-on capture writing every LLM call's I/O to disk:
+Three root modules (`main.py`, `tasks.py`, `pipeline.py`) plus subpackages (`pull/`, `push/`, `process/`, `providers/llm/`, `state/`, `config/`, `evals/`, `benchmark/`). The execution model follows a **pull → process → push** pipeline, with always-on capture writing every LLM call's I/O to disk:
 
 ```
 Source.pull()  →  _summarize_items() + _apply_llm_filter()  →  Target.push()
@@ -65,11 +65,6 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
 ### Module overview
 
 - `main.py` — CLI entry point and orchestration. Resolves config/state paths, manages a lock file, loads config + state, opens a single shared `aiohttp.ClientSession`, then dispatches to one of these short-circuit modes (`--regenerate-state`, `--clean`/`--migrate`, `--validate`, `--summarize`, `--replay`) or the normal run-due-tasks-in-parallel path. A `RunCapture` is constructed unconditionally; after tasks finish, captured LLM calls are flushed to `<state_dir>/evals/<task>/<run_iso>.jsonl`. `--analysis` reshapes the run into "expensive inspection mode" (reasoning on, ELI5 filter reasons, item/feed truncation, dry-run, render to stdout).
-- `replay.py` — reads a JSONL produced by `RunCapture` and re-issues each captured call against a list of `provider:model` pairs (only the model varies; instructions/input are used verbatim). Writes a side-by-side JSON report to `<state_dir>/evals/replays/`.
-- `capture.py` — `RunCapture` collects every LLM call's instructions, input, response, tokens, latency, optional reasoning. Exposes `to_jsonl_records()`, `write_jsonl()`, `to_json()`, and rich `display()`.
-- `config.py` — config loading and validation. `load_config(path)` reads YAML or JSON. `validate_config(config)` uses Pydantic models to validate the full config and returns a list of error strings. Also houses `parse_color`, `parse_period`, `task_kind` (returns the explicit `kind:` key if present; otherwise infers from `pull` list: `scraper` item → scraper, `llm` item → LLM, else feeds), `_resolve_model_spec` (returns `(provider, model_name)` from a `{provider, model}` dict), `get_api_key_for_provider`, and helpers: `get_feeds`, `get_discord_cfg`, `get_llm_pull_cfg`, `_get_scraper_cfg`, `get_file_path`.
-- `state.py` — state I/O and maintenance. `load_state`, `save_state` (writes `.old` backup, stamps `_version` and `_last_run`), `_auto_clean` (removes malformed items), and `_remove_unknown` (prunes tasks/feeds absent from config).
-- `migrate.py` — state schema migrations. `needs_migration(state)` checks `state["_version"]` against `CURRENT_VERSION` (2). `migrate(state)` steps through `_STEPS` until current. The v2 migration nests all task keys under a top-level `"tasks"` key.
 - `tasks.py` — task orchestration. Every LLM-touching stage takes a `collector=` (always-on `RunCapture`) and an `analysis: bool = False`. `analysis` controls dry-run, item/feed truncation, `reasoning=True` on adapter calls, and forcing `explain=True` on the filter prompt; the collector controls only what gets recorded.
   - `_pull_feeds(source, feed_cfgs, feeds_state, task_filter, session, *, collector, analysis)` — fetches all feeds concurrently via `RSSSource`, merges heuristic filters, returns `{url: PullResult | None}`. Under `analysis`, `seen` is empty so all items look fresh.
   - `_summarize_items(items, ..., *, collector, analysis)` — concurrently fetches item content and summarizes via LLM; sets `item.summary`. Passes `reasoning=analysis` through.
@@ -78,20 +73,36 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
   - `_process_llm_curate_task` — RSS/digest pipeline: pull → summarize → filter → `DiscordEmbedTarget`, `DiscordMarkdownTarget`, or `DiscordDigestTarget` (+ file target if configured) → state update. Push step short-circuits under `analysis`.
   - `_process_scraper_task` — scraper pipeline: `ScraperSource.pull()` → `DiscordEmbedTarget` or `DiscordMarkdownTarget` → state update. Skipped entirely under `analysis`.
   - `_is_due` checks period with 60s grace. `_merge_filter` combines task-level and feed-level heuristic filter dicts.
-- `llm_filter.py` — LLM-based feed entry classifier. `filter_entries(items, filter_cfg, ...)` classifies items grouped by source; returns `(results_dict, memory_text) | None`. `results_dict` maps `str(id)` → `{"pass": bool, "reason": str}`; `memory_text` is the new memory log entry. When `explain: true`, passing-item reasons are ELI5-style (2–3 sentences). Uses the LLM adapter resolved from config.
-- `summarize.py` — LLM summarization helpers. `summarize_entry(title, body, adapter, ...)` summarizes a feed entry. `summarize_transcript(transcript, adapter, ...)` summarizes a YouTube transcript. `fetch_item_content(url, session)` fetches and extracts readable text from an article URL.
+
+#### `config/` — config loading and validation
+
+- `config/__init__.py` — `load_config(path)` reads YAML or JSON. `validate_config(config)` uses Pydantic models to validate the full config and returns a list of error strings. Also houses `parse_color`, `parse_period`, `task_kind` (returns the explicit `kind:` key if present; otherwise infers from `pull` list: `scraper` item → scraper, `llm` item → LLM, else feeds), `_resolve_model_spec` (returns `(provider, model_name)` from a `{provider, model}` dict), `get_api_key_for_provider`, and helpers: `get_feeds`, `get_discord_cfg`, `get_llm_pull_cfg`, `_get_scraper_cfg`, `get_file_path`.
+- `config/config.yaml.template` — canonical reference for all supported config keys and defaults.
+
+#### `state/` — state I/O and migrations
+
+- `state/__init__.py` — `load_state`, `save_state` (writes `.old` backup, stamps `_version` and `_last_run`), `_auto_clean` (removes malformed items), and `_remove_unknown` (prunes tasks/feeds absent from config).
+- `state/migrate.py` — state schema migrations. `needs_migration(state)` checks `state["_version"]` against `CURRENT_VERSION` (2). `migrate(state)` steps through `_STEPS` until current. The v2 migration nests all task keys under a top-level `"tasks"` key.
+- `state/state.json.template` — example state file shape.
+
+#### `process/` — between-pull-and-push processing stages
+
+- `process/filter_llm.py` — LLM-based feed entry classifier. `filter_entries(items, filter_cfg, ...)` classifies items grouped by source; returns `(results_dict, memory_text) | None`. `results_dict` maps `str(id)` → `{"pass": bool, "reason": str}`; `memory_text` is the new memory log entry. When `explain: true`, passing-item reasons are ELI5-style (2–3 sentences). Uses the LLM adapter resolved from config.
+- `process/filter_heuristic.py` — pure regex-based filters used by `pull/feed.py` during feed parsing. `apply_regex(cfg, text)` runs `extract` / `replace` / `remove_phrases_with_urls` / `remove_phrases_containing` / `clear` ops; `url_filtered(url, cfg)` checks `skip_containing`.
+- `process/summarize.py` — LLM summarization helpers. `summarize_entry(title, body, adapter, ...)` summarizes a feed entry. `summarize_transcript(transcript, adapter, ...)` summarizes a YouTube transcript. `fetch_item_content(url, session)` fetches and extracts readable text from an article URL.
 
 #### `pull/` — source implementations
 
 - `pull/feed.py` — feed fetching, dedup, and entry enrichment.
   - `RSSSource(Source)` — concrete source; wraps `get_new_entries`.
-  - `get_new_entries(feed_cfg, seen, session)` — fetches and parses the feed, returns `(current_items, new_entries: list[Item])` or `None` on parse failure. Entry ID is `entry.link`; entries with no link or older than 7 days are skipped. Bodies are HTML-stripped, truncated to 512 chars, and Markdown-escaped. Heuristic filters (`filter.title`, `filter.description`, `filter.url`) are applied via `_apply_regex`. Supported ops: `extract` (regex), `replace`/`with`, `remove_phrases_with_urls`, `remove_phrases_containing`, `clear`, `skip_containing`.
+  - `get_new_entries(feed_cfg, seen, session)` — fetches and parses the feed, returns `(current_items, new_entries: list[Item])` or `None` on parse failure. Entry ID is `entry.link`; entries with no link or older than 7 days are skipped. Bodies are HTML-stripped, truncated to 512 chars, and Markdown-escaped. Heuristic filters (`filter.title`, `filter.description`, `filter.url`) are applied via `process.filter_heuristic.apply_regex` and `url_filtered`. Supported ops: `extract` (regex), `replace`/`with`, `remove_phrases_with_urls`, `remove_phrases_containing`, `clear`, `skip_containing`.
 - `pull/llm.py` — LLM web-search source.
   - `LLMSearchSource(Source)` — calls `run_llm_task` and wraps the response as a single `Item`.
   - `run_llm_task(task_cfg, instructions, model, adapter)` — calls the configured LLM with web search enabled, returns plain-text response or `None`.
 - `pull/scraper.py` — browser-based extraction via Playwright.
   - `ScraperSource(Source)` — launches a headless Chromium browser, delegates to a site adapter, returns new listings as `Item`s.
-- `pull/adapters/vivareal.py` — `VivaRealAdapter`: parses property listings from VivaReal search pages.
+- `pull/scrapers/base.py` — `SiteAdapter` ABC and the `@register_adapter` decorator-based registry (`get_adapter`, `available_adapters`).
+- `pull/scrapers/vivareal.py` — `VivaRealAdapter`: parses property listings from VivaReal search pages.
 
 #### `push/` — target implementations
 
@@ -105,14 +116,19 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
   - `FileEmbedTarget(Target)` — appends each item as `## [Title](url)\n*source · date*\n\nbody\n\n---` blocks to the configured file.
   - `FileDigestTarget(Target)` — appends `## YYYY-MM-DD\n\ndigest text\n\n---` to the configured file, with `[n]` citation markers resolved to standard markdown `[Source](url)` links.
 
-#### `llm/` — LLM provider adapters
+#### `providers/llm/` — LLM provider adapters
 
-- `llm/__init__.py` — `get_adapter(provider, api_key)` factory; returns `OpenAIAdapter`, `GeminiAdapter`, `AnthropicAdapter`, or `DeepSeekAdapter`. Also exports `FallbackAdapter` (tries entries in order until one returns non-None).
-- `llm/adapters/base.py` — `LLMAdapter` ABC with `complete(...) -> LLMResponse | None`, plus the `LLMResponse` dataclass (`text`, `model`, `input_tokens`, `output_tokens`, `latency_s`, `reasoning`, `finish_reason`). `complete()` accepts `web_search: bool | dict = False` and `reasoning: bool | dict = False`; truthy `reasoning` maps to the provider's thinking/extended-reasoning API and populates `LLMResponse.reasoning`.
-- `llm/adapters/openai.py` — OpenAI adapter (Responses API, supports `web_search_preview` and `reasoning={"effort": "high", "summary": "auto"}`).
-- `llm/adapters/gemini.py` — Gemini adapter (`google-genai`, supports Google Search tool and `ThinkingConfig(include_thoughts=True)`).
-- `llm/adapters/anthropic.py` — Anthropic adapter (streaming Messages API, supports `web_search` tool and `thinking={"type": "enabled", "budget_tokens": ...}`).
-- `llm/adapters/deepseek.py` — DeepSeek adapter (OpenAI-compatible Chat Completions; reasoning routes to `deepseek-reasoner` and captures `reasoning_content`).
+- `providers/llm/__init__.py` — `get_adapter(provider, api_key)` factory; returns `OpenAIAdapter`, `GeminiAdapter`, `AnthropicAdapter`, or `DeepSeekAdapter`. Also exports `FallbackAdapter` (tries entries in order until one returns non-None).
+- `providers/llm/base.py` — `LLMAdapter` ABC with `complete(...) -> LLMResponse | None`, plus the `LLMResponse` dataclass (`text`, `model`, `input_tokens`, `output_tokens`, `latency_s`, `reasoning`, `finish_reason`). `complete()` accepts `web_search: bool | dict = False` and `reasoning: bool | dict = False`; truthy `reasoning` maps to the provider's thinking/extended-reasoning API and populates `LLMResponse.reasoning`.
+- `providers/llm/openai.py` — OpenAI adapter (Responses API, supports `web_search_preview` and `reasoning={"effort": "high", "summary": "auto"}`).
+- `providers/llm/gemini.py` — Gemini adapter (`google-genai`, supports Google Search tool and `ThinkingConfig(include_thoughts=True)`).
+- `providers/llm/anthropic.py` — Anthropic adapter (streaming Messages API, supports `web_search` tool and `thinking={"type": "enabled", "budget_tokens": ...}`).
+- `providers/llm/deepseek.py` — DeepSeek adapter (OpenAI-compatible Chat Completions; reasoning routes to `deepseek-reasoner` and captures `reasoning_content`).
+
+#### `evals/` — captured LLM-call traces and replay
+
+- `evals/capture.py` — `RunCapture` collects every LLM call's instructions, input, response, tokens, latency, optional reasoning. Exposes `to_jsonl_records()`, `write_jsonl()`, `to_json()`, and rich `display()`.
+- `evals/replay.py` — reads a JSONL produced by `RunCapture` and re-issues each captured call against a list of `provider:model` pairs (only the model varies; instructions/input are used verbatim). Writes a side-by-side JSON report to `<state_dir>/evals/replays/`.
 
 ### State shape
 
@@ -153,9 +169,9 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
 
 ### Config shape
 
-See `config.yaml.template` — it is the canonical reference for all supported keys and their defaults.
+See `config/config.yaml.template` — it is the canonical reference for all supported keys and their defaults.
 
-Any change that adds, removes, or renames a config key must also update the corresponding Pydantic model in `config.py` so validation stays in sync.
+Any change that adds, removes, or renames a config key must also update the corresponding Pydantic model in `config/__init__.py` so validation stays in sync.
 
 ### Benchmark (`benchmark/`)
 

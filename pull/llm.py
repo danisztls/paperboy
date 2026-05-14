@@ -1,8 +1,8 @@
 import logging
 
 from config import get_llm_pull_cfg
-from llm.adapters.base import LLMAdapter
 from pipeline import Item, PullResult, Source
+from providers.llm.base import LLMAdapter
 
 log = logging.getLogger(__name__)
 

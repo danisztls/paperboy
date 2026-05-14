@@ -2,7 +2,7 @@ import json
 import logging
 import textwrap
 
-from llm.adapters.base import LLMAdapter
+from providers.llm.base import LLMAdapter
 
 log = logging.getLogger(__name__)
 

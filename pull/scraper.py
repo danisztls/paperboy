@@ -5,8 +5,8 @@ import logging
 from playwright.async_api import async_playwright
 
 from pipeline import PullResult, Source
-from pull.adapters import vivareal  # noqa: F401 — registers via @register_adapter
-from pull.adapters.base import available_adapters, get_adapter
+from pull.scrapers import vivareal  # noqa: F401 — registers via @register_adapter
+from pull.scrapers.base import available_adapters, get_adapter
 
 log = logging.getLogger(__name__)
 

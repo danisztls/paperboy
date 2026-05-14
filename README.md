@@ -17,7 +17,7 @@ Requires [uv](https://github.com/astral-sh/uv).
 
 ```sh
 uv sync
-cp config.yaml.template ~/.config/claudinho/config.yaml
+cp config/config.yaml.template ~/.config/claudinho/config.yaml
 cp secrets.yaml.template ~/.config/claudinho/secrets.yaml
 # Edit both files
 ```
@@ -66,7 +66,7 @@ Output is written to `<state_dir>/evals/replays/<basename>__replay_<ts>.json` wi
 
 ## Config reference
 
-See [`config.yaml.template`](config.yaml.template) for all supported keys and their defaults. The four task types:
+See [`config/config.yaml.template`](config/config.yaml.template) for all supported keys and their defaults. The four task types:
 
 ### RSS task
 

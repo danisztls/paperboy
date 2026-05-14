@@ -28,14 +28,14 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
-from llm import get_adapter
-from summarize import (
+from process.summarize import (
     _YOUTUBE_RE,
     _fetch_article,
     _fetch_youtube_data,
     summarize_entry,
     summarize_transcript,
 )
+from providers.llm import get_adapter
 
 _CONFIG_PATH = pathlib.Path(__file__).parent / "config.yaml"
 

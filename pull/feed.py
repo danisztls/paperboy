@@ -9,6 +9,7 @@ import feedparser.sanitizer
 from bs4 import BeautifulSoup
 
 from pipeline import Item, PullResult, Source
+from process.filter_heuristic import apply_regex, url_filtered
 
 feedparser.sanitizer._HTMLSanitizer.acceptable_attributes.add("srcset")
 
@@ -24,7 +25,6 @@ def _strip_html(text: str) -> str:
 
 _MD_ESCAPE_RE = re.compile(r"(?m)(^[>#]+|[*_`~])")
 _CDATA_RE = re.compile(r"<!\[CDATA\[(.*?)\]\]>", re.DOTALL)
-_PHRASE_URL_RE = re.compile(r"[^.!?\n]*?https?://\S+")
 
 
 def _entry_title(entry) -> str:
@@ -35,50 +35,6 @@ def _entry_title(entry) -> str:
 
 def _escape_markdown(text: str) -> str:
     return _MD_ESCAPE_RE.sub(r"\\\1", text)
-
-
-def _remove_phrases_with_urls(text: str) -> str:
-    text = _PHRASE_URL_RE.sub("", text)
-    return re.sub(r"[ \t]+", " ", text).strip()
-
-
-def _url_filtered(url: str, cfg) -> bool:
-    """Return True if the URL should be excluded by the url filter config."""
-    if not cfg:
-        return False
-    if isinstance(cfg, list):
-        return any(_url_filtered(url, item) for item in cfg)
-    needles = cfg.get("skip_containing")
-    if not needles:
-        return False
-    if isinstance(needles, str):
-        needles = [needles]
-    return any(n in url for n in needles)
-
-
-def _apply_regex(cfg, text: str) -> str:
-    if not isinstance(cfg, (list, dict)):
-        return text
-    if isinstance(cfg, list):
-        for item in cfg:
-            text = _apply_regex(item, text)
-        return text
-    if isinstance(cfg, dict):
-        if cfg.get("clear"):
-            return ""
-        if cfg.get("remove_phrases_with_urls"):
-            text = _remove_phrases_with_urls(text)
-        if needle := cfg.get("remove_phrases_containing"):
-            needles = needle if isinstance(needle, list) else [needle]
-            for n in needles:
-                text = re.sub(r"[^.!?\n]*?" + re.escape(n) + r"[^.!?\n]*", "", text)
-            text = re.sub(r"[ \t]+", " ", text).strip()
-        if key := cfg.get("extract"):
-            m = re.search(key, text)
-            text = (m.group(1) if m.lastindex else m.group(0)) if m else text
-        if "replace" in cfg:
-            text = re.sub(cfg["replace"], cfg.get("with", ""), text)
-        return text
 
 
 def _best_srcset_url(srcset: str) -> str | None:
@@ -175,7 +131,7 @@ async def get_new_entries(
         current_items.append({"url": entry.get("link", ""), "title": _entry_title(entry)})
         if eid not in seen:
             _new_eligible += 1
-            if _url_filtered(eid, filter_url):
+            if url_filtered(eid, filter_url):
                 log.debug("[%s] URL-filtered: %s", feed_title, eid[:120])
                 if filter_log is not None:
                     filter_log["url_excluded"].append({"url": eid})
@@ -203,7 +159,7 @@ async def get_new_entries(
         body = _strip_html(raw_desc).strip()
         if filter_description:
             _orig_body = body
-            body = _apply_regex(filter_description, body)
+            body = apply_regex(filter_description, body)
             if filter_log is not None and body != _orig_body:
                 filter_log["description_transforms"].append(
                     {"id": eid, "before": _orig_body[:300], "after": body[:300]}
@@ -219,7 +175,7 @@ async def get_new_entries(
         title = (_entry_title(entry) or "(no title)")[:256]
         if filter_title:
             _orig_title = title
-            title = _apply_regex(filter_title, title)
+            title = apply_regex(filter_title, title)
             if filter_log is not None and title != _orig_title:
                 filter_log["title_transforms"].append(
                     {"id": eid, "before": _orig_title, "after": title}

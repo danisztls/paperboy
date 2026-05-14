@@ -3,7 +3,7 @@ import logging
 import pathlib
 from datetime import UTC, datetime
 
-from migrate import CURRENT_VERSION
+from state.migrate import CURRENT_VERSION
 
 log = logging.getLogger(__name__)
 
