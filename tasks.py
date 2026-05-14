@@ -173,23 +173,30 @@ async def _summarize_items(
     collector=None,
     analysis: bool = False,
 ) -> list[Item]:
-    """Replace .summary on items that have fetchable content or a body, concurrently."""
+    """Replace .summary on items that have fetchable content or a body, concurrently.
 
-    async def _get_content(e: Item) -> str:
+    Also fills Item.image with the article's og:image when the item had no image
+    yet, piggybacking on the HTML fetch trafilatura already performed.
+    """
+
+    async def _get_content(e: Item) -> tuple[str, str | None]:
+        """Return (content, og_image). og_image is None for body-only fallback or YouTube."""
         if session:
             fetched = await fetch_item_content(e.url, session)
             if fetched:
                 return fetched
-        return e.body
+        return e.body, None
 
     if llm_adapter is None:
         log.error("Summarize skipped — llm.models.reasoning is not configured")
         return items
 
-    async def _fetch_and_summarize(e: Item) -> tuple[Item, str | None, str | None, dict | None]:
-        content = await _get_content(e)
+    async def _fetch_and_summarize(
+        e: Item,
+    ) -> tuple[Item, str | None, str | None, str | None, dict | None]:
+        content, og_image = await _get_content(e)
         if not content:
-            return e, None, None, None
+            return e, None, None, None, None
         trace: dict | None = {} if collector else None
         try:
             summary = await summarize_entry(
@@ -205,14 +212,19 @@ async def _summarize_items(
         except Exception as exc:
             log.error("summarize_entry failed for %s: %s", e.url, exc)
             summary = None
-        return e, content, summary, trace
+        return e, content, summary, og_image, trace
 
     results = await asyncio.gather(*[_fetch_and_summarize(e) for e in items])
 
     updated: dict[str, Item] = {}
-    for e, content, summary, trace in results:
+    for e, content, summary, og_image, trace in results:
+        fields: dict = {}
         if summary:
-            updated[e.id] = dc_replace(e, summary=summary)
+            fields["summary"] = summary
+        if og_image and not e.image:
+            fields["image"] = og_image
+        if fields:
+            updated[e.id] = dc_replace(e, **fields)
         if collector and trace is not None:
             collector.record_summarization(
                 item_id=e.id,

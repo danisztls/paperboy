@@ -8,6 +8,7 @@ import sys
 import aiohttp
 import trafilatura
 import yt_dlp
+from bs4 import BeautifulSoup
 
 from constants import USER_AGENT
 from providers.llm.base import LLMAdapter
@@ -245,10 +246,19 @@ async def _fetch_youtube_data(url: str, session: aiohttp.ClientSession) -> tuple
     return title, transcript
 
 
+def extract_og_image(html: str) -> str | None:
+    """Return the og:image URL from raw HTML, or None if absent."""
+    meta = BeautifulSoup(html, "html.parser").find("meta", property="og:image")
+    return meta.get("content") if meta else None
+
+
 async def _fetch_article(
     url: str, session: aiohttp.ClientSession, *, with_title: bool = False
-) -> tuple[str, str] | str | None:
-    """Extract article text (and optionally title) from a URL using trafilatura."""
+) -> tuple[str, str, str | None] | None:
+    """Extract (title, body, og_image) from a URL using trafilatura.
+
+    `title` is `""` unless `with_title=True`. Returns None on fetch or extraction failure.
+    """
     try:
         async with session.get(url, allow_redirects=True) as resp:
             resp.raise_for_status()
@@ -269,32 +279,38 @@ async def _fetch_article(
         )
         if not doc:
             return None
+        title = ""
         if with_title:
             meta = trafilatura.extract_metadata(html, default_url=url)
-            return (meta.title if meta else "") or "", doc
-        return doc
+            title = (meta.title if meta else "") or ""
+        return title, doc, extract_og_image(html)
 
     result = await asyncio.to_thread(_extract)
     if not result:
         log.warning("trafilatura extracted no content from %s", url)
         return None
 
-    body_len = len(result[1]) if with_title else len(result)
-    log.info("Article extracted: %d chars from %s", body_len, url)
+    log.info("Article extracted: %d chars from %s", len(result[1]), url)
     return result
 
 
-async def fetch_item_content(url: str, session: aiohttp.ClientSession) -> str | None:
-    """Return fetchable text content for a feed item URL, or None.
+async def fetch_item_content(
+    url: str, session: aiohttp.ClientSession
+) -> tuple[str, str | None] | None:
+    """Return (content, og_image) for a feed item URL, or None.
 
-    YouTube URLs: returns the video transcript via yt-dlp + SponsorBlock filtering.
-    Other URLs: returns article text extracted by trafilatura (markdown format).
-    Falls back to None when content cannot be fetched.
+    YouTube URLs: returns the video transcript via yt-dlp + SponsorBlock filtering (no og:image).
+    Other URLs: returns article text extracted by trafilatura (markdown format) plus the og:image
+    URL scraped from the same HTML, if present.
     """
     if _YOUTUBE_RE.match(url):
         result = await _fetch_youtube_data(url, session)
-        return result[1] if result else None
-    return await _fetch_article(url, session)
+        return (result[1], None) if result else None
+    article = await _fetch_article(url, session)
+    if not article:
+        return None
+    _title, body, og = article
+    return body, og
 
 
 async def run_summarize(
@@ -316,10 +332,11 @@ async def run_summarize(
                 title, transcript, adapter, model=model, language=language
             )
         else:
-            content = await _fetch_article(url, session)
-            if not content:
+            result = await _fetch_article(url, session)
+            if not result:
                 log.error("Could not fetch article content for %s", url)
                 sys.exit(1)
+            _title, content, _og = result
             summary = await summarize_entry(url, content, adapter, model=model, language=language)
 
     if summary:
