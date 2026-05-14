@@ -1,8 +1,13 @@
 import logging
+from typing import TypeVar
+
+from pydantic import BaseModel
 
 from providers.llm.base import LLMAdapter, LLMResponse
 
 log = logging.getLogger(__name__)
+
+T = TypeVar("T", bound=BaseModel)
 
 
 class FallbackAdapter(LLMAdapter):
@@ -10,6 +15,11 @@ class FallbackAdapter(LLMAdapter):
 
     def __init__(self, entries: list[tuple[LLMAdapter, str | None]]) -> None:
         self._entries = entries
+
+    def _effective_entries(self, model: str | None) -> list[tuple[LLMAdapter, str | None]]:
+        if model is not None:
+            return [(self._entries[0][0], model), *self._entries[1:]]
+        return self._entries
 
     async def complete(
         self,
@@ -20,12 +30,7 @@ class FallbackAdapter(LLMAdapter):
         web_search: bool | dict = False,
         reasoning: bool | dict = False,
     ) -> LLMResponse | None:
-        # If a per-task model override is provided, try it with the first adapter first,
-        # then fall back to global entries starting from the second (haven't been tried yet).
-        if model is not None:
-            entries = [(self._entries[0][0], model), *self._entries[1:]]
-        else:
-            entries = self._entries
+        entries = self._effective_entries(model)
         for i, (adapter, effective_model) in enumerate(entries):
             result = await adapter.complete(
                 prompt,
@@ -39,6 +44,36 @@ class FallbackAdapter(LLMAdapter):
             if i < len(entries) - 1:
                 log.warning(
                     "LLM %s (model=%s) returned None, trying next fallback",
+                    type(adapter).__name__,
+                    effective_model,
+                )
+        return None
+
+    async def complete_structured(
+        self,
+        prompt: str,
+        response_model: type[T],
+        *,
+        model: str | None = None,
+        instructions: str | None = None,
+        reasoning: bool | dict = False,
+        trace: dict | None = None,
+    ) -> T | None:
+        entries = self._effective_entries(model)
+        for i, (adapter, effective_model) in enumerate(entries):
+            result = await adapter.complete_structured(
+                prompt,
+                response_model,
+                model=effective_model,
+                instructions=instructions,
+                reasoning=reasoning,
+                trace=trace,
+            )
+            if result is not None:
+                return result
+            if i < len(entries) - 1:
+                log.warning(
+                    "LLM %s (model=%s) returned None on structured call, trying next fallback",
                     type(adapter).__name__,
                     effective_model,
                 )

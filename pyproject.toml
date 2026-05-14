@@ -8,6 +8,7 @@ dependencies = [
     "aiohttp>=3.9",
     "beautifulsoup4>=4.12",
     "feedparser>=6.0.12",
+    "instructor>=1.6",
     "openai>=2.33.0",
     "pydantic>=2.0",
     "pyyaml>=6.0.3",

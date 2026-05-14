@@ -7,16 +7,20 @@ Tests substitute fakes at two boundaries only:
 Real RSSSource, Discord*Target, File*Target run unchanged.
 """
 
-import json
 import pathlib
+from typing import TypeVar
 
 import pytest
 from aioresponses import aioresponses
+from pydantic import BaseModel
 
+from process.filter_llm import FilterDecisions, FilterItem
 from providers.llm.base import LLMAdapter, LLMResponse
 
 WEBHOOK_URL = "https://discord.example/webhook"
 _FIXTURES = pathlib.Path(__file__).parent / "fixtures"
+
+T = TypeVar("T", bound=BaseModel)
 
 
 def load_fixture(name: str) -> bytes:
@@ -24,15 +28,18 @@ def load_fixture(name: str) -> bytes:
 
 
 class FakeLLMAdapter(LLMAdapter):
-    """LLMAdapter whose complete() pops from a pre-seeded queue.
+    """LLMAdapter whose complete() / complete_structured() pop from pre-seeded queues.
 
-    Use queue() to enqueue an LLMResponse (or None to simulate provider failure).
+    Use queue() to enqueue an LLMResponse for free-form completions (None simulates
+    provider failure). Use queue_structured() / queue_filter() for Pydantic returns.
     Calls beyond the queue raise loudly so missing fixtures fail tests early.
     """
 
     def __init__(self) -> None:
         self._responses: list[LLMResponse | None] = []
+        self._structured: list[BaseModel | None] = []
         self.calls: list[dict] = []
+        self.structured_calls: list[dict] = []
 
     def queue(self, response: LLMResponse | None) -> None:
         self._responses.append(response)
@@ -40,14 +47,23 @@ class FakeLLMAdapter(LLMAdapter):
     def queue_text(self, text: str) -> None:
         self.queue(make_response(text))
 
+    def queue_structured(self, value: BaseModel | None) -> None:
+        self._structured.append(value)
+
     def queue_filter(
         self,
         items: list[dict],
         memory: str = "",
     ) -> None:
-        """Convenience: queue a filter-shaped JSON response."""
-        payload = {"items": items, "memory": memory}
-        self.queue_text(json.dumps(payload))
+        """Convenience: queue a FilterDecisions for the next complete_structured call."""
+        self.queue_structured(
+            FilterDecisions(
+                items=[
+                    FilterItem(id=it["id"], passes=it["pass"], reason=it["reason"]) for it in items
+                ],
+                memory=memory,
+            )
+        )
 
     async def complete(
         self,
@@ -72,6 +88,31 @@ class FakeLLMAdapter(LLMAdapter):
                 f"FakeLLMAdapter exhausted — no canned response for call #{len(self.calls)}"
             )
         return self._responses.pop(0)
+
+    async def complete_structured(
+        self,
+        prompt: str,
+        response_model: type[T],
+        *,
+        model: str | None = None,
+        instructions: str | None = None,
+        reasoning: bool | dict = False,
+        trace: dict | None = None,
+    ) -> T | None:
+        self.structured_calls.append(
+            {
+                "prompt": prompt,
+                "response_model": response_model,
+                "model": model,
+                "instructions": instructions,
+                "reasoning": reasoning,
+            }
+        )
+        if not self._structured:
+            raise AssertionError(
+                f"FakeLLMAdapter exhausted — no structured response for call #{len(self.structured_calls)}"
+            )
+        return self._structured.pop(0)
 
 
 def make_response(text: str, *, model: str = "fake-model") -> LLMResponse:

@@ -3,6 +3,11 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import TypeVar
+
+from pydantic import BaseModel
+
+T = TypeVar("T", bound=BaseModel)
 
 
 @dataclass
@@ -44,3 +49,21 @@ class LLMAdapter(ABC):
         web_search: bool | dict = False,
         reasoning: bool | dict = False,
     ) -> LLMResponse | None: ...
+
+    @abstractmethod
+    async def complete_structured(
+        self,
+        prompt: str,
+        response_model: type[T],
+        *,
+        model: str | None = None,
+        instructions: str | None = None,
+        reasoning: bool | dict = False,
+        trace: dict | None = None,
+    ) -> T | None:
+        """Return a Pydantic instance via provider-native structured output.
+
+        Returns None on provider failure or unrecoverable validation failure.
+        The provider library (e.g. instructor) handles the parse + retry loop.
+        """
+        ...
