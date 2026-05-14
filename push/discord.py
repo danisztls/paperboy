@@ -213,7 +213,7 @@ async def post_to_discord(
     webhook_url: str,
     entry: Item,
     session: aiohttp.ClientSession,
-    fetch_image: bool = True,
+    skip_image: bool = False,
     color: int | None = None,
 ) -> None:
     embed = {
@@ -226,7 +226,7 @@ async def post_to_discord(
     if entry.source:
         embed["footer"] = {"text": entry.source}
 
-    if fetch_image:
+    if not skip_image:
         image_url = entry.image
         if not image_url and entry.url:
             image_url = await _scrape_image(entry.url, session)
@@ -250,30 +250,24 @@ async def post_to_discord(
 
 
 class DiscordEmbedTarget(Target):
-    """Posts each item as a Discord embed."""
+    """Posts each item as a Discord embed.
 
-    def __init__(
-        self,
-        *,
-        fetch_image: bool = True,
-        color: int | None = None,
-    ) -> None:
-        self._fetch_image = fetch_image
-        self._color = color
+    `Item.meta["skip_image"]` (set at pull stage) disables OG-image fetch
+    per-item; `Item.meta["color"]` overrides the default embed color.
+    """
 
     async def push(self, ctx: PushContext, cfg: dict, session) -> set[str]:
         webhook = get_discord_cfg(cfg).get("webhook", "")
         failed: set[str] = set()
         items = sorted(ctx.items, key=lambda e: e.published or _FAR_FUTURE)
         for i, item in enumerate(items):
-            color = item.meta.get("color") or self._color
             try:
                 await post_to_discord(
                     webhook,
                     item,
                     session,
-                    fetch_image=self._fetch_image,
-                    color=color,
+                    skip_image=bool(item.meta.get("skip_image")),
+                    color=item.meta.get("color"),
                 )
                 log.info("[%s] Posted: %s", item.source, item.title[:80])
                 if i < len(items) - 1:

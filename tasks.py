@@ -459,8 +459,7 @@ async def _process_llm_curate_task(
     explain = bool(filter_cfg.get("explain")) if filter_cfg else False
     if analysis and filter_cfg:
         explain = True
-    task_image_cfg = task_cfg.get("image") or {}
-    fetch_image = not task_image_cfg.get("skip", False)
+    task_skip_image = bool((task_cfg.get("image") or {}).get("skip"))
     task_filter = task_cfg.get("filter", {})
     kind = task_kind(task_cfg)
     task_summarize = task_cfg.get("summarize", kind == "digest")
@@ -524,8 +523,13 @@ async def _process_llm_curate_task(
             feed_color = (
                 parse_color(fc.get("discord", {}).get("color")) or task_color or global_color
             )
+            feed_image_cfg = fc.get("image")
+            feed_skip_image = (
+                bool(feed_image_cfg.get("skip")) if feed_image_cfg is not None else task_skip_image
+            )
+            feed_meta = {"color": feed_color, "skip_image": feed_skip_image}
             all_new_items.extend(
-                [dc_replace(item, meta={**item.meta, "color": feed_color}) for item in feed_items]
+                [dc_replace(item, meta={**item.meta, **feed_meta}) for item in feed_items]
             )
 
         # --- Process: summarize ---
@@ -627,7 +631,7 @@ async def _process_llm_curate_task(
             if get_file_path(task_cfg):
                 await FileEmbedTarget().push(ctx, task_cfg, session)
         else:
-            target = DiscordEmbedTarget(fetch_image=fetch_image)
+            target = DiscordEmbedTarget()
             ctx = PushContext(items=passing, memory=memory_text, cite_map=cite_map)
             failed_ids = await target.push(ctx, task_cfg, session)
             if get_file_path(task_cfg):
@@ -702,7 +706,8 @@ async def _process_scraper_task(
         return {task_name: {**task_state, "last_run": now_iso}}
 
     colored_items = [
-        dc_replace(item, meta={**item.meta, "color": task_color}) for item in pull_result.new_items
+        dc_replace(item, meta={**item.meta, "color": task_color, "skip_image": True})
+        for item in pull_result.new_items
     ]
 
     discord_format = task_discord.get("format")
@@ -710,7 +715,7 @@ async def _process_scraper_task(
     if discord_format == "markdown":
         failed_ids = await DiscordMarkdownTarget().push(ctx, task_cfg, session)
     else:
-        failed_ids = await DiscordEmbedTarget(fetch_image=False).push(ctx, task_cfg, session)
+        failed_ids = await DiscordEmbedTarget().push(ctx, task_cfg, session)
     if get_file_path(task_cfg):
         await FileEmbedTarget().push(ctx, task_cfg, session)
 
