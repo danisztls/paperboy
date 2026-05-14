@@ -5,13 +5,10 @@ from datetime import UTC, datetime
 
 import aiohttp
 import feedparser
-import feedparser.sanitizer
 from bs4 import BeautifulSoup
 
 from pipeline import Item, PullResult, Source
 from process.filter_heuristic import apply_regex, url_filtered
-
-feedparser.sanitizer._HTMLSanitizer.acceptable_attributes.add("srcset")
 
 DESCRIPTION_MAX = 512
 ENTRY_MAX_AGE_SECONDS = 7 * 86400
@@ -37,24 +34,6 @@ def _escape_markdown(text: str) -> str:
     return _MD_ESCAPE_RE.sub(r"\\\1", text)
 
 
-def _best_srcset_url(srcset: str) -> str | None:
-    best_url, best_val = None, -1.0
-    for part in srcset.split(","):
-        tokens = part.strip().split()
-        if not tokens or not tokens[0].startswith("http"):
-            continue
-        url = tokens[0]
-        val = 1.0
-        if len(tokens) > 1:
-            try:
-                val = float(tokens[-1][:-1])
-            except ValueError:
-                pass
-        if val > best_val:
-            best_val, best_url = val, url
-    return best_url
-
-
 def _entry_image(entry) -> str | None:
     for thumb in entry.get("media_thumbnail", []):
         url = thumb.get("url", "")
@@ -69,7 +48,7 @@ def _entry_image(entry) -> str | None:
     if raw:
         img = BeautifulSoup(raw, "html.parser").find("img")
         if img:
-            src = _best_srcset_url(img.get("srcset", "")) or img.get("src", "")
+            src = img.get("src", "")
             if src and src.startswith("http"):
                 return src
     return None
