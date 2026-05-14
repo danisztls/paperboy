@@ -151,6 +151,11 @@ class _Feeds(BaseModel):
     max_age_days: int = 7
 
 
+class _Retention(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    days: int = 30  # 0 disables pruning
+
+
 class _ModelSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
     provider: Literal["openai", "gemini", "deepseek", "anthropic"] | None = None
@@ -361,6 +366,7 @@ class _Config(BaseModel):
     feeds: _Feeds | None = None
     llm: _GlobalLLM | None = None
     image: _Image | None = None
+    retention: _Retention | None = None
     tasks: list[_Task]
 
 

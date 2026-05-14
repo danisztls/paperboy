@@ -4,6 +4,9 @@ discord:                    # optional — global defaults for Discord posting
 feeds:                      # optional — global defaults for RSS feed fetching
   # max_age_days: 7        # skip feed entries older than this on every pull (default: 7)
 
+retention:                  # optional — disk retention for logs and eval traces
+  # days: 30               # delete files under <state_dir>/{logs,evals}/ older than this (default: 30; 0 disables)
+
 llm:                        # optional — global defaults for all LLM tasks
   models:
     reasoning:              # used for RSS/digest LLM filter + summarize; array for ordered fallback

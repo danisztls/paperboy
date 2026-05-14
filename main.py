@@ -8,6 +8,7 @@ import logging
 import os
 import pathlib
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 
 import aiohttp
@@ -95,6 +96,18 @@ def _setup_log_file(logs_dir: pathlib.Path, ts: datetime) -> None:
     logging.getLogger().addHandler(handler)
 
 
+def _prune_old_files(root: pathlib.Path, days: int) -> int:
+    if days <= 0 or not root.exists():
+        return 0
+    cutoff = time.time() - days * 86400
+    removed = 0
+    for path in root.rglob("*"):
+        if path.is_file() and path.stat().st_mtime < cutoff:
+            path.unlink()
+            removed += 1
+    return removed
+
+
 def _check_due_or_skip(name: str, last_run: str | None, period: timedelta, now: datetime) -> bool:
     """True if the task is due. Otherwise log a skip message and return False."""
     if _is_due({"last_run": last_run}, period, now):
@@ -171,6 +184,14 @@ async def _async_main(args: argparse.Namespace) -> None:
             log.error("Config error: %s", err)
         sys.exit(1)
     state = load_state(state_path)
+
+    retention_days = (config.get("retention") or {}).get("days", 30)
+    for sub in ("logs", "evals"):
+        removed = _prune_old_files(state_path.parent / sub, retention_days)
+        if removed:
+            log.info(
+                "Pruned %d file(s) older than %d day(s) from %s/", removed, retention_days, sub
+            )
 
     if args.migrate:
         if not needs_migration(state):
