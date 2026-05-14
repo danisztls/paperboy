@@ -163,7 +163,7 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
 ```
 
 - `feeds` sub-dict holds per-URL state. Each successful fetch replaces `items` with the feed's current entries (bounded by feed length). `access_date` is stamped when an item is first seen and carried forward. `filter_pass` and `filter_reason` are only present on items from tasks with an `llm` key.
-- `memory` is only present on filtered RSS/digest tasks. Each run appends one entry keyed by ISO8601 timestamp; history is capped at 20 entries (oldest evicted). The LLM receives the last 7 entries as context on each run.
+- `memory` is only present on filtered RSS/digest tasks. Each run appends one entry keyed by ISO8601 timestamp; history is capped at 20 entries (oldest evicted). The LLM receives the last 5 entries as context on each run.
 - LLM tasks store only `last_run` directly under the task name key.
 - `load_state` returns the parsed JSON as-is; absent or `null` `last_run` always means "due now".
 - Use `--migrate` to update an old state file to the current schema. Use `--regenerate-state` to rebuild state from scratch.
@@ -229,3 +229,4 @@ Caveats:
 - LLM filter failures retry once after 10s; on second failure all items are treated as passing (fail-open).
 - All feeds in a given RSS/digest task share one LLM filter call; items are sent grouped by source with monotonically increasing integer IDs across all feeds.
 - `Item.meta` carries per-item display hints (e.g. `color`) set during the pull stage so the target doesn't need to re-resolve them from config.
+- `web_search` is plumbed through the filter call but intentionally not through `summarize_entry`: summaries run on already-fetched article content, so extra web search is wasted tokens.
