@@ -2,8 +2,10 @@
 
 import asyncio
 import logging
+import pathlib
 import re
 import sys
+import tempfile
 
 import aiohttp
 import trafilatura
@@ -192,47 +194,59 @@ async def _fetch_youtube_data(url: str, session: aiohttp.ClientSession) -> tuple
         return None
 
     title = info.get("title", "")
+    video_id = info.get("id", "")
     subs = info.get("subtitles") or {}
     auto = info.get("automatic_captions") or {}
 
-    lang_track = None
     # Prefer human subtitles, then original-language auto-captions, then translated fallback
+    selected_lang: str | None = None
+    is_auto = False
     for lang in ("en", "en-orig", *subs.keys()):
         if lang in subs:
-            lang_track = subs[lang]
+            selected_lang = lang
             break
-    if not lang_track:
+    if not selected_lang:
         orig_keys = [k for k in auto if k.endswith("-orig")]
         for lang in (*orig_keys, "en", *auto.keys()):
             if lang in auto:
-                lang_track = auto[lang]
+                selected_lang = lang
+                is_auto = True
                 break
 
-    if not lang_track:
+    if not selected_lang:
         log.warning("No subtitles or captions found for %s", url)
         return None
 
-    vtt_entry = next((e for e in lang_track if e.get("ext") == "vtt"), lang_track[0])
-    sub_url = vtt_entry.get("url")
-    if not sub_url:
-        log.warning("No subtitle URL found for %s", url)
-        return None
+    log.info("Fetching captions for %r (lang=%s)", title, selected_lang)
 
-    video_id = info.get("id", "")
-    log.info("Fetching captions for %r", title)
+    def _download_vtt() -> str | None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            opts = {
+                "skip_download": True,
+                "quiet": True,
+                "no_warnings": True,
+                "writesubtitles": not is_auto,
+                "writeautomaticsub": is_auto,
+                "subtitlesformat": "vtt",
+                "subtitleslangs": [selected_lang],
+                "outtmpl": str(pathlib.Path(tmpdir) / "sub"),
+            }
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                ydl.download([url])
+            vtt_files = list(pathlib.Path(tmpdir).glob("*.vtt"))
+            return vtt_files[0].read_text() if vtt_files else None
 
     try:
-
-        async def _fetch_vtt() -> str:
-            async with session.get(sub_url) as resp:
-                return await resp.text()
-
         vtt_content, sb_segments = await asyncio.gather(
-            _fetch_vtt(),
+            asyncio.to_thread(_download_vtt),
             _fetch_sponsorblock(video_id, session),
         )
-    except aiohttp.ClientError as exc:
-        log.warning("Failed to fetch captions for %s: %s", url, exc)
+    except Exception as exc:
+        log.warning("Failed to download captions for %s: %s", url, exc)
+        return None
+
+    if vtt_content is None:
+        log.warning("yt-dlp wrote no VTT file for %s", url)
         return None
 
     cues = _parse_vtt(vtt_content)
