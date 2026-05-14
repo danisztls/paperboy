@@ -270,6 +270,8 @@ async def _apply_curate(
     for source_name, items in seen_sources.items():
         group: dict = {"source": source_name, "items": []}
         for item in items:
+            if item.meta.get("curate_skip"):
+                continue
             payload_item: dict = {"id": global_id, "title": item.title, "url": item.url}
             desc = item.summary or item.body
             if desc:
@@ -277,7 +279,8 @@ async def _apply_curate(
             group["items"].append(payload_item)
             id_map[global_id] = item
             global_id += 1
-        payload_groups.append(group)
+        if group["items"]:
+            payload_groups.append(group)
 
     cite_map: dict[int, tuple[str, str | None]] = {
         gid: (item.source, item.url) for gid, item in id_map.items()
@@ -498,7 +501,15 @@ def _collect_tagged_items(
         feed_skip_image = (
             bool(feed_image_cfg.get("skip")) if feed_image_cfg is not None else task_skip_image
         )
-        feed_meta = {"color": feed_color, "skip_image": feed_skip_image}
+        feed_curate_cfg = fc.get("curate")
+        feed_curate_skip = (
+            bool(feed_curate_cfg.get("skip")) if feed_curate_cfg is not None else False
+        )
+        feed_meta = {
+            "color": feed_color,
+            "skip_image": feed_skip_image,
+            "curate_skip": feed_curate_skip,
+        }
         all_new_items.extend(
             [dc_replace(item, meta={**item.meta, **feed_meta}) for item in feed_items]
         )

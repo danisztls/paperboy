@@ -68,6 +68,8 @@ tasks:
           # discord:
           #   color: "#FF0000"      # optional — overrides task/global discord.color for this feed
           # summarize: true         # optional — override task-level summarize for this feed (also accepts dict form)
+          # curate:
+          #   skip: true             # optional — bypass LLM curation for this feed (items always pass)
           # filter:
           #   title:
           #     extract: "\\d+ de \\w+"           # extract match (group 1 if captured, else group 0)

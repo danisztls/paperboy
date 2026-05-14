@@ -280,6 +280,11 @@ class _Summarize(BaseModel):
     instructions: str | None = None
 
 
+class _FeedCurate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    skip: bool | None = None
+
+
 class _PullFeedItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str | None = None
@@ -288,6 +293,7 @@ class _PullFeedItem(BaseModel):
     image: _Image | None = None
     filter: _FilterDict | None = None
     summarize: bool | _Summarize | None = None
+    curate: _FeedCurate | None = None
 
 
 class _PullSearchItem(BaseModel):
