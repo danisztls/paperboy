@@ -300,7 +300,7 @@ class _PullSearchItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     prompt: str
     model: _ModelSpec | None = None
-    web_search: bool | dict
+    web_search: bool | dict = True
     instructions: str | None = None
 
 
@@ -348,7 +348,7 @@ class _PushItem(BaseModel):
 
 class _TaskCurate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    prompt: str
+    criteria: str
     model: _ModelSpec | None = None
     language: str | None = None
     instructions: str | None = None

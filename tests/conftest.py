@@ -177,6 +177,6 @@ def make_search_cfg(
         push.append({"file": file_path})
     return {
         "name": name,
-        "pull": [{"search": {"prompt": prompt, "web_search": True}}],
+        "pull": [{"search": {"prompt": prompt}}],
         "push": push,
     }

@@ -34,7 +34,7 @@ async def test_curate_happy(mock_http, fake_adapter, tmp_path):
     cfg = make_curate_cfg(
         feeds=[{"url": FEED_URL, "name": "Example"}],
         file_path=str(out_file),
-        llm_filter={"prompt": "pass items about cats"},
+        llm_filter={"criteria": "pass items about cats"},
     )
 
     async with aiohttp.ClientSession() as session:
@@ -80,7 +80,7 @@ async def test_curate_dedup(mock_http, fake_adapter, tmp_path):
     cfg = make_curate_cfg(
         feeds=[{"url": FEED_URL, "name": "Example"}],
         file_path=str(out_file),
-        llm_filter={"prompt": "pass anything"},
+        llm_filter={"criteria": "pass anything"},
     )
     state = {
         "tasks": {
@@ -136,7 +136,7 @@ async def test_curate_pull_failure(mock_http, fake_adapter, tmp_path):
             {"url": FEED_B_URL, "name": "Feed B"},
         ],
         file_path=str(out_file),
-        llm_filter={"prompt": "pass anything"},
+        llm_filter={"criteria": "pass anything"},
     )
 
     async with aiohttp.ClientSession() as session:
@@ -175,7 +175,7 @@ async def test_curate_filter_fails_open(mock_http, fake_adapter, tmp_path, monke
     cfg = make_curate_cfg(
         feeds=[{"url": FEED_URL, "name": "Example"}],
         file_path=str(out_file),
-        llm_filter={"prompt": "irrelevant — filter will fail"},
+        llm_filter={"criteria": "irrelevant — filter will fail"},
     )
 
     async with aiohttp.ClientSession() as session:

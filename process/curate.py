@@ -51,7 +51,7 @@ async def curate_entries(
         or None
     )
     explain = filter_cfg.get("explain", False)
-    criteria = filter_cfg.get("prompt", "")
+    criteria = filter_cfg.get("criteria", "")
 
     prefix = f"## Filter criteria\n{criteria}\n\n"
     if extra_instructions:
