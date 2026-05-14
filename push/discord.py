@@ -7,62 +7,11 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 import aiohttp
-from bs4 import BeautifulSoup
 
 from config import get_discord_cfg
 from pipeline import Item, PushContext, Target
 
 log = logging.getLogger(__name__)
-
-_BOT_DETECTION_THRESHOLD = 2048
-_OG_FETCH_DELAY = 2.0
-
-
-async def _scrape_image_once(url: str, session: aiohttp.ClientSession) -> tuple[str | None, bool]:
-    """Single attempt. Returns (image_url, bot_detected)."""
-    if not url:
-        return None, False
-    try:
-        async with session.get(url) as resp:
-            status = resp.status
-            content_type = resp.headers.get("Content-Type", "")
-            chunk = await resp.content.read(32768)
-        if status >= 400:
-            log.debug("image scrape failed for %s: HTTP %d", url, status)
-            return None, False
-        if len(chunk) < _BOT_DETECTION_THRESHOLD:
-            log.debug("image scrape: got %d bytes (bot-detection?) from %s", len(chunk), url)
-            return None, True
-        text = chunk.decode("utf-8", errors="replace")
-        log.debug(
-            "image scrape: fetched %d bytes (status=%d, ct=%s) from %s",
-            len(chunk),
-            status,
-            content_type,
-            url,
-        )
-        meta = BeautifulSoup(text, "html.parser").find("meta", property="og:image")
-        image_url = meta.get("content") if meta else None
-        if image_url:
-            log.debug("image scrape: found %s", image_url)
-        else:
-            log.debug(
-                "image scrape: no og:image tag found in first %d bytes of %s", len(chunk), url
-            )
-        return image_url, False
-    except Exception as exc:
-        log.debug("image scrape: exception fetching %s: %s: %s", url, type(exc).__name__, exc)
-        return None, False
-
-
-async def _scrape_image(url: str, session: aiohttp.ClientSession) -> str | None:
-    """Fetch og:image URL from article HTML, with one bot-detection retry."""
-    image_url, bot_detected = await _scrape_image_once(url, session)
-    if bot_detected:
-        log.debug("image scrape: bot-detected, retrying after %.0f s for %s", _OG_FETCH_DELAY, url)
-        await asyncio.sleep(_OG_FETCH_DELAY)
-        image_url, _ = await _scrape_image_once(url, session)
-    return image_url
 
 
 async def _post_webhook(
@@ -226,12 +175,8 @@ async def post_to_discord(
     if entry.source:
         embed["footer"] = {"text": entry.source}
 
-    if not skip_image:
-        image_url = entry.image
-        if not image_url and entry.url:
-            image_url = await _scrape_image(entry.url, session)
-        if image_url:
-            embed["image"] = {"url": image_url}
+    if not skip_image and entry.image:
+        embed["image"] = {"url": entry.image}
 
     log.debug("Posting embed to Discord: %s", embed.get("title", ""))
     payload = json.dumps({"embeds": [embed]}).encode()
@@ -252,8 +197,8 @@ async def post_to_discord(
 class DiscordEmbedTarget(Target):
     """Posts each item as a Discord embed.
 
-    `Item.meta["skip_image"]` (set at pull stage) disables OG-image fetch
-    per-item; `Item.meta["color"]` overrides the default embed color.
+    `Item.meta["skip_image"]` suppresses the embed image even when `Item.image`
+    is set; `Item.meta["color"]` overrides the default embed color.
     """
 
     async def push(self, ctx: PushContext, cfg: dict, session) -> set[str]:

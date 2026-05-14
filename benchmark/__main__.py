@@ -57,7 +57,7 @@ async def fetch_content(url: str, session: aiohttp.ClientSession) -> tuple[str, 
     result = await _fetch_article(url, session, with_title=True)
     if not result:
         return url, "", ""
-    title, content = result
+    title, content, _og = result
     return url, title, content
 
 
