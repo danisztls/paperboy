@@ -27,7 +27,7 @@ tasks:
     # Minimum time between processing this task's feeds. Default: 1h.
     # Requires a suffix: "30m", "6h", "1d".
     period: 1h
-    # type: digest           # posts a single digest message instead of individual embeds; affects LLM processing
+    # kind: digest           # posts a single digest message instead of individual embeds; affects LLM processing
     # llm:                   # optional — LLM pre-post filter applied to all feeds in this task
     #   prompt: "Only keep items about AI and machine learning"
     #   model: gpt-4o-mini   # optional; overrides llm.models.reasoning

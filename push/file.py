@@ -4,7 +4,7 @@ import pathlib
 import re
 from datetime import UTC, datetime
 
-from config import _get_file_path
+from config import get_file_path
 from pipeline import Item, PushContext, Target
 
 log = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ class FileEmbedTarget(Target):
     """Appends each item as a markdown section to a file."""
 
     async def push(self, ctx: PushContext, cfg: dict, session) -> set[str]:
-        path_str = _get_file_path(cfg)
+        path_str = get_file_path(cfg)
         if not path_str or not ctx.items:
             return set()
 
@@ -75,7 +75,7 @@ class FileDigestTarget(Target):
     """Appends the memory digest as a dated markdown section to a file."""
 
     async def push(self, ctx: PushContext, cfg: dict, session) -> set[str]:
-        path_str = _get_file_path(cfg)
+        path_str = get_file_path(cfg)
         if not path_str or not ctx.memory:
             return set()
 

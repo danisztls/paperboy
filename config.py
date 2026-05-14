@@ -10,7 +10,7 @@ from pydantic.functional_validators import AfterValidator, BeforeValidator
 _PERIOD_UNITS = {"m": "minutes", "h": "hours", "d": "days"}
 
 
-def _parse_color(value) -> int | None:
+def parse_color(value) -> int | None:
     if value is None:
         return None
     if isinstance(value, int):
@@ -21,7 +21,7 @@ def _parse_color(value) -> int | None:
     return None
 
 
-def _parse_period(value) -> timedelta:
+def parse_period(value) -> timedelta:
     s = str(value).strip() if not isinstance(value, str) else value.strip()
     if not s:
         raise ValueError("empty period")
@@ -31,8 +31,8 @@ def _parse_period(value) -> timedelta:
     return timedelta(**{_PERIOD_UNITS[suffix]: float(s[:-1])})
 
 
-def _task_type(task_cfg: dict) -> str:
-    explicit = task_cfg.get("type")
+def task_kind(task_cfg: dict) -> str:
+    explicit = task_cfg.get("kind")
     if explicit:
         return explicit
     pull = task_cfg.get("pull", [])
@@ -43,15 +43,15 @@ def _task_type(task_cfg: dict) -> str:
     return "feeds"
 
 
-def _get_feeds(task_cfg: dict) -> list[dict]:
+def get_feeds(task_cfg: dict) -> list[dict]:
     return [item["feed"] for item in task_cfg.get("pull", []) if "feed" in item]
 
 
-def _get_discord_cfg(task_cfg: dict) -> dict:
+def get_discord_cfg(task_cfg: dict) -> dict:
     return next((item["discord"] for item in task_cfg.get("push", []) if "discord" in item), {})
 
 
-def _get_llm_pull_cfg(task_cfg: dict) -> dict:
+def get_llm_pull_cfg(task_cfg: dict) -> dict:
     return next((item["llm"] for item in task_cfg.get("pull", []) if "llm" in item), {})
 
 
@@ -59,7 +59,7 @@ def _get_scraper_cfg(task_cfg: dict) -> dict:
     return next((item["scraper"] for item in task_cfg.get("pull", []) if "scraper" in item), {})
 
 
-def _get_file_path(task_cfg: dict) -> str | None:
+def get_file_path(task_cfg: dict) -> str | None:
     return next((item["file"] for item in task_cfg.get("push", []) if "file" in item), None)
 
 
@@ -70,7 +70,7 @@ def _resolve_model_spec(spec) -> tuple[str | None, str | None]:
     return spec.get("provider") or None, spec.get("model") or None
 
 
-def _resolve_model_specs(spec) -> list[tuple[str | None, str | None]]:
+def resolve_model_specs(spec) -> list[tuple[str | None, str | None]]:
     """Return list of (provider, model_name) from a single or list model spec."""
     if spec is None:
         return []
@@ -79,7 +79,7 @@ def _resolve_model_specs(spec) -> list[tuple[str | None, str | None]]:
     return [_resolve_model_spec(spec)]
 
 
-def _get_api_key_for_provider(api_key_cfg, provider: str | None) -> str | None:
+def get_api_key_for_provider(api_key_cfg, provider: str | None) -> str | None:
     """Return the API key for a given provider from an {openai, gemini} dict."""
     if api_key_cfg is None or not provider:
         return None
@@ -119,7 +119,7 @@ def load_config(path: pathlib.Path) -> dict:
 
 
 def _color_validator(v):
-    result = _parse_color(v)
+    result = parse_color(v)
     if v is not None and result is None:
         raise ValueError(f"invalid color {v!r} — expected '#RRGGBB'")
     return result
@@ -128,7 +128,7 @@ def _color_validator(v):
 def _period_validator(v):
     if v is not None:
         try:
-            _parse_period(v)
+            parse_period(v)
         except ValueError, TypeError:
             raise ValueError(f"invalid value {v!r} — expected e.g. '30m', '6h', '1d'")
     return v
@@ -323,7 +323,7 @@ class _TaskLLM(BaseModel):
 class _Task(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str
-    type: Literal["digest", "scraper"] | None = None
+    kind: Literal["digest", "scraper"] | None = None
     period: _Period = None
     pull: list[_PullItem]
     push: list[_PushItem]

@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 import aiohttp
 from bs4 import BeautifulSoup
 
-from config import _get_discord_cfg
+from config import get_discord_cfg
 from pipeline import Item, PushContext, Target
 
 log = logging.getLogger(__name__)
@@ -262,7 +262,7 @@ class DiscordEmbedTarget(Target):
         self._color = color
 
     async def push(self, ctx: PushContext, cfg: dict, session) -> set[str]:
-        webhook = _get_discord_cfg(cfg).get("webhook", "")
+        webhook = get_discord_cfg(cfg).get("webhook", "")
         failed: set[str] = set()
         items = sorted(ctx.items, key=lambda e: e.published or _FAR_FUTURE)
         for i, item in enumerate(items):
@@ -289,7 +289,7 @@ class DiscordTextTarget(Target):
     """Posts each item's body as a plain Discord text message."""
 
     async def push(self, ctx: PushContext, cfg: dict, session) -> set[str]:
-        webhook = _get_discord_cfg(cfg).get("webhook", "")
+        webhook = get_discord_cfg(cfg).get("webhook", "")
         failed: set[str] = set()
         for item in ctx.items:
             if not item.body:
@@ -308,7 +308,7 @@ class DiscordMarkdownTarget(Target):
     """Posts each item as a markdown-formatted Discord message (### heading + body)."""
 
     async def push(self, ctx: PushContext, cfg: dict, session) -> set[str]:
-        webhook = _get_discord_cfg(cfg).get("webhook", "")
+        webhook = get_discord_cfg(cfg).get("webhook", "")
         failed: set[str] = set()
         items = sorted(ctx.items, key=lambda e: e.published or _FAR_FUTURE)
         for i, item in enumerate(items):
@@ -333,7 +333,7 @@ class DiscordDigestTarget(Target):
     """Posts the memory briefing as chunked Discord text messages."""
 
     async def push(self, ctx: PushContext, cfg: dict, session) -> set[str]:
-        webhook = _get_discord_cfg(cfg).get("webhook", "")
+        webhook = get_discord_cfg(cfg).get("webhook", "")
         if not ctx.memory:
             return set()
         try:
