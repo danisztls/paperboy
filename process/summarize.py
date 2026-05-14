@@ -22,13 +22,14 @@ async def summarize_entry(
     adapter: LLMAdapter,
     *,
     model: str | None = None,
-    language: str = "EN-US",
+    language: str | None = None,
     instructions: str | None = None,
     reasoning: bool | dict = False,
     trace: dict | None = None,
 ) -> str | None:
+    lang_directive = f"Write in {language}. " if language else ""
     base_instructions = (
-        f"You are a precise, concise summarizer. Write in {language}. "
+        f"You are a precise, concise summarizer. {lang_directive}"
         "Given the title and description of a news article or feed entry, write a brief summary "
         "covering the main point and key details. No filler phrases. "
         "Keep the summary under 1024 characters."
@@ -63,10 +64,11 @@ async def summarize_transcript(
     adapter: LLMAdapter,
     *,
     model: str | None = None,
-    language: str = "EN-US",
+    language: str | None = None,
 ) -> str | None:
+    lang_directive = f"Write in {language}. " if language else ""
     instructions = (
-        f"You are a precise, concise summarizer. Write in {language}. "
+        f"You are a precise, concise summarizer. {lang_directive}"
         "Given the title and transcript of a YouTube video, write a clear summary covering the main topics and key takeaways. "
         "Use a few short paragraphs. No filler phrases or meta-commentary about the summarization process."
     )

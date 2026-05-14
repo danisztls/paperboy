@@ -508,8 +508,6 @@ async def _run_summarize_stage(
     fetch_map: dict[str, object],
     *,
     task_summarize,
-    filter_cfg: dict | None,
-    global_language: str,
     llm_adapter: LLMAdapter | None,
     evaluate_model: str | None,
     session: aiohttp.ClientSession,
@@ -517,7 +515,7 @@ async def _run_summarize_stage(
     analysis: bool,
 ) -> list[Item]:
     """Build per-item summarize config and run _summarize_items; returns updated items."""
-    summarize_cfg_by_id: dict[str, tuple[str, str | None]] = {}
+    summarize_cfg_by_id: dict[str, tuple[str | None, str | None]] = {}
     for fc in feed_cfgs:
         url = fc["url"]
         if fetch_map.get(url) is None:
@@ -532,7 +530,7 @@ async def _run_summarize_stage(
         else:
             sum_lang = None
             sum_instructions = None
-        effective_lang = sum_lang or (filter_cfg or {}).get("language") or global_language
+        effective_lang = sum_lang  # None → LLM mirrors content's language
         for item in items_per_feed.get(url, []):
             summarize_cfg_by_id[item.id] = (effective_lang, sum_instructions)
 
@@ -732,8 +730,6 @@ async def _process_llm_curate_task(
                 feed_cfgs,
                 fetch_map,
                 task_summarize=task_summarize,
-                filter_cfg=filter_cfg,
-                global_language=global_language,
                 llm_adapter=llm_adapter,
                 evaluate_model=evaluate_model,
                 session=session,
