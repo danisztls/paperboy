@@ -7,25 +7,31 @@ feeds:                      # optional — global defaults for RSS feed fetching
 retention:                  # optional — disk retention for logs and eval traces
   # days: 30               # delete files under <state_dir>/{logs,evals}/ older than this (default: 30; 0 disables)
 
-llm:                        # optional — global defaults for all LLM tasks
-  models:
-    reasoning:              # used for RSS/digest LLM filter + summarize; array for ordered fallback
-      provider: deepseek    # 'deepseek', 'openai', 'gemini', or 'anthropic'
-      model: deepseek-v4-flash
-    # reasoning:            # array form: tries each in order, falls back on None response
-    #   - provider: deepseek
-    #     model: deepseek-v4-flash
-    #   - provider: openai
-    #     model: gpt-5.4-mini
-    topic:                  # used for standalone LLM search tasks (requires web_search support); array for ordered fallback
-      provider: openai      # deepseek doesn't support web_search yet — use openai/gemini/anthropic
-      model: gpt-5.4-nano
+llm:                        # optional — LLM provider credentials
   api_key:                  # per-provider API keys (omit to read from $DEEPSEEK_API_KEY / $OPENAI_API_KEY / $GEMINI_API_KEY env var)
     deepseek: !secret deepseek_api_key
     openai: !secret openai_api_key
     # gemini: !secret gemini_api_key
-  # instructions: "..."      # additional instructions appended to the built-in system prompt for LLM tasks
-  # language: "EN-US"        # language for filter memory briefings (default: EN-US; per-filter 'language' overrides)
+
+curate:                     # optional — global defaults for LLM curation/filter (RSS/digest tasks)
+  model:                    # model used for filtering; {provider: model_name}
+    deepseek: deepseek-v4-flash
+  # model:                  # array form: tries each in order, falls back on None response
+  #   - deepseek: deepseek-v4-flash
+  #   - openai: gpt-5.4-mini
+  language: "EN-US"         # language for filter memory briefings (default: EN-US; per-task 'language' overrides)
+
+search:                     # optional — global defaults for LLM search tasks
+  model:                    # model used for web-search tasks; deepseek doesn't support web_search
+    openai: gpt-5.4-nano
+  # instructions: "..."     # additional instructions appended to the built-in system prompt for search tasks
+
+summarize:                  # optional — global defaults for LLM summarization
+  model:                    # model used for summarization; {provider: model_name}
+    deepseek: deepseek-v4-flash
+  # model:
+  #   - deepseek: deepseek-v4-flash
+  #   - openai: gpt-5.4-mini
 
 tasks:
   # RSS task: fetches feeds and posts new entries as Discord embeds.
@@ -34,10 +40,11 @@ tasks:
     # Requires a suffix: "30m", "6h", "1d".
     period: 1h
     # kind: digest           # posts a single digest message instead of individual embeds; affects LLM processing
-    # llm:                   # optional — LLM pre-post filter applied to all feeds in this task
+    # curate:                # optional — LLM pre-post filter applied to all feeds in this task
     #   prompt: "Only keep items about AI and machine learning"
-    #   model: gpt-4o-mini   # optional; overrides llm.models.reasoning
-    #   language: "PT-BR"    # optional; language for memory briefings; falls back to llm.language then EN-US
+    #   model:               # optional; overrides curate.model
+    #     openai: gpt-4o-mini
+    #   language: "PT-BR"    # optional; language for memory briefings; falls back to curate.language then EN-US
     #   instructions: "..."  # optional; extra instructions appended after the filter criteria
     #   web_search: true     # optional — let the LLM search for context / fact-check items (default: false)
     #   explain: true        # optional — use filter_reason as item body (default: false)
@@ -52,7 +59,7 @@ tasks:
     #                        # default: true for digest tasks, false for RSS/embed tasks
     #                        # per-feed 'summarize' overrides this task-level default
     # summarize:             # long form: 'true' is implicit when using extra options
-    #   language: "PT-BR"   # optional — override language for summaries (falls back to llm.language or EN-US)
+    #   language: "PT-BR"   # optional — override language for summaries (falls back to curate.language or EN-US)
     #   instructions: "Ignore marketing claims and focus on what was demonstrated/proved."  # optional
     pull:
       - feed:
@@ -87,7 +94,7 @@ tasks:
   # - name: my-digest
   #   type: digest
   #   period: 24h
-  #   llm:
+  #   curate:
   #     prompt: "Only keep items about AI and machine learning"
   #   pull:
   #     - feed:
@@ -112,15 +119,16 @@ tasks:
   #         webhook: !secret discord_webhook_imoveis
   #         # color: "#00b894"
 
-  # LLM task: calls OpenAI Responses API and posts the plain-text response to Discord.
-  # Detected by pull containing an llm item (web_search is required).
+  # Search task: calls an LLM with web search and posts the plain-text response to Discord.
+  # Detected by pull containing a search item (web_search is required).
   - name: world-news
     period: 24h
     pull:
-      - llm:
+      - search:
           prompt: "Today news. World. Filter for signal > noise."
           web_search: true      # required; dict = options for web_search_preview
-          model: gpt-5.4-mini   # optional, overrides llm.models.topic
+          # model:              # optional; overrides search.model
+          #   openai: gpt-5.4-mini
           # instructions: "..."  # optional; extra instructions appended to the built-in system prompt
           # web_search:
           #   allowed_domains:

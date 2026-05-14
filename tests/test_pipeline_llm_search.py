@@ -2,7 +2,7 @@
 
 import aiohttp
 
-from tasks import _process_llm_search_task
+from tasks import _process_search_task
 from tests.conftest import make_search_cfg
 
 WEBHOOK_URL = "https://discord.example/webhook"
@@ -18,8 +18,8 @@ async def test_llm_search_happy(mock_http, fake_adapter, tmp_path):
     cfg = make_search_cfg(file_path=str(out_file))
 
     async with aiohttp.ClientSession() as session:
-        result = await _process_llm_search_task(
-            cfg, {"tasks": {}}, session, llm_adapter=fake_adapter
+        result = await _process_search_task(
+            cfg, {"tasks": {}}, session, search_adapter=fake_adapter
         )
 
     assert result == {"test-search": {"last_run": result["test-search"]["last_run"]}}

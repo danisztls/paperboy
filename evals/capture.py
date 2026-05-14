@@ -30,7 +30,7 @@ class LLMCall:
     """
 
     task: str
-    call_type: str  # "filter" | "summarize" | "llm_search"
+    call_type: str  # "filter" | "summarize" | "search"
     ts: str
     instructions: str | None = None
     response: str | None = None
@@ -54,7 +54,7 @@ class LLMCall:
     item_url: str | None = None
     fetched_body: str | None = None
 
-    # llm_search-specific
+    # search-specific
     prompt: str | None = None
 
     def to_record(self) -> dict:
@@ -94,7 +94,7 @@ class LLMCall:
                 "item_url": self.item_url,
                 "fetched_body": self.fetched_body,
             }
-        if self.call_type == "llm_search":
+        if self.call_type == "search":
             return {**common, "model": self.model, "prompt": self.prompt}
         return common
 
@@ -225,7 +225,7 @@ class RunCapture:
             )
         )
 
-    def record_llm_search(
+    def record_search(
         self,
         model: str | None,
         instructions: str | None,
@@ -244,7 +244,7 @@ class RunCapture:
         self._current.calls.append(
             LLMCall(
                 task=self._current.task,
-                call_type="llm_search",
+                call_type="search",
                 ts=self._current.timestamp,
                 instructions=instructions,
                 response=raw_response,

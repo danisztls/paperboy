@@ -8,12 +8,12 @@ import aiohttp
 
 from config import get_discord_cfg, get_feeds, get_file_path, parse_color, task_kind
 from pipeline import FilterResult, Item, PushContext
-from process.filter_llm import filter_entries
+from process.curate import curate_entries
 from process.summarize import fetch_item_content, summarize_entry
 from providers.llm.base import LLMAdapter
 from pull.feed import RSSSource
-from pull.llm import run_llm_task
 from pull.scraper import ScraperSource
+from pull.search import run_search_task
 from push.discord import (
     DiscordDigestTarget,
     DiscordEmbedTarget,
@@ -166,7 +166,7 @@ async def _pull_feeds(
 async def _summarize_items(
     items: list[Item],
     cfg_by_id: dict[str, tuple[str, str | None]],
-    llm_adapter: LLMAdapter | None,
+    summarize_adapter: LLMAdapter | None,
     model: str | None,
     session: aiohttp.ClientSession | None = None,
     *,
@@ -187,8 +187,8 @@ async def _summarize_items(
                 return fetched
         return e.body, None
 
-    if llm_adapter is None:
-        log.error("Summarize skipped — llm.models.reasoning is not configured")
+    if summarize_adapter is None:
+        log.error("Summarize skipped — summarize.model is not configured")
         return items
 
     async def _fetch_and_summarize(
@@ -202,7 +202,7 @@ async def _summarize_items(
             summary = await summarize_entry(
                 e.title,
                 content,
-                llm_adapter,
+                summarize_adapter,
                 model=model,
                 language=cfg_by_id[e.id][0],
                 instructions=cfg_by_id[e.id][1],
@@ -243,18 +243,18 @@ async def _summarize_items(
     return [updated.get(e.id, e) for e in items]
 
 
-async def _apply_llm_filter(
+async def _apply_curate(
     all_items: list[Item],
     filter_cfg: dict,
     model: str | None,
     language: str,
     memory_history: list[tuple[str, str]] | None,
-    llm_adapter: LLMAdapter | None,
+    curate_adapter: LLMAdapter | None,
     *,
     collector=None,
     analysis: bool = False,
 ) -> FilterResult:
-    """Run LLM filter on items. Returns FilterResult with filter_pass set on each item."""
+    """Run LLM curate filter on items. Returns FilterResult with filter_pass set on each item."""
     # Build grouped payload for the LLM (grouped by source)
     global_id = 0
     id_map: dict[int, Item] = {}
@@ -284,8 +284,8 @@ async def _apply_llm_filter(
     if not payload_groups:
         return FilterResult(items=all_items, memory=None, cite_map=cite_map)
 
-    if llm_adapter is None:
-        log.error("LLM filter skipped — llm.models.reasoning is not configured")
+    if curate_adapter is None:
+        log.error("LLM curate skipped — curate.model is not configured")
         return FilterResult(items=all_items, memory=None, cite_map=cite_map)
 
     filter_trace: dict | None = {} if collector else None
@@ -293,16 +293,16 @@ async def _apply_llm_filter(
     _filter_kwargs = dict(
         language=language,
         memory_history=memory_history,
-        adapter=llm_adapter,
+        adapter=curate_adapter,
         extra_instructions=effective_filter_cfg.get("instructions") or None,
         reasoning=analysis,
         trace=filter_trace,
     )
-    llm_return = await filter_entries(payload_groups, effective_filter_cfg, model, **_filter_kwargs)
+    llm_return = await curate_entries(payload_groups, effective_filter_cfg, model, **_filter_kwargs)
     if llm_return is None:
         log.warning("Filter failed, retrying in 10s")
         await asyncio.sleep(10)
-        llm_return = await filter_entries(
+        llm_return = await curate_entries(
             payload_groups, effective_filter_cfg, model, **_filter_kwargs
         )
     if llm_return is None:
@@ -377,37 +377,37 @@ async def _apply_llm_filter(
     return FilterResult(items=annotated, memory=memory_text, cite_map=cite_map)
 
 
-async def _process_llm_search_task(
+async def _process_search_task(
     task_cfg: dict,
     state: dict,
     session: aiohttp.ClientSession,
     *,
     instructions: str | None = None,
     search_model: str | None = None,
-    llm_adapter: LLMAdapter | None,
+    search_adapter: LLMAdapter | None,
     collector=None,
     analysis: bool = False,
 ) -> dict:
     """Pull from LLM web search, post as plain text. Returns {name: task_state} or {}."""
     name = task_cfg["name"]
     if collector:
-        collector.begin_task(name, "llm_search")
+        collector.begin_task(name, "search")
     try:
-        if llm_adapter is None:
-            log.error("[%s] Skipping — llm.models.topic is not configured", name)
+        if search_adapter is None:
+            log.error("[%s] Skipping — search.model is not configured", name)
             return {}
 
         trace: dict | None = {} if collector else None
-        text = await run_llm_task(
+        text = await run_search_task(
             task_cfg,
             instructions,
             search_model,
-            adapter=llm_adapter,
+            adapter=search_adapter,
             reasoning=analysis,
             trace=trace,
         )
         if collector and trace is not None:
-            collector.record_llm_search(
+            collector.record_search(
                 model=trace.get("model"),
                 instructions=trace.get("instructions"),
                 prompt=trace.get("prompt", ""),
@@ -422,7 +422,9 @@ async def _process_llm_search_task(
 
         if analysis:
             new_items_preview = (
-                [Item(id=f"{name}:llm_result", title=name, source=name, body=text)] if text else []
+                [Item(id=f"{name}:search_result", title=name, source=name, body=text)]
+                if text
+                else []
             )
             if collector:
                 collector.record_push(len(new_items_preview))
@@ -430,14 +432,14 @@ async def _process_llm_search_task(
 
         if not text:
             return {}
-        new_items = [Item(id=f"{name}:llm_result", title=name, source=name, body=text)]
+        new_items = [Item(id=f"{name}:search_result", title=name, source=name, body=text)]
 
         target = DiscordTextTarget()
         ctx = PushContext(items=new_items)
         try:
             await target.push(ctx, task_cfg, session)
         except Exception:
-            log.error("Skipping LLM task %s due to post failure", name)
+            log.error("Skipping search task %s due to post failure", name)
             return {}
 
         if get_file_path(task_cfg):
@@ -508,8 +510,8 @@ async def _run_summarize_stage(
     fetch_map: dict[str, object],
     *,
     task_summarize,
-    llm_adapter: LLMAdapter | None,
-    evaluate_model: str | None,
+    summarize_adapter: LLMAdapter | None,
+    summarize_model: str | None,
     session: aiohttp.ClientSession,
     collector,
     analysis: bool,
@@ -542,8 +544,8 @@ async def _run_summarize_stage(
     summarized = await _summarize_items(
         to_summarize,
         summarize_cfg_by_id,
-        llm_adapter,
-        evaluate_model,
+        summarize_adapter,
+        summarize_model,
         session,
         collector=collector,
         analysis=analysis,
@@ -655,13 +657,15 @@ def _build_new_task_state(
     return new_task_state
 
 
-async def _process_llm_curate_task(
+async def _process_feed_task(
     task_cfg: dict,
     state: dict,
     session: aiohttp.ClientSession,
     *,
-    evaluate_model: str | None = None,
-    llm_adapter: LLMAdapter | None,
+    curate_model: str | None = None,
+    curate_adapter: LLMAdapter | None = None,
+    summarize_model: str | None = None,
+    summarize_adapter: LLMAdapter | None = None,
     global_color: int | None = None,
     global_language: str = "EN-US",
     max_age_seconds: int | None = None,
@@ -672,7 +676,7 @@ async def _process_llm_curate_task(
     task_name = task_cfg["name"]
     task_discord = get_discord_cfg(task_cfg)
     task_color = parse_color(task_discord.get("color"))
-    filter_cfg = task_cfg.get("llm") or None
+    filter_cfg = task_cfg.get("curate") or None
     explain = bool(filter_cfg.get("explain")) if filter_cfg else False
     if analysis and filter_cfg:
         explain = True
@@ -730,8 +734,8 @@ async def _process_llm_curate_task(
                 feed_cfgs,
                 fetch_map,
                 task_summarize=task_summarize,
-                llm_adapter=llm_adapter,
-                evaluate_model=evaluate_model,
+                summarize_adapter=summarize_adapter,
+                summarize_model=summarize_model,
                 session=session,
                 collector=collector,
                 analysis=analysis,
@@ -741,13 +745,13 @@ async def _process_llm_curate_task(
         filter_result: FilterResult | None = None
         if filter_cfg and all_new_items:
             language = filter_cfg.get("language") or global_language
-            filter_result = await _apply_llm_filter(
+            filter_result = await _apply_curate(
                 all_new_items,
                 filter_cfg,
-                evaluate_model,
+                curate_model,
                 language,
                 memory_history,
-                llm_adapter,
+                curate_adapter,
                 collector=collector,
                 analysis=analysis,
             )

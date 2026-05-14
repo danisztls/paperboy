@@ -18,13 +18,13 @@ class FilterItem(BaseModel):
 
 
 class FilterDecisions(BaseModel):
-    """Structured-output shape produced by the LLM filter call."""
+    """Structured-output shape produced by the LLM curate call."""
 
     items: list[FilterItem]
     memory: str = ""
 
 
-async def filter_entries(
+async def curate_entries(
     items: list[dict],
     filter_cfg: dict,
     global_model: str | None = None,
@@ -44,7 +44,12 @@ async def filter_entries(
     memory_history: chronological list of prior memory entries (oldest first) passed as
     context so the model can build continuity across runs.
     """
-    model = filter_cfg.get("model") or global_model or None
+    raw_model = filter_cfg.get("model")
+    model = (
+        (next(iter(raw_model.values())) if isinstance(raw_model, dict) else raw_model)
+        or global_model
+        or None
+    )
     explain = filter_cfg.get("explain", False)
     criteria = filter_cfg.get("prompt", "")
 

@@ -17,7 +17,7 @@ from config import (
     get_api_key_for_provider,
     get_discord_cfg,
     get_feeds,
-    get_llm_pull_cfg,
+    get_search_cfg,
     load_config,
     parse_color,
     parse_period,
@@ -35,9 +35,9 @@ from state.migrate import CURRENT_VERSION, migrate, needs_migration
 from tasks import (
     DEFAULT_PERIOD,
     _is_due,
-    _process_llm_curate_task,
-    _process_llm_search_task,
+    _process_feed_task,
     _process_scraper_task,
+    _process_search_task,
 )
 
 
@@ -230,16 +230,21 @@ async def _async_main(args: argparse.Namespace) -> None:
         return
 
     llm_cfg = config.get("llm", {})
-    instructions = llm_cfg.get("instructions") or None
+    curate_cfg = config.get("curate", {})
+    search_cfg_global = config.get("search", {})
+    summarize_cfg = config.get("summarize", {})
     api_key_cfg = llm_cfg.get("api_key") or None
-    llm_models = llm_cfg.get("models") or {}
-    evaluate_adapter, evaluate_model = _build_adapter(
-        resolve_model_specs(llm_models.get("reasoning")), api_key_cfg
+    curate_adapter, curate_model = _build_adapter(
+        resolve_model_specs(curate_cfg.get("model")), api_key_cfg
+    )
+    summarize_adapter, summarize_model = _build_adapter(
+        resolve_model_specs(summarize_cfg.get("model")), api_key_cfg
     )
     search_adapter, search_model = _build_adapter(
-        resolve_model_specs(llm_models.get("topic")), api_key_cfg
+        resolve_model_specs(search_cfg_global.get("model")), api_key_cfg
     )
-    global_language = llm_cfg.get("language") or "EN-US"
+    instructions = search_cfg_global.get("instructions") or None
+    global_language = curate_cfg.get("language") or "EN-US"
     discord_cfg = config.get("discord", {})
     global_color = parse_color(discord_cfg.get("color"))
     feeds_cfg = config.get("feeds") or {}
@@ -316,10 +321,10 @@ async def _async_main(args: argparse.Namespace) -> None:
                     continue
                 task_state = state.get("tasks", {}).get(name, {})
 
-                if kind == "llm":
-                    if not get_llm_pull_cfg(task_cfg).get("web_search"):
+                if kind == "search":
+                    if not get_search_cfg(task_cfg).get("web_search"):
                         log.warning(
-                            "[%s] Skipping LLM task: llm.web_search not configured (no input source)",
+                            "[%s] Skipping search task: search.web_search not configured (no input source)",
                             name,
                         )
                         continue
@@ -330,13 +335,13 @@ async def _async_main(args: argparse.Namespace) -> None:
                     ):
                         continue
                     feed_tasks.append(
-                        _process_llm_search_task(
+                        _process_search_task(
                             task_cfg,
                             state,
                             session,
                             instructions=instructions,
                             search_model=search_model,
-                            llm_adapter=search_adapter,
+                            search_adapter=search_adapter,
                             collector=collector,
                             analysis=analysis,
                         )
@@ -363,12 +368,14 @@ async def _async_main(args: argparse.Namespace) -> None:
                         log.info("[%s] Skipping — no feeds are due", name)
                         continue
                     feed_tasks.append(
-                        _process_llm_curate_task(
+                        _process_feed_task(
                             task_cfg,
                             state,
                             session,
-                            evaluate_model=evaluate_model,
-                            llm_adapter=evaluate_adapter,
+                            curate_model=curate_model,
+                            curate_adapter=curate_adapter,
+                            summarize_model=summarize_model,
+                            summarize_adapter=summarize_adapter,
                             global_color=global_color,
                             global_language=global_language,
                             max_age_seconds=max_age_seconds,
@@ -461,7 +468,7 @@ def main():
     )
     parser.add_argument(
         "--call",
-        choices=["filter", "summarize", "llm_search"],
+        choices=["filter", "summarize", "search"],
         help="With --replay: only re-issue calls of this type (default: all)",
     )
     parser.add_argument(
@@ -564,15 +571,14 @@ def main():
         if config_path.exists():
             try:
                 cfg = load_config(config_path)
-                llm_cfg = cfg.get("llm") or {}
-                _sum_api_key_cfg = llm_cfg.get("api_key") or None
-                _sum_language = llm_cfg.get("language") or "EN-US"
-                _sum_specs = resolve_model_specs((llm_cfg.get("models") or {}).get("topic"))
+                _sum_api_key_cfg = (cfg.get("llm") or {}).get("api_key") or None
+                _sum_language = (cfg.get("curate") or {}).get("language") or "EN-US"
+                _sum_specs = resolve_model_specs((cfg.get("summarize") or {}).get("model"))
                 _sum_adapter, _sum_model = _build_adapter(_sum_specs, _sum_api_key_cfg)
             except Exception:
                 pass
         if _sum_adapter is None:
-            log.error("--summarize requires llm.models.topic with a provider configured")
+            log.error("--summarize requires summarize.model with a provider configured")
             sys.exit(1)
         asyncio.run(
             run_summarize(

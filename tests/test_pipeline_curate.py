@@ -1,13 +1,13 @@
 """E2E tests for the LLM curate (RSS) pipeline.
 
 Real RSSSource, Discord*Target, FileEmbedTarget run. Only the LLM adapter
-(passed as a parameter to _process_llm_curate_task) and the aiohttp transport
+(passed as a parameter to _process_feed_task) and the aiohttp transport
 (via aioresponses) are faked.
 """
 
 import aiohttp
 
-from tasks import _process_llm_curate_task
+from tasks import _process_feed_task
 from tests.conftest import load_fixture, make_curate_cfg
 
 FEED_URL = "https://feed.example/rss"
@@ -38,8 +38,8 @@ async def test_curate_happy(mock_http, fake_adapter, tmp_path):
     )
 
     async with aiohttp.ClientSession() as session:
-        result = await _process_llm_curate_task(
-            cfg, {"tasks": {}}, session, llm_adapter=fake_adapter
+        result = await _process_feed_task(
+            cfg, {"tasks": {}}, session, curate_adapter=fake_adapter, summarize_adapter=fake_adapter
         )
 
     assert "test-curate" in result
@@ -102,7 +102,9 @@ async def test_curate_dedup(mock_http, fake_adapter, tmp_path):
     }
 
     async with aiohttp.ClientSession() as session:
-        result = await _process_llm_curate_task(cfg, state, session, llm_adapter=fake_adapter)
+        result = await _process_feed_task(
+            cfg, state, session, curate_adapter=fake_adapter, summarize_adapter=fake_adapter
+        )
 
     body = out_file.read_text()
     assert "Second Item About Quantum Physics" in body
@@ -138,8 +140,8 @@ async def test_curate_pull_failure(mock_http, fake_adapter, tmp_path):
     )
 
     async with aiohttp.ClientSession() as session:
-        result = await _process_llm_curate_task(
-            cfg, {"tasks": {}}, session, llm_adapter=fake_adapter
+        result = await _process_feed_task(
+            cfg, {"tasks": {}}, session, curate_adapter=fake_adapter, summarize_adapter=fake_adapter
         )
 
     feeds_state = result["test-curate"]["feeds"]
@@ -177,8 +179,8 @@ async def test_curate_filter_fails_open(mock_http, fake_adapter, tmp_path, monke
     )
 
     async with aiohttp.ClientSession() as session:
-        result = await _process_llm_curate_task(
-            cfg, {"tasks": {}}, session, llm_adapter=fake_adapter
+        result = await _process_feed_task(
+            cfg, {"tasks": {}}, session, curate_adapter=fake_adapter, summarize_adapter=fake_adapter
         )
 
     body = out_file.read_text()
