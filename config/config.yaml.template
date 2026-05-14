@@ -1,6 +1,9 @@
 discord:                    # optional — global defaults for Discord posting
   # color: "#5865F2"       # default embed color for RSS embeds
 
+feeds:                      # optional — global defaults for RSS feed fetching
+  # max_age_days: 7        # skip feed entries older than this on every pull (default: 7)
+
 llm:                        # optional — global defaults for all LLM tasks
   models:
     reasoning:              # used for RSS/digest LLM filter + summarize; array for ordered fallback

@@ -448,6 +448,7 @@ async def _process_llm_curate_task(
     llm_adapter: LLMAdapter | None,
     global_color: int | None = None,
     global_language: str = "EN-US",
+    max_age_seconds: int | None = None,
     collector=None,
     analysis: bool = False,
 ) -> dict:
@@ -482,7 +483,7 @@ async def _process_llm_curate_task(
             memory_history = [(k, raw_history[k]) for k in keys] or None
 
         # --- Pull ---
-        source = RSSSource()
+        source = RSSSource(max_age_seconds) if max_age_seconds is not None else RSSSource()
         fetch_map, filter_log_map = await _pull_feeds(
             source,
             feed_cfgs,

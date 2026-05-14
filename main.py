@@ -207,6 +207,8 @@ async def _async_main(args: argparse.Namespace) -> None:
     global_language = llm_cfg.get("language") or "EN-US"
     discord_cfg = config.get("discord", {})
     global_color = parse_color(discord_cfg.get("color"))
+    feeds_cfg = config.get("feeds") or {}
+    max_age_seconds = int(feeds_cfg.get("max_age_days") or 7) * 86400
 
     tasks = config.get("tasks", [])
     if not tasks:
@@ -229,7 +231,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     continue
                 task_state = state.setdefault("tasks", {}).setdefault(task_name, {})
                 feeds_state = task_state.setdefault("feeds", {})
-                source = RSSSource()
+                source = RSSSource(max_age_seconds)
                 for feed_cfg in get_feeds(task_cfg):
                     url = feed_cfg.get("url")
                     if not url:
@@ -334,6 +336,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                             llm_adapter=evaluate_adapter,
                             global_color=global_color,
                             global_language=global_language,
+                            max_age_seconds=max_age_seconds,
                             collector=collector,
                             analysis=analysis,
                         )
