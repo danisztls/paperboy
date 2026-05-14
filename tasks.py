@@ -821,8 +821,7 @@ async def _process_scraper_task(
         return {task_name: {**task_state, "last_run": now_iso}}
 
     colored_items = [
-        dc_replace(item, meta={**item.meta, "color": task_color, "skip_image": True})
-        for item in pull_result.new_items
+        dc_replace(item, meta={**item.meta, "color": task_color}) for item in pull_result.new_items
     ]
 
     discord_format = task_discord.get("format")
