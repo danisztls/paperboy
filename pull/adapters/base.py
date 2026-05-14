@@ -4,6 +4,26 @@ from playwright.async_api import Page
 
 from pipeline import Item
 
+_REGISTRY: dict[str, type[SiteAdapter]] = {}
+
+
+def register_adapter(name: str):
+    """Decorator: register a SiteAdapter subclass under `name`."""
+
+    def _wrap(cls: type[SiteAdapter]) -> type[SiteAdapter]:
+        _REGISTRY[name] = cls
+        return cls
+
+    return _wrap
+
+
+def get_adapter(name: str) -> type[SiteAdapter] | None:
+    return _REGISTRY.get(name)
+
+
+def available_adapters() -> list[str]:
+    return sorted(_REGISTRY)
+
 
 class SiteAdapter(ABC):
     @property

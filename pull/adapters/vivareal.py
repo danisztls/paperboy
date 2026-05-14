@@ -6,7 +6,7 @@ from playwright.async_api import Page
 
 from pipeline import Item
 
-from .base import SiteAdapter
+from .base import SiteAdapter, register_adapter
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ _NEXT_DATA_PATHS = [
 ]
 
 
+@register_adapter("vivareal")
 class VivaRealAdapter(SiteAdapter):
     @property
     def name(self) -> str:

@@ -5,13 +5,10 @@ import logging
 from playwright.async_api import async_playwright
 
 from pipeline import PullResult, Source
-from pull.adapters.vivareal import VivaRealAdapter
+from pull.adapters import vivareal  # noqa: F401 — registers via @register_adapter
+from pull.adapters.base import available_adapters, get_adapter
 
 log = logging.getLogger(__name__)
-
-_ADAPTERS = {
-    "vivareal": VivaRealAdapter,
-}
 
 
 def _get_scraper_cfg(task_cfg: dict) -> dict:
@@ -25,10 +22,10 @@ class ScraperSource(Source):
         url = scraper_cfg.get("url", "")
         max_items = scraper_cfg.get("max_items")
 
-        adapter_cls = _ADAPTERS.get(adapter_name)
+        adapter_cls = get_adapter(adapter_name)
         if not adapter_cls:
             log.error(
-                "[scraper] Unknown adapter %r. Available: %s", adapter_name, sorted(_ADAPTERS)
+                "[scraper] Unknown adapter %r. Available: %s", adapter_name, available_adapters()
             )
             return None
         if not url:
