@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Feed B</title>
+    <link>https://b.example.com</link>
+    <description>Second test feed</description>
+    <item>
+      <title>B-Item About Gardening</title>
+      <link>https://b.example.com/posts/9</link>
+      <description>Tomatoes need full sun and consistent watering to thrive.</description>
+    </item>
+  </channel>
+</rss>

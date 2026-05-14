@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Example Feed</title>
+    <link>https://example.com</link>
+    <description>A test feed</description>
+    <item>
+      <title>First Item About Cats</title>
+      <link>https://example.com/posts/1</link>
+      <description>Cats are wonderful creatures that bring joy to many households.</description>
+    </item>
+    <item>
+      <title>Second Item About Quantum Physics</title>
+      <link>https://example.com/posts/2</link>
+      <description>Recent advances in quantum computing have implications for cryptography.</description>
+    </item>
+  </channel>
+</rss>
