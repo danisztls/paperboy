@@ -1,13 +1,13 @@
 import logging
 
-from config import get_llm_pull_cfg
+from config import get_search_cfg
 from pipeline import Item, PullResult, Source
 from providers.llm.base import LLMAdapter
 
 log = logging.getLogger(__name__)
 
 
-class LLMSearchSource(Source):
+class SearchSource(Source):
     """Pulls content from the web via an LLM web-search call."""
 
     def __init__(
@@ -22,17 +22,17 @@ class LLMSearchSource(Source):
         self._adapter = adapter
 
     async def pull(self, cfg: dict, seen: set[str], session) -> PullResult | None:
-        text = await run_llm_task(
+        text = await run_search_task(
             cfg, self._instructions, self._global_model, adapter=self._adapter
         )
         if not text:
             return None
-        name = cfg.get("name", "llm")
-        item = Item(id=f"{name}:llm_result", title=name, source=name, body=text)
+        name = cfg.get("name", "search")
+        item = Item(id=f"{name}:search_result", title=name, source=name, body=text)
         return PullResult(new_items=[item], current_items=[])
 
 
-async def run_llm_task(
+async def run_search_task(
     task_cfg: dict,
     instructions: str | None = None,
     global_model: str | None = None,
@@ -43,11 +43,16 @@ async def run_llm_task(
 ) -> str | None:
     """Call LLM with web search. Returns response text or None on failure."""
     name = task_cfg.get("name")
-    llm_cfg = get_llm_pull_cfg(task_cfg)
-    model = llm_cfg.get("model") or global_model or None
-    prompt = llm_cfg["prompt"]
-    web_search = llm_cfg.get("web_search", True)
-    task_instructions = llm_cfg.get("instructions")
+    search_cfg = get_search_cfg(task_cfg)
+    raw_model = search_cfg.get("model")
+    model = (
+        (next(iter(raw_model.values())) if isinstance(raw_model, dict) else raw_model)
+        or global_model
+        or None
+    )
+    prompt = search_cfg["prompt"]
+    web_search = search_cfg.get("web_search", True)
+    task_instructions = search_cfg.get("instructions")
     combined_instructions = "\n\n".join(filter(None, [instructions, task_instructions])) or None
     if trace is not None:
         trace["model"] = model

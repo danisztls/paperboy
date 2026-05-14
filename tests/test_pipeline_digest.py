@@ -4,7 +4,7 @@ import json
 
 import aiohttp
 
-from tasks import _process_llm_curate_task
+from tasks import _process_feed_task
 from tests.conftest import load_fixture, make_curate_cfg
 
 FEED_URL = "https://feed.example/rss"
@@ -43,8 +43,8 @@ async def test_digest_cite_map(mock_http, fake_adapter, tmp_path):
     )
 
     async with aiohttp.ClientSession() as session:
-        result = await _process_llm_curate_task(
-            cfg, {"tasks": {}}, session, llm_adapter=fake_adapter
+        result = await _process_feed_task(
+            cfg, {"tasks": {}}, session, curate_adapter=fake_adapter, summarize_adapter=fake_adapter
         )
 
     body = out_file.read_text()

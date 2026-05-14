@@ -38,8 +38,8 @@ def task_kind(task_cfg: dict) -> str:
     pull = task_cfg.get("pull", [])
     if any("scraper" in item for item in pull):
         return "scraper"
-    if any("llm" in item for item in pull):
-        return "llm"
+    if any("search" in item for item in pull):
+        return "search"
     return "feeds"
 
 
@@ -51,8 +51,8 @@ def get_discord_cfg(task_cfg: dict) -> dict:
     return next((item["discord"] for item in task_cfg.get("push", []) if "discord" in item), {})
 
 
-def get_llm_pull_cfg(task_cfg: dict) -> dict:
-    return next((item["llm"] for item in task_cfg.get("pull", []) if "llm" in item), {})
+def get_search_cfg(task_cfg: dict) -> dict:
+    return next((item["search"] for item in task_cfg.get("pull", []) if "search" in item), {})
 
 
 def _get_scraper_cfg(task_cfg: dict) -> dict:
@@ -64,10 +64,11 @@ def get_file_path(task_cfg: dict) -> str | None:
 
 
 def _resolve_model_spec(spec) -> tuple[str | None, str | None]:
-    """Return (provider, model_name) from a {provider, model} dict, or (None, None)."""
+    """Return (provider, model_name) from a {provider: model_name} dict, or (None, None)."""
     if spec is None:
         return None, None
-    return spec.get("provider") or None, spec.get("model") or None
+    provider, model = next(iter(spec.items()))
+    return provider or None, model or None
 
 
 def resolve_model_specs(spec) -> list[tuple[str | None, str | None]]:
@@ -156,10 +157,21 @@ class _Retention(BaseModel):
     days: int = 30  # 0 disables pruning
 
 
-class _ModelSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    provider: Literal["openai", "gemini", "deepseek", "anthropic"] | None = None
-    model: str
+_KNOWN_PROVIDERS = {"openai", "gemini", "deepseek", "anthropic"}
+
+
+def _validate_model_spec(v) -> dict:
+    if not isinstance(v, dict) or len(v) != 1:
+        raise ValueError("model spec must be a single-key dict like {openai: gpt-4o-mini}")
+    provider = next(iter(v))
+    if provider not in _KNOWN_PROVIDERS:
+        raise ValueError(
+            f"unknown provider {provider!r}; must be one of {sorted(_KNOWN_PROVIDERS)}"
+        )
+    return v
+
+
+_ModelSpec = Annotated[dict, AfterValidator(_validate_model_spec)]
 
 
 def _normalize_model_spec_list(v):
@@ -169,12 +181,6 @@ def _normalize_model_spec_list(v):
 
 
 _ModelSpecList = Annotated[list[_ModelSpec] | None, BeforeValidator(_normalize_model_spec_list)]
-
-
-class _GlobalModels(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    reasoning: _ModelSpecList = None
-    topic: _ModelSpecList = None
 
 
 class _ApiKeys(BaseModel):
@@ -187,10 +193,24 @@ class _ApiKeys(BaseModel):
 
 class _GlobalLLM(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    models: _GlobalModels | None = None
-    language: str | None = None
     api_key: _ApiKeys | None = None
+
+
+class _GlobalCurate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    model: _ModelSpecList = None
+    language: str | None = None
+
+
+class _GlobalSearch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    model: _ModelSpecList = None
     instructions: str | None = None
+
+
+class _GlobalSummarize(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    model: _ModelSpecList = None
 
 
 class _FilterOp(BaseModel):
@@ -270,10 +290,10 @@ class _PullFeedItem(BaseModel):
     summarize: bool | _Summarize | None = None
 
 
-class _PullLLMItem(BaseModel):
+class _PullSearchItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     prompt: str
-    model: str | None = None
+    model: _ModelSpec | None = None
     web_search: bool | dict
     instructions: str | None = None
 
@@ -288,15 +308,15 @@ class _PullScraperItem(BaseModel):
 class _PullItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     feed: _PullFeedItem | None = None
-    llm: _PullLLMItem | None = None
+    search: _PullSearchItem | None = None
     scraper: _PullScraperItem | None = None
 
     @model_validator(mode="after")
     def _exactly_one(self):
-        present = [k for k in ("feed", "llm", "scraper") if k in self.model_fields_set]
+        present = [k for k in ("feed", "search", "scraper") if k in self.model_fields_set]
         if len(present) != 1:
             raise ValueError(
-                "each pull item must have exactly one key: 'feed', 'llm', or 'scraper'"
+                "each pull item must have exactly one key: 'feed', 'search', or 'scraper'"
             )
         return self
 
@@ -320,10 +340,10 @@ class _PushItem(BaseModel):
         return self
 
 
-class _TaskLLM(BaseModel):
+class _TaskCurate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     prompt: str
-    model: str | None = None
+    model: _ModelSpec | None = None
     language: str | None = None
     instructions: str | None = None
     web_search: bool | dict | None = None
@@ -339,24 +359,24 @@ class _Task(BaseModel):
     push: list[_PushItem]
     image: _Image | None = None
     filter: _FilterDict | None = None
-    llm: _TaskLLM | None = None
+    curate: _TaskCurate | None = None
     summarize: bool | _Summarize | None = None
 
     @model_validator(mode="after")
     def _check_task(self):
-        has_llm_pull = any(item.llm is not None for item in self.pull)
+        has_search_pull = any(item.search is not None for item in self.pull)
         has_feed_pull = any(item.feed is not None for item in self.pull)
         has_scraper_pull = any(item.scraper is not None for item in self.pull)
         has_discord_push = any(item.discord is not None for item in self.push)
         has_file_push = any(item.file is not None for item in self.push)
         if not (has_discord_push or has_file_push):
             raise ValueError("push must contain at least one target (discord or file)")
-        if has_scraper_pull and (has_llm_pull or has_feed_pull):
-            raise ValueError("pull cannot mix scraper with feed or llm items")
+        if has_scraper_pull and (has_search_pull or has_feed_pull):
+            raise ValueError("pull cannot mix scraper with feed or search items")
         if has_scraper_pull and sum(1 for item in self.pull if item.scraper is not None) > 1:
             raise ValueError("pull can have at most one scraper item")
-        if has_llm_pull and has_feed_pull:
-            raise ValueError("pull cannot mix feed and llm items")
+        if has_search_pull and has_feed_pull:
+            raise ValueError("pull cannot mix feed and search items")
         return self
 
 
@@ -365,6 +385,9 @@ class _Config(BaseModel):
     discord: _GlobalDiscord | None = None
     feeds: _Feeds | None = None
     llm: _GlobalLLM | None = None
+    curate: _GlobalCurate | None = None
+    search: _GlobalSearch | None = None
+    summarize: _GlobalSummarize | None = None
     image: _Image | None = None
     retention: _Retention | None = None
     tasks: list[_Task]

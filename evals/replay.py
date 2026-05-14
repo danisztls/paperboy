@@ -29,7 +29,7 @@ def _input_for(call_type: str, record: dict) -> str:
         return json.dumps(record.get("payload") or [], ensure_ascii=False)
     if call_type == "summarize":
         return record.get("input") or ""
-    if call_type == "llm_search":
+    if call_type == "search":
         return record.get("prompt") or ""
     raise ValueError(f"Unknown call_type: {call_type!r}")
 

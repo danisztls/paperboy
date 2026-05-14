@@ -14,7 +14,7 @@ import pytest
 from aioresponses import aioresponses
 from pydantic import BaseModel
 
-from process.filter_llm import FilterDecisions, FilterItem
+from process.curate import FilterDecisions, FilterItem
 from providers.llm.base import LLMAdapter, LLMResponse
 
 WEBHOOK_URL = "https://discord.example/webhook"
@@ -158,7 +158,7 @@ def make_curate_cfg(
         "image": {"skip": True},
     }
     if llm_filter is not None:
-        cfg["llm"] = llm_filter
+        cfg["curate"] = llm_filter
     if kind is not None:
         cfg["kind"] = kind
     if summarize is not None:
@@ -177,6 +177,6 @@ def make_search_cfg(
         push.append({"file": file_path})
     return {
         "name": name,
-        "pull": [{"llm": {"prompt": prompt, "web_search": True}}],
+        "pull": [{"search": {"prompt": prompt, "web_search": True}}],
         "push": push,
     }
