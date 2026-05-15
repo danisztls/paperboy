@@ -5,6 +5,14 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import NamedTuple
+
+
+class Citation(NamedTuple):
+    """A source name + optional URL pair, used to resolve [n] cite markers."""
+
+    source: str
+    url: str | None
 
 
 @dataclass
@@ -38,7 +46,7 @@ class FilterResult:
 
     items: list[Item]  # all input items with filter_pass/filter_reason set
     memory: str | None  # new memory briefing text (for digest targets)
-    cite_map: dict[int, tuple[str, str | None]]  # LLM int ID → (source, url)
+    cite_map: dict[int, Citation]  # LLM int ID → Citation(source, url)
 
 
 @dataclass
@@ -47,7 +55,7 @@ class PushContext:
 
     items: list[Item]
     memory: str | None = None
-    cite_map: dict[int, tuple[str, str | None]] | None = None
+    cite_map: dict[int, Citation] | None = None
 
 
 class Source(ABC):

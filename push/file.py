@@ -5,7 +5,7 @@ import re
 from datetime import UTC, datetime
 
 from config import get_file_path
-from pipeline import Item, PushContext, Target
+from pipeline import Citation, Item, PushContext, Target
 
 log = logging.getLogger(__name__)
 
@@ -17,13 +17,12 @@ def _resolve_path(path_str: str) -> pathlib.Path:
     return pathlib.Path(os.path.expandvars(os.path.expanduser(path_str)))
 
 
-def _apply_cite_map_md(text: str, cite_map: dict[int, tuple[str, str | None]]) -> str:
+def _apply_cite_map_md(text: str, cite_map: dict[int, Citation]) -> str:
     def replace(m: re.Match) -> str:
         item = cite_map.get(int(m.group(1)))
         if item is None:
             return m.group(0)
-        name, url = item
-        return f"[{name}]({url})" if url else f"[{name}]"
+        return f"[{item.source}]({item.url})" if item.url else f"[{item.source}]"
 
     return _CITE_RE.sub(replace, text)
 
