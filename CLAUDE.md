@@ -59,7 +59,7 @@ Defines the interfaces that all sources and targets implement:
 
 - **`Item`** — generic content item produced by any source. Fields: `id`, `title`, `source` (display name), `url`, `body` (sanitized text), `image`, `published`, `summary`, `filter_pass`, `filter_reason`, `meta` (dict for source-specific extras).
 - **`PullResult`** — output of `Source.pull()`: `new_items: list[Item]` + `current_items: list[dict]` (url+title dicts for state).
-- **`FilterResult`** — output of the LLM curate step: `items` (all items with filter_pass set), `memory` (new briefing text), `cite_map` (LLM int ID → (source, url)).
+- **`FilterResult`** — output of the LLM curate step: `items` (all items with filter_pass set), `memory` (new briefing text), `cite_map: dict[int, Citation]` (LLM int ID → `Citation(source, url)` NamedTuple).
 - **`PushContext`** — input to `Target.push()`: `items`, optional `memory`, optional `cite_map`.
 - **`Source(ABC)`** — one abstract method: `pull(cfg, seen, session) → PullResult | None`. Return `None` on failure; the caller must not update state.
 - **`Target(ABC)`** — one abstract method: `push(ctx, cfg, session) → set[str]`. Returns IDs of items that failed to publish.

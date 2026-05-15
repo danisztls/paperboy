@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import aiohttp
 
 from config import get_discord_cfg, get_feeds, get_file_path, parse_color, task_kind
-from pipeline import FilterResult, Item, PushContext
+from pipeline import Citation, FilterResult, Item, PushContext
 from process.curate import curate_entries
 from process.summarize import _YOUTUBE_RE, fetch_item_content, summarize_entry
 from providers.llm.base import LLMAdapter
@@ -282,8 +282,8 @@ async def _apply_curate(
         if group["items"]:
             payload_groups.append(group)
 
-    cite_map: dict[int, tuple[str, str | None]] = {
-        gid: (item.source, item.url) for gid, item in id_map.items()
+    cite_map: dict[int, Citation] = {
+        gid: Citation(item.source, item.url) for gid, item in id_map.items()
     }
 
     if not payload_groups:
@@ -572,7 +572,7 @@ def _select_passing(
     all_new_items: list[Item],
     *,
     explain: bool,
-) -> tuple[list[Item], list[Item], str | None, dict[int, tuple[str, str | None]]]:
+) -> tuple[list[Item], list[Item], str | None, dict[int, Citation]]:
     """Pick items to post and substitute body text. Returns (passing, all_annotated, memory_text, cite_map)."""
     if filter_result is not None:
         passing = [it for it in filter_result.items if it.filter_pass is not False]
@@ -594,7 +594,7 @@ async def _push_curate(
     task_cfg: dict,
     passing: list[Item],
     memory_text: str | None,
-    cite_map: dict,
+    cite_map: dict[int, Citation],
     task_name: str,
     session: aiohttp.ClientSession,
 ) -> set[str] | None:

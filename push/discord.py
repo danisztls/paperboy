@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 import aiohttp
 
 from config import get_discord_cfg
-from pipeline import Item, PushContext, Target
+from pipeline import Citation, Item, PushContext, Target
 
 log = logging.getLogger(__name__)
 
@@ -105,13 +105,12 @@ def _wrap_text(text: str) -> str:
     return "\n".join(result)
 
 
-def _apply_cite_map(text: str, cite_map: dict[int, tuple[str, str | None]]) -> str:
+def _apply_cite_map(text: str, cite_map: dict[int, Citation]) -> str:
     def replace(m: re.Match) -> str:
         item = cite_map.get(int(m.group(1)))
         if item is None:
             return m.group(0)
-        name, url = item
-        return f"[[{name}](<{url}>)]" if url else f"[{name}]"
+        return f"[[{item.source}](<{item.url}>)]" if item.url else f"[{item.source}]"
 
     return _CITE_RE.sub(replace, text)
 
@@ -136,7 +135,7 @@ def _pack(units: list[str], sep: str, limit: int) -> list[str]:
 
 def _build_digest_chunks(
     memory_text: str | None,
-    cite_map: dict[int, tuple[str, str | None]] | None = None,
+    cite_map: dict[int, Citation] | None = None,
 ) -> list[str]:
     if not memory_text:
         return []
@@ -162,7 +161,7 @@ async def post_digest_to_discord(
     session: aiohttp.ClientSession,
     *,
     memory_text: str | None = None,
-    cite_map: dict[int, tuple[str, str | None]] | None = None,
+    cite_map: dict[int, Citation] | None = None,
 ) -> None:
     if not memory_text:
         return
