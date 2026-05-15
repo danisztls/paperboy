@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 import aiohttp
 
 from config import get_discord_cfg
-from pipeline import Citation, Item, PushContext, Target
+from pipeline import Citation, Item, MemoryParagraph, PushContext, Target
 
 log = logging.getLogger(__name__)
 
@@ -71,9 +71,7 @@ async def post_text_to_discord(
 
 _CONTENT_LIMIT = 2000
 _LINE_WIDTH = 120
-_CITE_RE = re.compile(r"\[(\d+)\]")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
-_PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n+")
 _LINK_RE = re.compile(r"\[+[^\]]*\]\(<[^>]*>\)\]*")
 
 
@@ -105,14 +103,17 @@ def _wrap_text(text: str) -> str:
     return "\n".join(result)
 
 
-def _apply_cite_map(text: str, cite_map: dict[int, Citation]) -> str:
-    def replace(m: re.Match) -> str:
-        item = cite_map.get(int(m.group(1)))
-        if item is None:
-            return m.group(0)
-        return f"[[{item.source}](<{item.url}>)]" if item.url else f"[{item.source}]"
-
-    return _CITE_RE.sub(replace, text)
+def _render_paragraph(para: MemoryParagraph, cite_map: dict[int, Citation] | None) -> str:
+    text = para.text.rstrip()
+    if para.citations and cite_map:
+        links = []
+        for id_ in para.citations:
+            cit = cite_map.get(id_)
+            if cit:
+                links.append(f"[[{cit.source}](<{cit.url}>)]" if cit.url else f"[{cit.source}]")
+        if links:
+            text += " " + " ".join(links)
+    return text
 
 
 def _pack(units: list[str], sep: str, limit: int) -> list[str]:
@@ -134,18 +135,16 @@ def _pack(units: list[str], sep: str, limit: int) -> list[str]:
 
 
 def _build_digest_chunks(
-    memory_text: str | None,
+    memory: list[MemoryParagraph] | None,
     cite_map: dict[int, Citation] | None = None,
 ) -> list[str]:
-    if not memory_text:
+    if not memory:
         return []
-    text = _apply_cite_map(memory_text, cite_map) if cite_map else memory_text
+    rendered = [_render_paragraph(p, cite_map) for p in memory if p.text.strip()]
 
-    paragraphs = [p.strip() for p in _PARAGRAPH_SPLIT_RE.split(text.strip()) if p.strip()]
-
-    # Pre-split any paragraph that's too long on its own into sentence-packed sub-chunks.
+    # Pre-split any rendered paragraph that's too long into sentence-packed sub-chunks.
     units: list[str] = []
-    for para in paragraphs:
+    for para in rendered:
         if len(para) <= _CONTENT_LIMIT:
             units.append(para)
             continue
@@ -160,12 +159,12 @@ async def post_digest_to_discord(
     webhook_url: str,
     session: aiohttp.ClientSession,
     *,
-    memory_text: str | None = None,
+    memory: list[MemoryParagraph] | None = None,
     cite_map: dict[int, Citation] | None = None,
 ) -> None:
-    if not memory_text:
+    if not memory:
         return
-    chunks = _build_digest_chunks(memory_text, cite_map)
+    chunks = _build_digest_chunks(memory, cite_map)
     for i, chunk in enumerate(chunks):
         if i:
             await asyncio.sleep(1)
@@ -290,9 +289,7 @@ class DiscordDigestTarget(Target):
         if not ctx.memory:
             return set()
         try:
-            await post_digest_to_discord(
-                webhook, session, memory_text=ctx.memory, cite_map=ctx.cite_map
-            )
+            await post_digest_to_discord(webhook, session, memory=ctx.memory, cite_map=ctx.cite_map)
         except Exception:
             log.error("Failed to post digest")
             raise

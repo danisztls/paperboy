@@ -4,6 +4,7 @@ import textwrap
 
 from pydantic import BaseModel
 
+from pipeline import MemoryParagraph
 from providers.llm.base import LLMAdapter
 
 log = logging.getLogger(__name__)
@@ -17,11 +18,18 @@ class FilterItem(BaseModel):
     reason: str
 
 
+class CurateParagraph(BaseModel):
+    """One paragraph of the memory briefing with its supporting item IDs."""
+
+    text: str
+    citations: list[int] = []
+
+
 class FilterDecisions(BaseModel):
     """Structured-output shape produced by the LLM curate call."""
 
     items: list[FilterItem]
-    memory: str = ""
+    memory: list[CurateParagraph] = []
 
 
 async def curate_entries(
@@ -35,7 +43,7 @@ async def curate_entries(
     extra_instructions: str | None = None,
     reasoning: bool | dict = False,
     trace: dict | None = None,
-) -> tuple[dict[str, dict], str | None] | None:
+) -> tuple[dict[str, dict], list[MemoryParagraph] | None] | None:
     """Filter feed entries through LLM and optionally update memory.
 
     Returns (results, memory_text) where results maps item ID → {"pass": bool, "reason": str}
@@ -86,12 +94,15 @@ async def curate_entries(
         - Compare each item against the already-published digests above. Fail any item whose core story was already sent to readers and that does not introduce a significant new development (new facts, updated numbers, meaningful consequence). Use reason: 'already covered'. The goal is that readers never see the same story twice without a genuine update.
         - Within this batch, if multiple items cover the same event, keep only the one(s) that contribute the most relevant information; fail the rest with reason: 'duplicate within batch'.
 
-        **Step 3 — Write memory.** Write a factual news briefing in {language} covering every item that passed the filter. Rules:
+        **Step 3 — Write memory.** Populate the `memory` array with a factual news briefing in {language}, one object per story. Each object has:
+        - `text`: 1–3 sentences of plain prose. Lead with the core fact; add only the most essential detail (key figure, number, date, place, or consequence). No citation markers, brackets, or meta-commentary in the text.
+        - `citations`: list of integer IDs from this batch whose content directly supports the paragraph. Usually one ID; use multiple only when two items genuinely cover the same event. Never reference IDs from the already-published digests.
+
+        Rules for the briefing as a whole:
         - Include ALL passing items — do not omit any.
-        - One story per paragraph (blank line between stories). Write 1–3 sentences per story: lead with the core fact; add only the most essential detail (key figure, number, date, place, or consequence). Never mix two different topics in one paragraph. Do not pad.
+        - One object per story; never mix two distinct topics in one object. Do not pad.
         - Never use semicolons to chain unrelated events in the same sentence.
         - Group by theme; within each group order by significance. Lead with the single most significant development overall.
-        - Append the story's numeric id in square brackets after the period of the last sentence only, e.g. 'Talks broke down over tariffs [3].' — use ONLY integer IDs from the current input batch. Never add any citation or attribution for the already-published digests.
         - No meta-commentary about the filtering process, no mention of what was discarded, no hedging phrases.
         - Include enough factual specificity (names, numbers, dates, places) that a follow-up story on the same event can be recognised as a continuation on the next run.
 
@@ -131,7 +142,7 @@ async def curate_entries(
     parsed = {
         str(item.id): {"pass": item.passes, "reason": item.reason} for item in decisions.items
     }
-    memory_text = decisions.memory.strip() or None
+    paragraphs = [MemoryParagraph(text=p.text, citations=p.citations) for p in decisions.memory]
     passed = sum(1 for v in parsed.values() if v["pass"])
     log.info("Filter: %d/%d items passed", passed, total)
-    return parsed, memory_text
+    return parsed, paragraphs or None

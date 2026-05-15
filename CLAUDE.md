@@ -59,8 +59,9 @@ Defines the interfaces that all sources and targets implement:
 
 - **`Item`** — generic content item produced by any source. Fields: `id`, `title`, `source` (display name), `url`, `body` (sanitized text), `image`, `published`, `summary`, `filter_pass`, `filter_reason`, `meta` (dict for source-specific extras).
 - **`PullResult`** — output of `Source.pull()`: `new_items: list[Item]` + `current_items: list[dict]` (url+title dicts for state).
-- **`FilterResult`** — output of the LLM curate step: `items` (all items with filter_pass set), `memory` (new briefing text), `cite_map: dict[int, Citation]` (LLM int ID → `Citation(source, url)` NamedTuple).
-- **`PushContext`** — input to `Target.push()`: `items`, optional `memory`, optional `cite_map`.
+- **`FilterResult`** — output of the LLM curate step: `items` (all items with filter_pass set), `memory: list[MemoryParagraph] | None` (new briefing as structured paragraphs), `cite_map: dict[int, Citation]` (LLM int ID → `Citation(source, url)` NamedTuple).
+- **`MemoryParagraph`** — one paragraph of the digest briefing: `text: str` (plain prose, no citation markers) + `citations: list[int]` (item IDs that support this paragraph). Push targets resolve IDs via `cite_map` and append source links after the text.
+- **`PushContext`** — input to `Target.push()`: `items`, optional `memory: list[MemoryParagraph]`, optional `cite_map`.
 - **`Source(ABC)`** — one abstract method: `pull(cfg, seen, session) → PullResult | None`. Return `None` on failure; the caller must not update state.
 - **`Target(ABC)`** — one abstract method: `push(ctx, cfg, session) → set[str]`. Returns IDs of items that failed to publish.
 
@@ -91,7 +92,7 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
 
 #### `process/` — between-pull-and-push processing stages
 
-- `process/curate.py` — LLM-based feed entry classifier. Defines the `FilterDecisions(items: list[FilterItem], memory: str)` Pydantic schema; `curate_entries(items, filter_cfg, ...)` classifies items grouped by source via `adapter.complete_structured(payload, FilterDecisions, ...)` — provider-native structured output (`instructor` in tool-calling mode) handles the JSON parse + schema validation + retry. Filter criteria come from `filter_cfg["criteria"]`. Returns `(results_dict, memory_text) | None`. `results_dict` maps `str(id)` → `{"pass": bool, "reason": str}` (the Pydantic `FilterItem.passes` field serializes as JSON `"pass"` for LLM-friendliness); `memory_text` is the new memory log entry. When `explain: true`, passing-item reasons are ELI5-style (2–3 sentences). Feed-level bypass: feeds with `curate.skip: true` are tagged in `tasks.py` via `item.meta["curate_skip"]` and short-circuited to `filter_pass=True` before the LLM call (other feeds in the same task still get curated normally).
+- `process/curate.py` — LLM-based feed entry classifier. Defines `FilterDecisions(items: list[FilterItem], memory: list[CurateParagraph])` Pydantic schema; `curate_entries(items, filter_cfg, ...)` classifies items grouped by source via `adapter.complete_structured(payload, FilterDecisions, ...)` — provider-native structured output (`instructor` in tool-calling mode) handles the JSON parse + schema validation + retry. Filter criteria come from `filter_cfg["criteria"]`. Returns `(results_dict, paragraphs) | None`. `results_dict` maps `str(id)` → `{"pass": bool, "reason": str}` (the Pydantic `FilterItem.passes` field serializes as JSON `"pass"` for LLM-friendliness); `paragraphs` is `list[MemoryParagraph]` (plain-text `text` + `citations: list[int]`), converted from `CurateParagraph` at the return boundary. `CurateParagraph` is the Pydantic model used for structured output; `MemoryParagraph` (NamedTuple from `pipeline.py`) is used everywhere else. When `explain: true`, passing-item reasons are ELI5-style (2–3 sentences). Feed-level bypass: feeds with `curate.skip: true` are tagged in `tasks.py` via `item.meta["curate_skip"]` and short-circuited to `filter_pass=True` before the LLM call (other feeds in the same task still get curated normally).
 - `process/filter_heuristic.py` — pure regex-based filters used by `pull/feed.py` during feed parsing. `apply_regex(cfg, text)` runs `extract` / `replace` / `remove_phrases_with_urls` / `remove_phrases_containing` / `clear` ops; `url_filtered(url, cfg)` checks `skip_containing`.
 - `process/summarize.py` — LLM summarization + article/transcript extraction. `summarize_entry(title, body, adapter, ...)` summarizes a feed entry. `summarize_transcript(transcript, adapter, ...)` summarizes a YouTube transcript. `fetch_item_content(url, session)` returns `(content, og_image)` — article text via trafilatura plus the article's `og:image` URL scraped from the same HTML; YouTube URLs are fetched via `yt-dlp` (subtitle VTTs downloaded with `writesubtitles` / `writeautomaticsub` flags, then parsed and SponsorBlock-filtered) and return the transcript with `og_image=None`. `extract_og_image(html)` is the standalone helper used at end of the trafilatura extraction.
 
@@ -114,11 +115,11 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
   - `DiscordEmbedTarget(Target)` — posts each item as a Discord embed. The embed image is `Item.image` (set during pull from the feed entry or during summarize from the article's `og:image`); `item.meta["skip_image"]` (from task/feed `image.skip`) suppresses it.
   - `DiscordTextTarget(Target)` — posts each item's body as a plain text message (truncated to 2000 chars).
   - `DiscordMarkdownTarget(Target)` — posts each item as `### [title](<url>) source\nbody` (markdown format, no embed).
-  - `DiscordDigestTarget(Target)` — posts `ctx.memory` as ≤2000-char chunks with `[n]` citation markers replaced by `[[Source]](<url>)` Discord masked links.
+  - `DiscordDigestTarget(Target)` — renders each `MemoryParagraph` to plain text with source links appended (`[[Source](<url>)]`), then posts as ≤2000-char chunks.
   - All use `_post_webhook` which retries once on 429.
 - `push/file.py` — file-based target implementations. Path is expanded (`~`, env vars) and parent dirs are created on first write.
   - `FileEmbedTarget(Target)` — appends each item as `## [Title](url)\n*source · date*\n\nbody\n\n---` blocks to the configured file.
-  - `FileDigestTarget(Target)` — appends `## YYYY-MM-DD\n\ndigest text\n\n---` to the configured file, with `[n]` citation markers resolved to standard markdown `[Source](url)` links.
+  - `FileDigestTarget(Target)` — renders each `MemoryParagraph` to markdown with source links appended (`[Source](url)`), then appends `## YYYY-MM-DD\n\ndigest text\n\n---` to the configured file.
 
 #### `providers/llm/` — LLM provider adapters
 
@@ -191,7 +192,7 @@ Fixtures live in `tests/fixtures/` (`feed_basic.xml`, `feed_b.xml`, `article_bas
 
 Scenarios covered:
 - Curate happy path, already-seen dedup, single-feed pull failure (`None` from `Source.pull()` must not update `last_run`), filter-fails-twice fail-open.
-- Digest with `cite_map` resolution (`[n]` → `[Source](url)` in `FileDigestTarget`; cite markers stripped from stored memory per `_CITE_STRIP_RE`).
+- Digest with `cite_map` resolution (structured `MemoryParagraph.citations` IDs → `[Source](url)` in `FileDigestTarget` and `[[Source](<url>)]` in `DiscordDigestTarget`; stored memory contains only plain `text` fields, no markers to strip).
 - Search task happy path.
 - `tasks._merge_filter` (task-level vs feed-level filter merging across single/list shapes).
 - `main._merge_task_results` orchestrator invariant — empty / exception task results leave state untouched.

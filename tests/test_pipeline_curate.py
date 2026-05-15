@@ -27,7 +27,7 @@ async def test_curate_happy(mock_http, fake_adapter, tmp_path):
             {"id": 0, "pass": False, "reason": "Off-topic."},
             {"id": 1, "pass": True, "reason": "Cats are great."},
         ],
-        memory="Cat news today [1].",
+        memory=[{"text": "Cat news today.", "citations": [1]}],
     )
 
     out_file = tmp_path / "out.md"
@@ -63,7 +63,6 @@ async def test_curate_happy(mock_http, fake_adapter, tmp_path):
     assert len(memory_log) == 1
     entry = next(iter(memory_log.values()))
     assert "Cat news today" in entry
-    assert "[0]" not in entry  # cite markers stripped per _CITE_STRIP_RE
 
 
 async def test_curate_dedup(mock_http, fake_adapter, tmp_path):
@@ -73,7 +72,7 @@ async def test_curate_dedup(mock_http, fake_adapter, tmp_path):
 
     fake_adapter.queue_filter(
         items=[{"id": 0, "pass": True, "reason": "Quantum is on-topic now."}],
-        memory="Quantum news [0].",
+        memory=[{"text": "Quantum news.", "citations": [0]}],
     )
 
     out_file = tmp_path / "out.md"
@@ -126,7 +125,7 @@ async def test_curate_pull_failure(mock_http, fake_adapter, tmp_path):
 
     fake_adapter.queue_filter(
         items=[{"id": 0, "pass": True, "reason": "All gardening passes."}],
-        memory="Garden tips [0].",
+        memory=[{"text": "Garden tips.", "citations": [0]}],
     )
 
     out_file = tmp_path / "out.md"
