@@ -59,7 +59,10 @@ async def curate_entries(
     if memory_history:
         entries = "\n---\n".join(f"[{ts[:16]}] {text}" for ts, text in memory_history)
         prefix += (
-            "Previous memory log (oldest → newest — your evolving view of this information space):\n"
+            "## Already-published digests (DO NOT re-report)\n"
+            "The following are summaries of content that was already sent to readers in previous digest runs (oldest → newest). "
+            "Use them ONLY to identify stories that have already been covered. "
+            "They are not sources to cite — never reference them with a citation marker or attribute a fact to them.\n\n"
             + entries
             + "\n\n"
         )
@@ -80,15 +83,15 @@ async def curate_entries(
         **Step 1 — Filter.** For each item, decide whether it matches the filter criteria above. Mark it passes: true if it does, passes: false otherwise.
 
         **Step 2 — Deduplicate.**
-        - Fail any item that covers a story already present in the memory log above without adding a significant new development. Use reason: 'already covered'.
+        - Compare each item against the already-published digests above. Fail any item whose core story was already sent to readers and that does not introduce a significant new development (new facts, updated numbers, meaningful consequence). Use reason: 'already covered'. The goal is that readers never see the same story twice without a genuine update.
         - Within this batch, if multiple items cover the same event, keep only the one(s) that contribute the most relevant information; fail the rest with reason: 'duplicate within batch'.
 
         **Step 3 — Write memory.** Write a factual news briefing in {language} covering every item that passed the filter. Rules:
         - Include ALL passing items — do not omit any.
-        - One story per paragraph (blank line between stories). Write 2–3 sentences per story: the first sentence states the core fact; subsequent sentences add context, significance, key figures, numbers, or consequences. Never mix two different topics in one paragraph.
+        - One story per paragraph (blank line between stories). Write 1–3 sentences per story: lead with the core fact; add only the most essential detail (key figure, number, date, place, or consequence). Never mix two different topics in one paragraph. Do not pad.
         - Never use semicolons to chain unrelated events in the same sentence.
         - Group by theme; within each group order by significance. Lead with the single most significant development overall.
-        - Append the story's numeric id in square brackets after the period of the last sentence only, e.g. 'Talks broke down over tariffs [3].' — use the integer id values from the input.
+        - Append the story's numeric id in square brackets after the period of the last sentence only, e.g. 'Talks broke down over tariffs [3].' — use ONLY integer IDs from the current input batch. Never add any citation or attribution for the already-published digests.
         - No meta-commentary about the filtering process, no mention of what was discarded, no hedging phrases.
         - Include enough factual specificity (names, numbers, dates, places) that a follow-up story on the same event can be recognised as a continuation on the next run.
 
