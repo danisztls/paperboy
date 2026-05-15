@@ -32,6 +32,9 @@ The project uses `uv` (see `uv.lock`, `.python-version` pinning Python 3.14).
 - Run tests: `uv run pytest`
 - Run benchmark: `uv run benchmark/` (reads `benchmark/config.yaml`, writes JSON to `benchmark/results/`)
 - Inspect a run with chain-of-thought + ELI5 filter reasons (extra tokens, dry-run): `uv run main.py --analysis --task <name>`
+  - `--analysis-limit-items N` (default 7, 0 = unlimited): cap entries per feed
+  - `--analysis-limit-feeds N` (default 7, 0 = unlimited): cap feeds per task
+  - `--human`: render rich/human-readable output to stdout instead of JSON
 - Replay captured LLM calls against alternative models: `uv run main.py --replay <state_dir>/evals/<task>/<run_iso>.jsonl --models openai:gpt-4o-mini,gemini:gemini-2.5-flash --call filter`
 
 After any implementation, run format then lint before finishing.
@@ -77,7 +80,7 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
 
 #### `config/` — config loading and validation
 
-- `config/__init__.py` — `load_config(path)` reads YAML or JSON. `validate_config(config)` uses Pydantic models to validate the full config and returns a list of error strings. Also houses `parse_color`, `parse_period`, `task_kind` (returns the explicit `kind:` key if present; otherwise infers from `pull` list: `scraper` item → scraper, `search` item → search, else feeds), `_resolve_model_spec` (returns `(provider, model_name)` from a `{provider, model}` dict), `get_api_key_for_provider`, and helpers: `get_feeds`, `get_discord_cfg`, `get_search_cfg`, `_get_scraper_cfg`, `get_file_path`.
+- `config/__init__.py` — `load_config(path)` reads YAML or JSON. `validate_config(config)` uses Pydantic models to validate the full config and returns a list of error strings. The global LLM config is split into four top-level sections: `llm` (API keys only, under `llm.api_key`), `curate`, `search`, `summarize` (each can carry its own `model` spec); task/feed-level `curate.model` etc. override the matching global section. Model specs are single-key `{provider: model_name}` dicts (e.g. `{openai: gpt-4o-mini}`); `_resolve_model_spec` returns `(provider, model_name)` from one, and `resolve_model_specs` returns a list from either a single spec or a list (list = fallback chain, tried in order). The `_ModelSpec` / `_ModelSpecList` validators enforce single-key dicts with a known provider (`openai`, `gemini`, `deepseek`, `anthropic`). Also houses `parse_color`, `parse_period`, `task_kind` (returns the explicit `kind:` key if present; otherwise infers from `pull` list: `scraper` item → scraper, `search` item → search, else feeds), `get_api_key_for_provider`, and helpers: `get_feeds`, `get_discord_cfg`, `get_search_cfg`, `_get_scraper_cfg`, `get_file_path`.
 - `config/config.yaml.template` — canonical reference for all supported config keys and defaults.
 
 #### `state/` — state I/O and migrations
@@ -88,9 +91,9 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
 
 #### `process/` — between-pull-and-push processing stages
 
-- `process/curate.py` — LLM-based feed entry classifier. Defines the `FilterDecisions(items: list[FilterItem], memory: str)` Pydantic schema; `curate_entries(items, filter_cfg, ...)` classifies items grouped by source via `adapter.complete_structured(payload, FilterDecisions, ...)` — provider-native structured output (`instructor` in tool-calling mode) handles the JSON parse + schema validation + retry. Returns `(results_dict, memory_text) | None`. `results_dict` maps `str(id)` → `{"pass": bool, "reason": str}`; `memory_text` is the new memory log entry. When `explain: true`, passing-item reasons are ELI5-style (2–3 sentences).
+- `process/curate.py` — LLM-based feed entry classifier. Defines the `FilterDecisions(items: list[FilterItem], memory: str)` Pydantic schema; `curate_entries(items, filter_cfg, ...)` classifies items grouped by source via `adapter.complete_structured(payload, FilterDecisions, ...)` — provider-native structured output (`instructor` in tool-calling mode) handles the JSON parse + schema validation + retry. Filter criteria come from `filter_cfg["criteria"]`. Returns `(results_dict, memory_text) | None`. `results_dict` maps `str(id)` → `{"pass": bool, "reason": str}` (the Pydantic `FilterItem.passes` field serializes as JSON `"pass"` for LLM-friendliness); `memory_text` is the new memory log entry. When `explain: true`, passing-item reasons are ELI5-style (2–3 sentences). Feed-level bypass: feeds with `curate.skip: true` are tagged in `tasks.py` via `item.meta["curate_skip"]` and short-circuited to `filter_pass=True` before the LLM call (other feeds in the same task still get curated normally).
 - `process/filter_heuristic.py` — pure regex-based filters used by `pull/feed.py` during feed parsing. `apply_regex(cfg, text)` runs `extract` / `replace` / `remove_phrases_with_urls` / `remove_phrases_containing` / `clear` ops; `url_filtered(url, cfg)` checks `skip_containing`.
-- `process/summarize.py` — LLM summarization + article/transcript extraction. `summarize_entry(title, body, adapter, ...)` summarizes a feed entry. `summarize_transcript(transcript, adapter, ...)` summarizes a YouTube transcript. `fetch_item_content(url, session)` returns `(content, og_image)` — article text via trafilatura plus the article's `og:image` URL scraped from the same HTML; YouTube URLs return the transcript with `og_image=None`. `extract_og_image(html)` is the standalone helper used at end of the trafilatura extraction.
+- `process/summarize.py` — LLM summarization + article/transcript extraction. `summarize_entry(title, body, adapter, ...)` summarizes a feed entry. `summarize_transcript(transcript, adapter, ...)` summarizes a YouTube transcript. `fetch_item_content(url, session)` returns `(content, og_image)` — article text via trafilatura plus the article's `og:image` URL scraped from the same HTML; YouTube URLs are fetched via `yt-dlp` (subtitle VTTs downloaded with `writesubtitles` / `writeautomaticsub` flags, then parsed and SponsorBlock-filtered) and return the transcript with `og_image=None`. `extract_og_image(html)` is the standalone helper used at end of the trafilatura extraction.
 
 #### `pull/` — source implementations
 
@@ -139,6 +142,7 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
 {
   "_version": 2,
   "_last_run": "<iso8601 utc>",
+  "_last_clean": "<iso8601 utc>",
   "tasks": {
     "my-feeds": {
       "feeds": {
@@ -166,6 +170,7 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
 - `memory` is only present on curated RSS/digest tasks. Each run appends one entry keyed by ISO8601 timestamp; history is capped at 20 entries (oldest evicted). The LLM receives the last 5 entries as context on each run.
 - Search tasks store only `last_run` directly under the task name key.
 - `load_state` returns the parsed JSON as-is; absent or `null` `last_run` always means "due now".
+- `_last_clean` (top-level) is reserved as a meta key (recognized by `state/migrate.py`) and appears in the template, but no code path currently writes it.
 - Use `--migrate` to update an old state file to the current schema. Use `--regenerate-state` to rebuild state from scratch.
 
 ### Config shape
@@ -233,3 +238,5 @@ Caveats:
 - All feeds in a given RSS/digest task share one LLM curate call; items are sent grouped by source with monotonically increasing integer IDs across all feeds.
 - `Item.meta` carries per-item display hints (e.g. `color`) set during the pull stage so the target doesn't need to re-resolve them from config.
 - `web_search` is plumbed through the curate call but intentionally not through `summarize_entry`: summaries run on already-fetched article content, so extra web search is wasted tokens.
+- Feed-level `curate.skip: true` short-circuits the LLM curate call for that feed only — items always pass. Useful for trusted, low-volume feeds where the curate cost isn't justified. Other feeds in the same task still get curated normally.
+- When changing architecture (new/renamed modules, classes, or functions), CLI flags, config keys, or state shape, update `CLAUDE.md` in the same commit. The existing rule about config-key changes updating the Pydantic model is the same idea, extended to docs.
