@@ -14,7 +14,7 @@ import pytest
 from aioresponses import aioresponses
 from pydantic import BaseModel
 
-from process.curate import FilterDecisions, FilterItem
+from process.curate import CurateParagraph, FilterDecisions, FilterItem
 from providers.llm.base import LLMAdapter, LLMResponse
 
 WEBHOOK_URL = "https://discord.example/webhook"
@@ -53,15 +53,22 @@ class FakeLLMAdapter(LLMAdapter):
     def queue_filter(
         self,
         items: list[dict],
-        memory: str = "",
+        memory: list[dict] | None = None,
     ) -> None:
-        """Convenience: queue a FilterDecisions for the next complete_structured call."""
+        """Convenience: queue a FilterDecisions for the next complete_structured call.
+
+        memory is a list of {"text": str, "citations": list[int]} dicts.
+        """
+        paragraphs = [
+            CurateParagraph(text=p["text"], citations=p.get("citations", []))
+            for p in (memory or [])
+        ]
         self.queue_structured(
             FilterDecisions(
                 items=[
                     FilterItem(id=it["id"], passes=it["pass"], reason=it["reason"]) for it in items
                 ],
-                memory=memory,
+                memory=paragraphs,
             )
         )
 

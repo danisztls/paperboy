@@ -12,9 +12,9 @@ WEBHOOK_URL = "https://discord.example/webhook"
 
 
 async def test_digest_cite_map(mock_http, fake_adapter, tmp_path):
-    """Digest task: cite markers [n] in the memory text resolve to markdown links
-    in the file and to Discord masked links in the webhook POST. Stored memory has
-    cite markers stripped per _CITE_STRIP_RE."""
+    """Digest task: structured memory paragraphs with citation IDs resolve to markdown
+    links in the file and Discord masked links in the webhook POST. Stored memory
+    contains only plain text (no citation markers)."""
     mock_http.get(FEED_URL, body=load_fixture("feed_basic.xml"))
     # Article URLs hit by fetch_item_content during summarize.
     article_html = load_fixture("article_basic.html")
@@ -23,7 +23,7 @@ async def test_digest_cite_map(mock_http, fake_adapter, tmp_path):
     mock_http.post(WEBHOOK_URL, status=204, repeat=True)
 
     # 2 summarize responses (one per item, concurrent so order doesn't matter)
-    # + 1 filter response with memory citing both items.
+    # + 1 filter response with two structured memory paragraphs.
     fake_adapter.queue_text("Summary of the first article.")
     fake_adapter.queue_text("Summary of the second article.")
     fake_adapter.queue_filter(
@@ -31,7 +31,10 @@ async def test_digest_cite_map(mock_http, fake_adapter, tmp_path):
             {"id": 0, "pass": True, "reason": "Cats."},
             {"id": 1, "pass": True, "reason": "Quantum."},
         ],
-        memory="Cat update [0].\n\nQuantum advance [1].",
+        memory=[
+            {"text": "Cat update.", "citations": [0]},
+            {"text": "Quantum advance.", "citations": [1]},
+        ],
     )
 
     out_file = tmp_path / "digest.md"
@@ -48,18 +51,16 @@ async def test_digest_cite_map(mock_http, fake_adapter, tmp_path):
         )
 
     body = out_file.read_text()
-    # Cite markers resolved to markdown links by FileDigestTarget._apply_cite_map_md.
+    # Citations resolved to markdown links by FileDigestTarget.
     assert "[Example](https://example.com/posts/1)" in body
     assert "[Example](https://example.com/posts/2)" in body
-    assert "[0]" not in body
-    assert "[1]" not in body
 
-    # Stored memory has cite markers + whitespace stripped per _CITE_STRIP_RE.
+    # Stored memory contains only plain paragraph text — no citation markers.
     memory_log = result["test-curate"]["memory"]
     assert len(memory_log) == 1
     entry = next(iter(memory_log.values()))
-    assert "[0]" not in entry and "[1]" not in entry
     assert "Cat update" in entry
+    assert "Quantum advance" in entry
 
     # Real DiscordDigestTarget posted the digest chunk(s).
     post_calls = [

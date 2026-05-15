@@ -1,13 +1,12 @@
 import asyncio
 import logging
-import re
 from dataclasses import replace as dc_replace
 from datetime import UTC, datetime, timedelta
 
 import aiohttp
 
 from config import get_discord_cfg, get_feeds, get_file_path, parse_color, task_kind
-from pipeline import Citation, FilterResult, Item, PushContext
+from pipeline import Citation, FilterResult, Item, MemoryParagraph, PushContext
 from process.curate import curate_entries
 from process.summarize import _YOUTUBE_RE, fetch_item_content, summarize_entry
 from providers.llm.base import LLMAdapter
@@ -24,7 +23,6 @@ from push.file import FileDigestTarget, FileEmbedTarget
 
 DEFAULT_PERIOD = timedelta(hours=1)
 PERIOD_GRACE = timedelta(seconds=60)
-_CITE_STRIP_RE = re.compile(r"\s*\[\d+\]")
 
 log = logging.getLogger(__name__)
 
@@ -329,7 +327,7 @@ async def _apply_curate(
         log.error("Filter failed twice — treating all items as passing")
         return FilterResult(items=all_items, memory=None, cite_map=cite_map)
 
-    raw_results, memory_text = llm_return
+    raw_results, memory_paragraphs = llm_return
 
     if collector and filter_trace is not None:
         parsed_list = []
@@ -349,13 +347,16 @@ async def _apply_curate(
                     "reason": v["reason"],
                 }
             )
+        memory_for_trace = (
+            "\n\n".join(p.text for p in memory_paragraphs) if memory_paragraphs else None
+        )
         collector.record_filter(
             model=model,
             instructions=filter_trace.get("instructions", ""),
             payload=filter_trace.get("payload", []),
             raw_response=filter_trace.get("raw_response"),
             parsed=parsed_list,
-            memory=memory_text,
+            memory=memory_for_trace,
             model_used=filter_trace.get("model_used"),
             input_tokens=filter_trace.get("input_tokens"),
             output_tokens=filter_trace.get("output_tokens"),
@@ -379,7 +380,7 @@ async def _apply_curate(
         for item in all_items
     ]
 
-    return FilterResult(items=annotated, memory=memory_text, cite_map=cite_map)
+    return FilterResult(items=annotated, memory=memory_paragraphs, cite_map=cite_map)
 
 
 async def _process_search_task(
@@ -572,8 +573,8 @@ def _select_passing(
     all_new_items: list[Item],
     *,
     explain: bool,
-) -> tuple[list[Item], list[Item], str | None, dict[int, Citation]]:
-    """Pick items to post and substitute body text. Returns (passing, all_annotated, memory_text, cite_map)."""
+) -> tuple[list[Item], list[Item], list[MemoryParagraph] | None, dict[int, Citation]]:
+    """Pick items to post and substitute body text. Returns (passing, all_annotated, memory, cite_map)."""
     if filter_result is not None:
         passing = [it for it in filter_result.items if it.filter_pass is not False]
         if explain:
@@ -593,13 +594,13 @@ async def _push_curate(
     discord_format: str | None,
     task_cfg: dict,
     passing: list[Item],
-    memory_text: str | None,
+    memory_paragraphs: list[MemoryParagraph] | None,
     cite_map: dict[int, Citation],
     task_name: str,
     session: aiohttp.ClientSession,
 ) -> set[str] | None:
     """Pick target by kind + format and push. Returns failed_ids, or None if a digest post failed."""
-    ctx = PushContext(items=passing, memory=memory_text, cite_map=cite_map)
+    ctx = PushContext(items=passing, memory=memory_paragraphs, cite_map=cite_map)
     if kind == "digest":
         try:
             failed_ids = await DiscordDigestTarget().push(ctx, task_cfg, session)
@@ -631,7 +632,7 @@ def _build_new_task_state(
     has_filter: bool,
     failed_ids: set[str],
     raw_history: dict,
-    memory_text: str | None,
+    memory_paragraphs: list[MemoryParagraph] | None,
     task_name: str,
 ) -> dict:
     """Merge per-feed state, update memory log; returns the task_state dict."""
@@ -657,15 +658,15 @@ def _build_new_task_state(
     new_task_state: dict = {"feeds": new_feeds_state}
     if has_filter:
         history = dict(raw_history)
-        if memory_text is not None:
-            _stripped = _CITE_STRIP_RE.sub("", memory_text)
+        if memory_paragraphs is not None:
+            joined = "\n\n".join(p.text for p in memory_paragraphs)
             history[now_iso] = " ".join(
-                line.strip() for line in _stripped.splitlines() if line.strip()
+                line.strip() for line in joined.splitlines() if line.strip()
             )
             if len(history) > 20:
                 for old_key in sorted(history)[: len(history) - 20]:
                     del history[old_key]
-            log.info("[%s] Memory updated (%d chars)", task_name, len(memory_text))
+            log.info("[%s] Memory updated (%d chars)", task_name, len(joined))
         new_task_state["memory"] = history
     return new_task_state
 
@@ -769,7 +770,7 @@ async def _process_feed_task(
                 analysis=analysis,
             )
 
-        passing, all_annotated, memory_text, cite_map = _select_passing(
+        passing, all_annotated, memory_paragraphs, cite_map = _select_passing(
             filter_result, all_new_items, explain=explain
         )
 
@@ -784,7 +785,7 @@ async def _process_feed_task(
             discord_format=task_discord.get("format"),
             task_cfg=task_cfg,
             passing=passing,
-            memory_text=memory_text,
+            memory_paragraphs=memory_paragraphs,
             cite_map=cite_map,
             task_name=task_name,
             session=session,
@@ -802,7 +803,7 @@ async def _process_feed_task(
                 has_filter=bool(filter_cfg),
                 failed_ids=failed_ids,
                 raw_history=raw_history,
-                memory_text=memory_text,
+                memory_paragraphs=memory_paragraphs,
                 task_name=task_name,
             )
         }

@@ -1,15 +1,13 @@
 import logging
 import os
 import pathlib
-import re
 from datetime import UTC, datetime
 
 from config import get_file_path
-from pipeline import Citation, Item, PushContext, Target
+from pipeline import Citation, Item, MemoryParagraph, PushContext, Target
 
 log = logging.getLogger(__name__)
 
-_CITE_RE = re.compile(r"\[(\d+)\]")
 _FAR_FUTURE = datetime.max.replace(tzinfo=UTC)
 
 
@@ -17,14 +15,17 @@ def _resolve_path(path_str: str) -> pathlib.Path:
     return pathlib.Path(os.path.expandvars(os.path.expanduser(path_str)))
 
 
-def _apply_cite_map_md(text: str, cite_map: dict[int, Citation]) -> str:
-    def replace(m: re.Match) -> str:
-        item = cite_map.get(int(m.group(1)))
-        if item is None:
-            return m.group(0)
-        return f"[{item.source}]({item.url})" if item.url else f"[{item.source}]"
-
-    return _CITE_RE.sub(replace, text)
+def _render_paragraph_md(para: MemoryParagraph, cite_map: dict[int, Citation] | None) -> str:
+    text = para.text.rstrip()
+    if para.citations and cite_map:
+        links = []
+        for id_ in para.citations:
+            cit = cite_map.get(id_)
+            if cit:
+                links.append(f"[{cit.source}]({cit.url})" if cit.url else f"[{cit.source}]")
+        if links:
+            text += " " + " ".join(links)
+    return text
 
 
 def _item_to_markdown(item: Item) -> str:
@@ -82,9 +83,10 @@ class FileDigestTarget(Target):
         path.parent.mkdir(parents=True, exist_ok=True)
 
         date_str = datetime.now(UTC).strftime("%Y-%m-%d")
-        text = _apply_cite_map_md(ctx.memory, ctx.cite_map) if ctx.cite_map else ctx.memory
+        paragraphs = [_render_paragraph_md(p, ctx.cite_map) for p in ctx.memory if p.text.strip()]
+        text = "\n\n".join(paragraphs)
 
-        block = f"## {date_str}\n\n{text.strip()}\n\n---\n\n"
+        block = f"## {date_str}\n\n{text}\n\n---\n\n"
 
         try:
             with path.open("a", encoding="utf-8") as f:

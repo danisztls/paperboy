@@ -9,10 +9,17 @@ from typing import NamedTuple
 
 
 class Citation(NamedTuple):
-    """A source name + optional URL pair, used to resolve [n] cite markers."""
+    """A source name + optional URL pair."""
 
     source: str
     url: str | None
+
+
+class MemoryParagraph(NamedTuple):
+    """One paragraph of the memory briefing with its supporting citation IDs."""
+
+    text: str
+    citations: list[int]
 
 
 @dataclass
@@ -45,7 +52,7 @@ class FilterResult:
     """Output of the LLM filter step."""
 
     items: list[Item]  # all input items with filter_pass/filter_reason set
-    memory: str | None  # new memory briefing text (for digest targets)
+    memory: list[MemoryParagraph] | None  # new memory briefing (for digest targets)
     cite_map: dict[int, Citation]  # LLM int ID → Citation(source, url)
 
 
@@ -54,7 +61,7 @@ class PushContext:
     """Input to Target.push()."""
 
     items: list[Item]
-    memory: str | None = None
+    memory: list[MemoryParagraph] | None = None
     cite_map: dict[int, Citation] | None = None
 
 
