@@ -11,7 +11,6 @@ if TYPE_CHECKING:
     import instructor
 
 DEFAULT_MODEL = "deepseek-v4-flash"
-REASONING_MODEL = "deepseek-reasoner"
 BASE_URL = "https://api.deepseek.com"
 log = logging.getLogger(__name__)
 
@@ -40,19 +39,23 @@ class DeepSeekAdapter(LLMAdapter):
         web_search: bool | dict = False,
         reasoning: bool | dict = False,
     ) -> LLMResponse | None:
-        _model = model or (REASONING_MODEL if reasoning else DEFAULT_MODEL)
+        _model = model or DEFAULT_MODEL
         if web_search:
             log.warning("DeepSeek adapter does not support web_search — ignoring")
         messages = []
         if instructions:
             messages.append({"role": "system", "content": instructions})
         messages.append({"role": "user", "content": prompt})
+        thinking_cfg: dict = {"type": "enabled" if reasoning else "disabled"}
+        if isinstance(reasoning, dict):
+            thinking_cfg.update(reasoning)
         response, latency = await timed_call(
             log,
             "DeepSeek",
             lambda: self._client.chat.completions.create(
                 model=_model,
                 messages=messages,
+                extra_body={"thinking": thinking_cfg},
             ),
         )
         if response is None:
@@ -83,14 +86,9 @@ class DeepSeekAdapter(LLMAdapter):
         reasoning: bool | dict = False,
         trace: dict | None = None,
     ) -> T | None:
-        # deepseek-reasoner has no function-calling support; fall back to chat for structured output.
+        # Thinking mode doesn't accept tool_choice="required" (what instructor.Mode.TOOLS sends);
+        # disable it for structured calls regardless of the configured model.
         _model = model or DEFAULT_MODEL
-        if _model == REASONING_MODEL:
-            log.warning(
-                "DeepSeek reasoner does not support function calling; using %s for structured output",
-                DEFAULT_MODEL,
-            )
-            _model = DEFAULT_MODEL
         client = self._get_instructor()
         messages: list[dict] = []
         if instructions:
@@ -103,6 +101,7 @@ class DeepSeekAdapter(LLMAdapter):
                 messages=messages,
                 response_model=response_model,
                 max_retries=2,
+                extra_body={"thinking": {"type": "disabled"}},
             )
 
         result, latency = await timed_call(log, "DeepSeek", _call)
