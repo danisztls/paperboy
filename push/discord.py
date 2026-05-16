@@ -52,7 +52,7 @@ async def post_text_to_discord(
     *,
     wrap: bool = True,
 ) -> None:
-    text = "\n" + text
+    text = "​\n" + text
     if wrap:
         text = _wrap_text(text)
     if len(text) > 2000:
@@ -279,7 +279,7 @@ class DiscordMarkdownTarget(Target):
         for i, item in enumerate(items):
             title_part = f"[{item.title}](<{item.url}>)" if item.url else item.title
             source_part = f" [{item.source}]" if item.source else ""
-            header = f"### {title_part}{source_part}"
+            header = f"## {title_part}{source_part}"
             body = item.body or ""
             text = f"{header}\n{body}" if body else header
             try:
