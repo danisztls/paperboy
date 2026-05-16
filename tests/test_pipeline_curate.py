@@ -195,3 +195,66 @@ async def test_curate_filter_fails_open(mock_http, fake_adapter, tmp_path, monke
     # Per _merge_feed_state has_filter branch: items default to filter_pass=True
     # when the filter result didn't decorate them (which fail-open does).
     assert all(it["filter_pass"] is True for it in items)
+
+
+async def test_curate_passes_per_spec_reasoning_to_adapter(mock_http, fake_adapter, tmp_path):
+    """Per-spec `reasoning: low` lands on the curate adapter's complete_structured call."""
+    mock_http.get(FEED_URL, body=load_fixture("feed_basic.xml"))
+    mock_http.post(WEBHOOK_URL, status=204)
+
+    fake_adapter.queue_filter(
+        items=[
+            {"id": 0, "pass": True, "reason": "ok"},
+            {"id": 1, "pass": True, "reason": "ok"},
+        ],
+    )
+
+    cfg = make_curate_cfg(
+        feeds=[{"url": FEED_URL, "name": "Example"}],
+        file_path=str(tmp_path / "out.md"),
+        llm_filter={"criteria": "pass anything"},
+    )
+
+    async with aiohttp.ClientSession() as session:
+        await _process_feed_task(
+            cfg,
+            {"tasks": {}},
+            session,
+            curate_adapter=fake_adapter,
+            summarize_adapter=fake_adapter,
+            curate_reasoning="low",
+        )
+
+    assert fake_adapter.structured_calls, "expected curate to make a structured call"
+    assert fake_adapter.structured_calls[-1]["reasoning"] == "low"
+
+
+async def test_analysis_forces_reasoning_over_spec(mock_http, fake_adapter, tmp_path):
+    """`--analysis` (analysis=True) overrides per-spec reasoning with True."""
+    mock_http.get(FEED_URL, body=load_fixture("feed_basic.xml"))
+    # No POST mocked: analysis is dry-run, no Discord call should happen.
+
+    fake_adapter.queue_filter(
+        items=[
+            {"id": 0, "pass": True, "reason": "ok"},
+            {"id": 1, "pass": True, "reason": "ok"},
+        ],
+    )
+
+    cfg = make_curate_cfg(
+        feeds=[{"url": FEED_URL, "name": "Example"}],
+        llm_filter={"criteria": "pass anything"},
+    )
+
+    async with aiohttp.ClientSession() as session:
+        await _process_feed_task(
+            cfg,
+            {"tasks": {}},
+            session,
+            curate_adapter=fake_adapter,
+            summarize_adapter=fake_adapter,
+            curate_reasoning="off",
+            analysis=True,
+        )
+
+    assert fake_adapter.structured_calls[-1]["reasoning"] is True

@@ -133,20 +133,31 @@ def _check_due_or_skip(name: str, last_run: str | None, period: timedelta, now: 
     return False
 
 
-def _build_adapter(specs: list[tuple[str | None, str | None]], api_key_cfg: dict | None) -> tuple:
-    """Return (adapter, model) from a list of (provider, model) specs.
+def _build_adapter(specs: list, api_key_cfg: dict | None) -> tuple:
+    """Return (adapter, model, default_reasoning) from a list of ModelSpec.
 
-    Single spec: returns a plain adapter + model string (preserves per-task model overrides).
-    Multiple specs: returns a FallbackAdapter with bundled models + None.
+    Single spec: returns the adapter, model name, and the spec's reasoning level.
+    Multiple specs: returns a FallbackAdapter that carries per-entry reasoning;
+    the outer default_reasoning is None (each entry uses its own).
     """
-    valid = [(p, m) for p, m in specs if p]
-    if not valid:
-        return None, None
-    if len(valid) == 1:
-        p, m = valid[0]
-        return get_adapter(p, get_api_key_for_provider(api_key_cfg, p)), m
-    entries = [(get_adapter(p, get_api_key_for_provider(api_key_cfg, p)), m) for p, m in valid]
-    return FallbackAdapter(entries), None
+    if not specs:
+        return None, None, None
+    if len(specs) == 1:
+        s = specs[0]
+        return (
+            get_adapter(s.provider, get_api_key_for_provider(api_key_cfg, s.provider)),
+            s.name,
+            s.reasoning,
+        )
+    entries = [
+        (
+            get_adapter(s.provider, get_api_key_for_provider(api_key_cfg, s.provider)),
+            s.name,
+            s.reasoning,
+        )
+        for s in specs
+    ]
+    return FallbackAdapter(entries), None, None
 
 
 def _xdg_config_path() -> pathlib.Path:
@@ -240,13 +251,13 @@ async def _async_main(args: argparse.Namespace) -> None:
     search_cfg_global = config.get("search", {})
     summarize_cfg = config.get("summarize", {})
     api_key_cfg = llm_cfg.get("api_key") or None
-    curate_adapter, curate_model = _build_adapter(
+    curate_adapter, curate_model, curate_reasoning = _build_adapter(
         resolve_model_specs(curate_cfg.get("model")), api_key_cfg
     )
-    summarize_adapter, summarize_model = _build_adapter(
+    summarize_adapter, summarize_model, summarize_reasoning = _build_adapter(
         resolve_model_specs(summarize_cfg.get("model")), api_key_cfg
     )
-    search_adapter, search_model = _build_adapter(
+    search_adapter, search_model, search_reasoning = _build_adapter(
         resolve_model_specs(search_cfg_global.get("model")), api_key_cfg
     )
     instructions = search_cfg_global.get("instructions") or None
@@ -345,6 +356,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                             instructions=instructions,
                             search_model=search_model,
                             search_adapter=search_adapter,
+                            search_reasoning=search_reasoning,
                             collector=collector,
                             analysis=analysis,
                         )
@@ -393,8 +405,10 @@ async def _async_main(args: argparse.Namespace) -> None:
                             session,
                             curate_model=curate_model,
                             curate_adapter=curate_adapter,
+                            curate_reasoning=curate_reasoning,
                             summarize_model=summarize_model,
                             summarize_adapter=summarize_adapter,
+                            summarize_reasoning=summarize_reasoning,
                             global_color=global_color,
                             global_language=global_language,
                             max_age_seconds=max_age_seconds,
@@ -593,7 +607,7 @@ def main():
                 _sum_api_key_cfg = (cfg.get("llm") or {}).get("api_key") or None
                 _sum_language = (cfg.get("curate") or {}).get("language") or "EN-US"
                 _sum_specs = resolve_model_specs((cfg.get("summarize") or {}).get("model"))
-                _sum_adapter, _sum_model = _build_adapter(_sum_specs, _sum_api_key_cfg)
+                _sum_adapter, _sum_model, _ = _build_adapter(_sum_specs, _sum_api_key_cfg)
             except Exception:
                 pass
         if _sum_adapter is None:

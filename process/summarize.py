@@ -26,7 +26,7 @@ async def summarize_entry(
     model: str | None = None,
     language: str | None = None,
     instructions: str | None = None,
-    reasoning: bool | dict = False,
+    reasoning: bool | str | dict = False,
     trace: dict | None = None,
 ) -> str | None:
     lang_directive = f"Write in {language}. " if language else ""

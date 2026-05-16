@@ -38,18 +38,20 @@ async def run_search_task(
     global_model: str | None = None,
     *,
     adapter: LLMAdapter,
-    reasoning: bool | dict = False,
+    reasoning: bool | str | dict = False,
     trace: dict | None = None,
 ) -> str | None:
-    """Call LLM with web search. Returns response text or None on failure."""
+    """Call LLM with web search. Returns response text or None on failure.
+
+    The per-task `model.reasoning` override is honored only when the caller's
+    `reasoning` is falsy (i.e. not forced on by `--analysis`).
+    """
     name = task_cfg.get("name")
     search_cfg = get_search_cfg(task_cfg)
     raw_model = search_cfg.get("model")
-    model = (
-        (next(iter(raw_model.values())) if isinstance(raw_model, dict) else raw_model)
-        or global_model
-        or None
-    )
+    model = (raw_model.get("name") if isinstance(raw_model, dict) else None) or global_model or None
+    if not reasoning and isinstance(raw_model, dict) and raw_model.get("reasoning"):
+        reasoning = raw_model["reasoning"]
     prompt = search_cfg["prompt"]
     web_search = search_cfg.get("web_search", True)
     task_instructions = search_cfg.get("instructions")

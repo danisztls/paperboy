@@ -42,7 +42,7 @@ async def curate_entries(
     memory_history: list[tuple[str, str]] | None = None,
     adapter: LLMAdapter,
     extra_instructions: str | None = None,
-    reasoning: bool | dict = False,
+    reasoning: bool | str | dict = False,
     trace: dict | None = None,
 ) -> tuple[dict[str, dict], list[MemoryParagraph] | None] | None:
     """Filter feed entries through LLM and optionally update memory.
@@ -54,11 +54,9 @@ async def curate_entries(
     context so the model can build continuity across runs.
     """
     raw_model = filter_cfg.get("model")
-    model = (
-        (next(iter(raw_model.values())) if isinstance(raw_model, dict) else raw_model)
-        or global_model
-        or None
-    )
+    model = (raw_model.get("name") if isinstance(raw_model, dict) else None) or global_model or None
+    if not reasoning and isinstance(raw_model, dict) and raw_model.get("reasoning"):
+        reasoning = raw_model["reasoning"]
     explain = filter_cfg.get("explain", False)
     criteria = filter_cfg.get("criteria", "")
 

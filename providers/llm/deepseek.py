@@ -6,7 +6,7 @@ from typing import TypeVar
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ValidationError
 
-from .base import LLMAdapter, LLMResponse, timed_call
+from .base import LLMAdapter, LLMResponse, reasoning_level, timed_call
 
 DEFAULT_MODEL = "deepseek-v4-flash"
 BASE_URL = "https://api.deepseek.com"
@@ -27,7 +27,7 @@ class DeepSeekAdapter(LLMAdapter):
         model: str | None = None,
         instructions: str | None = None,
         web_search: bool | dict = False,
-        reasoning: bool | dict = False,
+        reasoning: bool | str | dict = False,
     ) -> LLMResponse | None:
         _model = model or DEFAULT_MODEL
         if web_search:
@@ -36,7 +36,8 @@ class DeepSeekAdapter(LLMAdapter):
         if instructions:
             messages.append({"role": "system", "content": instructions})
         messages.append({"role": "user", "content": prompt})
-        thinking_cfg: dict = {"type": "enabled" if reasoning else "disabled"}
+        thinking_on = reasoning_level(reasoning) is not None
+        thinking_cfg: dict = {"type": "enabled" if thinking_on else "disabled"}
         if isinstance(reasoning, dict):
             thinking_cfg.update(reasoning)
         response, latency = await timed_call(
@@ -66,6 +67,8 @@ class DeepSeekAdapter(LLMAdapter):
             finish_reason=getattr(response.choices[0], "finish_reason", None),
         )
 
+    _structured_reasoning_warned = False
+
     async def complete_structured(
         self,
         prompt: str,
@@ -73,9 +76,15 @@ class DeepSeekAdapter(LLMAdapter):
         *,
         model: str | None = None,
         instructions: str | None = None,
-        reasoning: bool | dict = False,
+        reasoning: bool | str | dict = False,
         trace: dict | None = None,
     ) -> T | None:
+        if reasoning_level(reasoning) is not None and not type(self)._structured_reasoning_warned:
+            log.warning(
+                "DeepSeek thinking mode rejects tool_choice='required' / strict JSON, so "
+                "reasoning is ignored on structured calls."
+            )
+            type(self)._structured_reasoning_warned = True
         _model = model or DEFAULT_MODEL
         schema = json.dumps(response_model.model_json_schema(), ensure_ascii=False)
         schema_note = f"\n\nRespond with JSON matching this schema:\n{schema}"
