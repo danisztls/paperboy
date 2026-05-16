@@ -59,7 +59,7 @@ Source.pull()  →  _summarize_items() + _apply_curate()  →  Target.push()
 Defines the interfaces that all sources and targets implement:
 
 - **`Item`** — generic content item produced by any source. Fields: `id`, `title`, `source` (display name), `url`, `body` (sanitized text), `image`, `published`, `summary`, `filter_pass`, `filter_reason`, `meta` (dict for source-specific extras).
-- **`PullResult`** — output of `Source.pull()`: `new_items: list[Item]` + `current_items: list[dict]` (url+title dicts for state).
+- **`PullResult`** — output of `Source.pull()`: `new_items: list[Item]` + `current_items: list[dict]` (url/title/optional `source_date` dicts for state) + optional `name` (display name of the source; set by feed sources, lands on the feed dict in state).
 - **`FilterResult`** — output of the LLM curate step: `items` (all items with filter_pass set), `memory: list[MemoryParagraph] | None` (new briefing as structured paragraphs), `cite_map: dict[int, Citation]` (LLM int ID → `Citation(source, url)` NamedTuple).
 - **`MemoryParagraph`** — one paragraph of the digest briefing: `text: str` (plain prose, no citation markers) + `citations: list[int]` (item IDs that support this paragraph). Push targets resolve IDs via `cite_map` and append source links after the text.
 - **`PushContext`** — input to `Target.push()`: `items`, optional `memory: list[MemoryParagraph]`, optional `cite_map`.
@@ -88,7 +88,7 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
 #### `state/` — state I/O and migrations
 
 - `state/__init__.py` — `load_state`, `save_state` (writes `.old` backup, stamps `_version` and `_last_run`), `_auto_clean` (removes malformed items), and `_remove_unknown` (prunes tasks/feeds absent from config).
-- `state/migrate.py` — state schema migrations. `needs_migration(state)` checks `state["_version"]` against `CURRENT_VERSION` (2). `migrate(state)` steps through `_STEPS` until current. The v2 migration nests all task keys under a top-level `"tasks"` key.
+- `state/migrate.py` — state schema migrations. `needs_migration(state)` checks `state["_version"]` against `CURRENT_VERSION` (3). `migrate(state)` steps through `_STEPS` until current. The v2 migration nests all task keys under a top-level `"tasks"` key; the v3 migration renames `access_date` → `first_seen` on every item.
 - `state/state.json.template` — example state file shape.
 
 #### `process/` — between-pull-and-push processing stages
@@ -101,7 +101,7 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
 
 - `pull/feed.py` — feed fetching, dedup, and entry enrichment.
   - `RSSSource(Source)` — concrete source; wraps `get_new_entries`.
-  - `get_new_entries(feed_cfg, seen, session)` — fetches and parses the feed, returns `(current_items, new_entries: list[Item])` or `None` on parse failure. Entry ID is `entry.link`; entries with no link or older than 7 days are skipped. Bodies are HTML-stripped, truncated to 512 chars, and Markdown-escaped. Heuristic filters (`filter.title`, `filter.description`, `filter.url`) are applied via `process.filter_heuristic.apply_regex` and `url_filtered`. Supported ops: `extract` (regex), `replace`/`with`, `remove_phrases_with_urls`, `remove_phrases_containing`, `clear`, `skip_containing`.
+  - `get_new_entries(feed_cfg, seen, session)` — fetches and parses the feed, returns `(feed_title, current_items, new_entries: list[Item])` or `None` on parse failure. `feed_title` is the resolved display name (`cfg.name → parsed.feed.title → url`) and gets propagated through `PullResult.name` onto the feed dict in state. `current_items` dicts include `source_date` (ISO8601) when the entry has a pubDate/updated date. Entry ID is `entry.link`; entries with no link or older than 7 days are skipped. Bodies are HTML-stripped, truncated to 512 chars, and Markdown-escaped. Heuristic filters (`filter.title`, `filter.description`, `filter.url`) are applied via `process.filter_heuristic.apply_regex` and `url_filtered`. Supported ops: `extract` (regex), `replace`/`with`, `remove_phrases_with_urls`, `remove_phrases_containing`, `clear`, `skip_containing`.
 - `pull/search.py` — LLM web-search source.
   - `SearchSource(Source)` — calls `run_search_task` and wraps the response as a single `Item`.
   - `run_search_task(task_cfg, instructions, model, adapter)` — calls the configured LLM with web search enabled, returns plain-text response or `None`.
@@ -143,15 +143,16 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
 
 ```json
 {
-  "_version": 2,
+  "_version": 3,
   "_last_run": "<iso8601 utc>",
   "_last_clean": "<iso8601 utc>",
   "tasks": {
     "my-feeds": {
       "feeds": {
         "https://feed1.url": {
+          "name": "Feed 1",
           "items": [
-            {"url": "...", "title": "...", "access_date": "<iso8601 utc>", "filter_pass": true, "filter_reason": "..."},
+            {"url": "...", "title": "...", "source_date": "<iso8601 utc>", "first_seen": "<iso8601 utc>", "filter_pass": true, "filter_reason": "..."},
             ...
           ],
           "last_run": "<iso8601 utc>"
@@ -169,7 +170,7 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
 }
 ```
 
-- `feeds` sub-dict holds per-URL state. Each successful fetch replaces `items` with the feed's current entries (bounded by feed length). `access_date` is stamped when an item is first seen and carried forward. `filter_pass` and `filter_reason` are only present on items from tasks with a `curate` key.
+- `feeds` sub-dict holds per-URL state. Each entry has a `name` (resolved feed title from cfg → feed `<title>` → url), `items`, and `last_run`. Each successful fetch replaces `items` with the feed's current entries (bounded by feed length). `first_seen` is stamped when an item is first seen by claudinho and carried forward; `source_date` is the entry's original pubDate from the feed (when present). `filter_pass` and `filter_reason` are only present on items from tasks with a `curate` key.
 - `memory` is only present on curated RSS/digest tasks. Each run appends one entry keyed by ISO8601 timestamp; history is capped at 20 entries (oldest evicted). The LLM receives the last 5 entries as context on each run.
 - Search tasks store only `last_run` directly under the task name key.
 - `load_state` returns the parsed JSON as-is; absent or `null` `last_run` always means "due now".
