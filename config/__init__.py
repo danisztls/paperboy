@@ -324,7 +324,7 @@ class _PullWeatherItem(BaseModel):
     location_name: str
     timezone: str
     uv_warn_threshold: int = 6
-    forecast_days: int = 5
+    forecast_days: int = 7
 
 
 class _PullItem(BaseModel):
