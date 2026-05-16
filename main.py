@@ -199,6 +199,12 @@ async def _async_main(args: argparse.Namespace) -> None:
         sys.exit(1)
     state = load_state(state_path)
 
+    if state and needs_migration(state):
+        old_version = state.get("_version", 0)
+        state = migrate(state)
+        save_state(state_path, state)
+        log.info("Auto-migrated state v%d → v%d", old_version, CURRENT_VERSION)
+
     retention_days = (config.get("retention") or {}).get("days", 30)
     for sub in ("logs", "evals"):
         removed = _prune_old_files(state_path.parent / sub, retention_days)
@@ -280,14 +286,17 @@ async def _async_main(args: argparse.Namespace) -> None:
                     if pull_result is None:
                         log.warning("Failed to fetch %s, skipping", url)
                         continue
-                    prev_access = {
-                        item["url"]: item["access_date"]
+                    prev_seen = {
+                        item["url"]: item["first_seen"]
                         for item in feeds_state.get(url, {}).get("items", [])
-                        if "access_date" in item
+                        if "first_seen" in item
                     }
                     for item in pull_result.current_items:
-                        item["access_date"] = prev_access.get(item["url"], now)
-                    feeds_state[url] = {"items": pull_result.current_items, "last_run": now}
+                        item["first_seen"] = prev_seen.get(item["url"], now)
+                    feed_dict: dict = {"items": pull_result.current_items, "last_run": now}
+                    if pull_result.name:
+                        feed_dict["name"] = pull_result.name
+                    feeds_state[url] = feed_dict
                     log.info("Regenerated %d items for %s", len(pull_result.current_items), url)
             save_state(state_path, state)
             log.info("Done. State regenerated and saved to %s", state_path)
@@ -449,7 +458,7 @@ def main():
     mode.add_argument(
         "--clean",
         action="store_true",
-        help="Remove state entries older than 30 days or missing access_date, then exit",
+        help="Remove state entries older than 30 days or missing first_seen, then exit",
     )
     mode.add_argument(
         "--migrate",

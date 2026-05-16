@@ -46,6 +46,7 @@ class PullResult:
 
     new_items: list[Item]  # unseen items in chronological order
     current_items: list[dict]  # all items currently in source (url+title, for state)
+    name: str | None = None  # display name of the source (set by feed sources, for state)
 
 
 @dataclass

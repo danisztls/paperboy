@@ -61,10 +61,11 @@ async def get_new_entries(
     filter_log: dict | None = None,
     *,
     max_age_seconds: int = DEFAULT_ENTRY_MAX_AGE_SECONDS,
-) -> tuple[list[dict], list[Item]] | None:
-    """Fetch feed, return (current_items, new_entries) or None on failure.
+) -> tuple[str, list[dict], list[Item]] | None:
+    """Fetch feed, return (feed_title, current_items, new_entries) or None on failure.
 
-    current_items: all entries currently in the feed (url+title dicts, for state).
+    feed_title: resolved display name of the feed (cfg name → feed title → url).
+    current_items: all entries currently in the feed (url/title/source_date dicts, for state).
     new_entries: fully enriched Item list for unseen entries, chronological order.
     Returns None if the feed could not be parsed so callers skip the state write.
     """
@@ -109,7 +110,10 @@ async def get_new_entries(
         if published and (now - published).total_seconds() > max_age_seconds:
             log.debug("[%s] Skipping old entry (%s): %s", feed_title, published.date(), eid[:80])
             continue
-        current_items.append({"url": entry.get("link", ""), "title": _entry_title(entry)})
+        ci = {"url": entry.get("link", ""), "title": _entry_title(entry)}
+        if published:
+            ci["source_date"] = published.isoformat()
+        current_items.append(ci)
         if eid not in seen:
             _new_eligible += 1
             if url_filtered(eid, filter_url):
@@ -174,7 +178,7 @@ async def get_new_entries(
             )
         )
 
-    return current_items, new_entries
+    return feed_title, current_items, new_entries
 
 
 class RSSSource(Source):
@@ -196,5 +200,5 @@ class RSSSource(Source):
         )
         if result is None:
             return None
-        current_items, new_items = result
-        return PullResult(new_items=new_items, current_items=current_items)
+        feed_title, current_items, new_items = result
+        return PullResult(new_items=new_items, current_items=current_items, name=feed_title)

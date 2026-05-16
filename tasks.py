@@ -48,7 +48,7 @@ def _merge_feed_state(
 
     Unseen current items become state dicts with optional summary and (under
     a filter) filter_pass/filter_reason annotations. Items that failed to
-    post are dropped. access_date is stamped on any item that lacks it.
+    post are dropped. first_seen is stamped on any item that lacks it.
     """
     prev_by_url = {item["url"]: item for item in prev_items}
     new_items: list[dict] = []
@@ -71,8 +71,8 @@ def _merge_feed_state(
     if failed_ids:
         final = [item for item in final if item["url"] not in failed_ids]
     for item in final:
-        if "access_date" not in item:
-            item["access_date"] = now_iso
+        if "first_seen" not in item:
+            item["first_seen"] = now_iso
     return final
 
 
@@ -702,7 +702,10 @@ def _build_new_task_state(
             failed_ids=failed_ids,
             now_iso=now_iso,
         )
-        new_feeds_state[url] = {"items": final_items, "last_run": now_iso}
+        feed_dict: dict = {"items": final_items, "last_run": now_iso}
+        if pull_result.name:
+            feed_dict["name"] = pull_result.name
+        new_feeds_state[url] = feed_dict
 
     new_task_state: dict = {"feeds": new_feeds_state}
     if has_filter:
@@ -904,7 +907,7 @@ async def _process_scraper_task(
     merged = list(prev_items)
     for ci in pull_result.current_items:
         if ci["url"] not in prev_by_url:
-            merged.append({**ci, "access_date": now_iso})
+            merged.append({**ci, "first_seen": now_iso})
     if failed_ids:
         merged = [it for it in merged if it["url"] not in failed_ids]
 

@@ -1,6 +1,6 @@
 """State file schema migrations."""
 
-CURRENT_VERSION = 2
+CURRENT_VERSION = 3
 
 
 def needs_migration(state: dict) -> bool:
@@ -13,11 +13,27 @@ def _to_v2(state: dict) -> dict:
     tasks = {k: v for k, v in state.items() if k not in _meta}
     new = {k: v for k, v in state.items() if k in _meta}
     new["tasks"] = tasks
-    new["_version"] = CURRENT_VERSION
+    new["_version"] = 2
     return new
 
 
-_STEPS = {0: _to_v2, 1: _to_v2}
+def _to_v3(state: dict) -> dict:
+    """Rename access_date → first_seen on every item (v2 → v3)."""
+    for task_state in state.get("tasks", {}).values():
+        if not isinstance(task_state, dict):
+            continue
+        for feed_state in task_state.get("feeds", {}).values():
+            for item in feed_state.get("items", []):
+                if "access_date" in item:
+                    item["first_seen"] = item.pop("access_date")
+        for item in task_state.get("items", []):
+            if "access_date" in item:
+                item["first_seen"] = item.pop("access_date")
+    state["_version"] = 3
+    return state
+
+
+_STEPS = {0: _to_v2, 1: _to_v2, 2: _to_v3}
 
 
 def migrate(state: dict) -> dict:

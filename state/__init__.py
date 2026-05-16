@@ -26,7 +26,7 @@ def _sort_state(state: dict) -> dict:
                 feed = feeds[url]
                 items = feed.get("items")
                 if items:
-                    feed = {**feed, "items": sorted(items, key=lambda i: i.get("access_date", ""))}
+                    feed = {**feed, "items": sorted(items, key=lambda i: i.get("first_seen", ""))}
                 sorted_feeds[url] = feed
             task = {**task, "feeds": sorted_feeds}
         sorted_tasks[task_name] = task
@@ -67,15 +67,15 @@ def _auto_clean(state: dict) -> None:
                     removed += 1
                     continue
 
-                ad = item.get("access_date")
-                if not ad:
-                    log.warning("%s: removing item %s: missing access_date", label, url[:80])
+                fs = item.get("first_seen")
+                if not fs:
+                    log.warning("%s: removing item %s: missing first_seen", label, url[:80])
                     removed += 1
                     continue
                 try:
-                    datetime.fromisoformat(ad)
+                    datetime.fromisoformat(fs)
                 except ValueError:
-                    log.warning("%s: removing item %s: invalid access_date %r", label, url[:80], ad)
+                    log.warning("%s: removing item %s: invalid first_seen %r", label, url[:80], fs)
                     removed += 1
                     continue
 

@@ -90,7 +90,7 @@ async def test_curate_dedup(mock_http, fake_adapter, tmp_path):
                             {
                                 "url": "https://example.com/posts/1",
                                 "title": "First Item About Cats",
-                                "access_date": "2026-05-01T00:00:00+00:00",
+                                "first_seen": "2026-05-01T00:00:00+00:00",
                             }
                         ],
                         "last_run": "2026-05-01T00:00:00+00:00",
@@ -109,12 +109,16 @@ async def test_curate_dedup(mock_http, fake_adapter, tmp_path):
     assert "Second Item About Quantum Physics" in body
     assert "First Item About Cats" not in body
 
-    items = result["test-curate"]["feeds"][FEED_URL]["items"]
+    feed_state = result["test-curate"]["feeds"][FEED_URL]
+    assert feed_state["name"] == "Example"
+    items = feed_state["items"]
     urls = {it["url"] for it in items}
     assert urls == {
         "https://example.com/posts/1",
         "https://example.com/posts/2",
     }
+    assert all("first_seen" in it for it in items)
+    assert not any("access_date" in it for it in items)
 
 
 async def test_curate_pull_failure(mock_http, fake_adapter, tmp_path):
