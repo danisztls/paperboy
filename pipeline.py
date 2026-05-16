@@ -20,6 +20,7 @@ class MemoryParagraph(NamedTuple):
 
     text: str
     citations: list[int]
+    section: str | None = None  # thematic heading; set only on the first para of a group
 
 
 @dataclass

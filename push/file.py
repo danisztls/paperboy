@@ -18,13 +18,15 @@ def _resolve_path(path_str: str) -> pathlib.Path:
 def _render_paragraph_md(para: MemoryParagraph, cite_map: dict[int, Citation] | None) -> str:
     text = para.text.rstrip()
     if para.citations and cite_map:
-        links = []
-        for id_ in para.citations:
-            cit = cite_map.get(id_)
-            if cit:
-                links.append(f"[{cit.source}]({cit.url})" if cit.url else f"[{cit.source}]")
+        links = [
+            f"[{cit.source}]({cit.url})" if cit.url else f"[{cit.source}]"
+            for id_ in para.citations
+            if (cit := cite_map.get(id_))
+        ]
         if links:
             text += " " + " ".join(links)
+    if para.section:
+        return f"### {para.section}\n\n{text}"
     return text
 
 

@@ -21,6 +21,7 @@ class FilterItem(BaseModel):
 class CurateParagraph(BaseModel):
     """One paragraph of the memory briefing with its supporting item IDs."""
 
+    section: str | None = None
     text: str
     citations: list[int] = []
 
@@ -95,14 +96,15 @@ async def curate_entries(
         - Within this batch, if multiple items cover the same event, keep only the one(s) that contribute the most relevant information; fail the rest with reason: 'duplicate within batch'.
 
         **Step 3 — Write memory.** Populate the `memory` array with a factual news briefing in {language}, one object per story. Each object has:
-        - `text`: 1–3 sentences of plain prose. Lead with the core fact; add only the most essential detail (key figure, number, date, place, or consequence). No citation markers, brackets, or meta-commentary in the text.
+        - `section`: short thematic heading (e.g. "Brasil", "Geopolítica", "Economia"). Set ONLY on the first paragraph of a new thematic group; use `null` for all subsequent paragraphs in the same group. Never put section names inside `text`.
+        - `text`: 1–3 sentences of plain prose. Lead with the core fact; add only the most essential detail (key figure, number, date, place, or consequence). No citation markers, brackets, section names, or meta-commentary in the text.
         - `citations`: list of integer IDs from this batch whose content directly supports the paragraph. Usually one ID; use multiple only when two items genuinely cover the same event. Never reference IDs from the already-published digests.
 
         Rules for the briefing as a whole:
         - Include ALL passing items — do not omit any.
         - One object per story; never mix two distinct topics in one object. Do not pad.
         - Never use semicolons to chain unrelated events in the same sentence.
-        - Group by theme; within each group order by significance. Lead with the single most significant development overall.
+        - Group by theme using the `section` field; within each group order by significance. Lead with the single most significant development overall.
         - No meta-commentary about the filtering process, no mention of what was discarded, no hedging phrases.
         - Include enough factual specificity (names, numbers, dates, places) that a follow-up story on the same event can be recognised as a continuation on the next run.
 
@@ -142,7 +144,10 @@ async def curate_entries(
     parsed = {
         str(item.id): {"pass": item.passes, "reason": item.reason} for item in decisions.items
     }
-    paragraphs = [MemoryParagraph(text=p.text, citations=p.citations) for p in decisions.memory]
+    paragraphs = [
+        MemoryParagraph(text=p.text, citations=p.citations, section=p.section)
+        for p in decisions.memory
+    ]
     passed = sum(1 for v in parsed.values() if v["pass"])
     log.info("Filter: %d/%d items passed", passed, total)
     return parsed, paragraphs or None
