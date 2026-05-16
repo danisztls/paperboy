@@ -16,11 +16,12 @@ _DAILY_VARS = ",".join(
     [
         "apparent_temperature_max",
         "apparent_temperature_min",
-        "apparent_temperature_mean",
         "precipitation_sum",
         "precipitation_probability_max",
         "uv_index_max",
         "weather_code",
+        "wind_speed_10m_max",
+        "wind_gusts_10m_max",
     ]
 )
 
@@ -35,6 +36,9 @@ _HOURLY_VARS = ",".join(
 _DISPLAY_HOURS = tuple(range(5, 24, 2))  # 5, 7, 9 … 23 — every 2h
 
 _PT_DAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"]
+
+_PRECIP_HIDE_PROB = 20  # % — hide precip display below this probability
+_PRECIP_HIDE_MM = 1.0  # mm — hide precip display below this volume
 
 _WMO_EMOJI: dict[int, str] = {
     0: "☀",
@@ -93,7 +97,8 @@ def _build_url(cfg: dict) -> str:
         ("daily", _DAILY_VARS),
         ("hourly", _HOURLY_VARS),
         ("timezone", cfg["timezone"]),
-        ("forecast_days", cfg.get("forecast_days", 5)),
+        ("forecast_days", cfg.get("forecast_days", 7)),
+        ("models", "best_match"),
     ]
     qs = "&".join(f"{k}={v}" for k, v in params)
     return f"{OPEN_METEO_URL}?{qs}"
@@ -156,12 +161,15 @@ def _format_today(
     precip_prob = int(round(_d("precipitation_probability_max") or 0))
     uv_max = _d("uv_index_max") or 0.0
     wcode = _d("weather_code")
+    wind_speed = int(round(_d("wind_speed_10m_max") or 0))
+    wind_gust = int(round(_d("wind_gusts_10m_max") or 0))
 
     dd_mm = today_str[8:10] + "/" + today_str[5:7]
     lines = [
         f"### {_wmo_emoji(wcode)} {location_name} · {weekday} {dd_mm}",
         "",
         f"🌡 ↓{feels_min}°C  ↑{feels_max}°C   💧 {precip_mm}mm ({precip_prob}%)",
+        f"💨 {wind_speed}km/h (raj. {wind_gust}km/h)",
     ]
 
     start_h, end_h, peak_uv = _uv_window(hourly, today_str, uv_threshold)
@@ -182,7 +190,8 @@ def _format_today(
             continue
         feels = int(round(h_feels[idx] or 0))
         prob = int(round(h_prob[idx] if idx < len(h_prob) else 0) or 0)
-        entries.append(f"**{h:02d}h**: {feels}°C 💧{prob}%")
+        precip_part = f" 💧{prob}%" if prob >= _PRECIP_HIDE_PROB else ""
+        entries.append(f"**{h:02d}h**: {feels}°C{precip_part}")
     if entries:
         lines.append("  ·  ".join(entries))
 
@@ -191,12 +200,12 @@ def _format_today(
 
 def _format_forecast(start_idx: int, daily: dict, forecast_days: int) -> list[str]:
     times: list[str] = daily.get("time", [])
-    d_feels_mean = daily.get("apparent_temperature_mean", [])
+    d_min = daily.get("apparent_temperature_min", [])
+    d_max = daily.get("apparent_temperature_max", [])
     d_precip = daily.get("precipitation_sum", [])
     d_prob = daily.get("precipitation_probability_max", [])
-    d_wcode = daily.get("weather_code", [])
 
-    lines = ["", "**Próximos dias**"]
+    entries = []
     for i in range(1, forecast_days):
         idx = start_idx + i
         if idx >= len(times):
@@ -207,13 +216,19 @@ def _format_forecast(start_idx: int, daily: dict, forecast_days: int) -> list[st
             weekday = _PT_DAYS[(dt.weekday() + 1) % 7]
         except ValueError:
             weekday = "?"
-        dd = date_str[8:10]
-        feels_avg = int(round(d_feels_mean[idx] if idx < len(d_feels_mean) else 0) or 0)
-        mm = int(round(d_precip[idx] if idx < len(d_precip) else 0) or 0)
+        feels_min = int(round(d_min[idx] if idx < len(d_min) else 0) or 0)
+        feels_max = int(round(d_max[idx] if idx < len(d_max) else 0) or 0)
+        mm = d_precip[idx] if idx < len(d_precip) else 0.0
         prob = int(round(d_prob[idx] if idx < len(d_prob) else 0) or 0)
-        wc = d_wcode[idx] if idx < len(d_wcode) else None
-        lines.append(f"{weekday} {dd}  {_wmo_emoji(wc)}  avg {feels_avg}°C   {mm:2d}mm  {prob:2d}%")
-    return lines
+        precip_part = (
+            f" 💧{int(round(mm))}mm {prob}%"
+            if (prob >= _PRECIP_HIDE_PROB and mm >= _PRECIP_HIDE_MM)
+            else ""
+        )
+        entries.append(f"**{weekday}** ↓{feels_min}°C ↑{feels_max}°C{precip_part}")
+    if not entries:
+        return []
+    return ["", "**Próximos dias**", "  ·  ".join(entries)]
 
 
 def _find_today_idx(daily: dict, tz: ZoneInfo) -> int:
@@ -230,7 +245,7 @@ def _format_message(data: dict, cfg: dict) -> str:
     daily = data["daily"]
     hourly = data["hourly"]
     uv_threshold = cfg.get("uv_warn_threshold", 6)
-    forecast_days = cfg.get("forecast_days", 5)
+    forecast_days = cfg.get("forecast_days", 7)
     location_name = cfg.get("location_name", "?")
 
     day_idx = _find_today_idx(daily, tz)
