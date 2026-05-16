@@ -32,7 +32,7 @@ _HOURLY_VARS = ",".join(
     ]
 )
 
-_DISPLAY_HOURS = (6, 9, 12, 15, 18, 21)
+_DISPLAY_HOURS = tuple(range(5, 24, 2))  # 5, 7, 9 … 23 — every 2h
 
 _PT_DAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"]
 
@@ -175,13 +175,16 @@ def _format_today(
     h_feels = hourly.get("apparent_temperature", [])
     h_prob = hourly.get("precipitation_probability", [])
 
+    entries = []
     for h in _DISPLAY_HOURS:
         idx = _find_hourly_index(times, today_str, h)
         if idx is None or idx >= len(h_feels):
             continue
         feels = int(round(h_feels[idx] or 0))
         prob = int(round(h_prob[idx] if idx < len(h_prob) else 0) or 0)
-        lines.append(f"**{h:02d}h**: {feels:2d}°C  💧{prob:2d}%")
+        entries.append(f"**{h:02d}h**: {feels}°C 💧{prob}%")
+    if entries:
+        lines.append("  ·  ".join(entries))
 
     return lines
 
