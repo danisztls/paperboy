@@ -140,15 +140,20 @@ def _build_digest_chunks(
 ) -> list[str]:
     if not memory:
         return []
-    rendered = [_render_paragraph(p, cite_map) for p in memory if p.text.strip()]
 
     # Pre-split any rendered paragraph that's too long into sentence-packed sub-chunks.
+    # Section headings are glued to their first paragraph so they can never be orphaned.
     units: list[str] = []
-    for para in rendered:
-        if len(para) <= _CONTENT_LIMIT:
-            units.append(para)
+    for para in memory:
+        if not para.text.strip():
             continue
-        sentences = [s for s in _SENTENCE_SPLIT_RE.split(para) if s.strip()]
+        rendered = _render_paragraph(para, cite_map)
+        if para.section:
+            rendered = f"**{para.section}**\n\n{rendered}"
+        if len(rendered) <= _CONTENT_LIMIT:
+            units.append(rendered)
+            continue
+        sentences = [s for s in _SENTENCE_SPLIT_RE.split(rendered) if s.strip()]
         units.extend(_pack(sentences, " ", _CONTENT_LIMIT))
 
     chunks = _pack(units, "\n\n", _CONTENT_LIMIT)

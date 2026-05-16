@@ -60,7 +60,11 @@ class FakeLLMAdapter(LLMAdapter):
         memory is a list of {"text": str, "citations": list[int]} dicts.
         """
         paragraphs = [
-            CurateParagraph(text=p["text"], citations=p.get("citations", []))
+            CurateParagraph(
+                text=p["text"],
+                citations=p.get("citations", []),
+                section=p.get("section"),
+            )
             for p in (memory or [])
         ]
         self.queue_structured(
