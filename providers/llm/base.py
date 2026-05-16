@@ -34,7 +34,7 @@ async def timed_call[T](
     try:
         return await call(), time.monotonic() - t0
     except Exception as exc:
-        log.error("%s completion failed: %s", provider, exc)
+        log.error("%s completion failed: %s", provider, repr(exc))
         return None, time.monotonic() - t0
 
 
