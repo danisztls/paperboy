@@ -88,6 +88,7 @@ tasks:
           webhook: !secret discord_webhook_my_feeds  # or a literal URL string
           # color: "#5865F2"   # optional — overrides global discord.color for all feeds in this task
           # format: markdown   # optional — 'markdown' posts "### [Title](url)\nbody"; default 'embed'
+          # wrap: false        # optional — disable line wrapping at 120 chars (default: true)
       # - file: "~/notes/my-feeds.md"  # optional — also append new items to a local markdown file
 
   # Digest task: like RSS task but all passing entries from all feeds are collected
@@ -137,6 +138,7 @@ tasks:
   #   push:
   #     - discord:
   #         webhook: !secret discord_webhook_weather
+  #         wrap: false        # recommended — weather lines are intentionally long
 
   # Search task: calls an LLM with web search and posts the plain-text response to Discord.
   # Detected by pull containing a search item. Web search is always on.
