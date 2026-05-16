@@ -1,12 +1,9 @@
 import logging
-from typing import TYPE_CHECKING, TypeVar
+from typing import TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from .base import LLMAdapter, LLMResponse, timed_call
-
-if TYPE_CHECKING:
-    import instructor
 
 DEFAULT_MODEL = "gemini-2.0-flash"
 log = logging.getLogger(__name__)
@@ -23,16 +20,6 @@ class GeminiAdapter(LLMAdapter):
                 "google-genai is required for the Gemini adapter: uv add google-genai"
             ) from None
         self._client = genai.Client(api_key=api_key) if api_key else genai.Client()
-        self._instructor: instructor.AsyncInstructor | None = None
-
-    def _get_instructor(self):
-        if self._instructor is None:
-            import instructor
-
-            self._instructor = instructor.from_genai(
-                self._client, mode=instructor.Mode.GENAI_STRUCTURED_OUTPUTS, use_async=True
-            )
-        return self._instructor
 
     async def complete(
         self,
@@ -103,30 +90,39 @@ class GeminiAdapter(LLMAdapter):
         reasoning: bool | dict = False,
         trace: dict | None = None,
     ) -> T | None:
+        from google.genai import types
+
         _model = model or DEFAULT_MODEL
-        client = self._get_instructor()
-        contents: list = []
+        config_kwargs: dict = {
+            "response_mime_type": "application/json",
+            "response_schema": response_model,
+        }
         if instructions:
-            contents.append({"role": "user", "parts": [{"text": instructions}]})
-        contents.append({"role": "user", "parts": [{"text": prompt}]})
-
-        async def _call():
-            return await client.chat.completions.create_with_completion(
+            config_kwargs["system_instruction"] = instructions
+        config = types.GenerateContentConfig(**config_kwargs)
+        response, latency = await timed_call(
+            log,
+            "Gemini",
+            lambda: self._client.aio.models.generate_content(
                 model=_model,
-                messages=contents,
-                response_model=response_model,
-                max_retries=2,
-            )
-
-        result, latency = await timed_call(log, "Gemini", _call)
-        if result is None:
+                contents=prompt,
+                config=config,
+            ),
+        )
+        if response is None:
             return None
-        obj, completion = result
+        parsed = getattr(response, "parsed", None)
+        if parsed is None:
+            try:
+                parsed = response_model.model_validate_json(response.text or "")
+            except ValidationError as exc:
+                log.warning("Gemini structured response failed validation: %s", exc)
+                return None
         if trace is not None:
             trace["latency_s"] = latency
-            trace["model_used"] = getattr(completion, "model", _model)
-            usage = getattr(completion, "usage_metadata", None)
+            trace["model_used"] = getattr(response, "model_version", _model)
+            usage = getattr(response, "usage_metadata", None)
             if usage:
                 trace["input_tokens"] = getattr(usage, "prompt_token_count", None)
                 trace["output_tokens"] = getattr(usage, "candidates_token_count", None)
-        return obj
+        return parsed

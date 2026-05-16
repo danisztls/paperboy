@@ -63,7 +63,6 @@ class LLMAdapter(ABC):
     ) -> T | None:
         """Return a Pydantic instance via provider-native structured output.
 
-        Returns None on provider failure or unrecoverable validation failure.
-        The provider library (e.g. instructor) handles the parse + retry loop.
+        Returns None on provider failure or validation failure.
         """
         ...
