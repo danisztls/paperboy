@@ -257,8 +257,7 @@ def _format_message(data: dict, cfg: dict) -> str:
     except ValueError:
         weekday = "?"
 
-    # leading "" produces a leading \n when joined
-    lines = [""]
+    lines = []
     lines += _format_today(
         day_idx, today_str, weekday, location_name, daily, hourly, uv_threshold=uv_threshold
     )

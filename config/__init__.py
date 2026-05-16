@@ -351,6 +351,7 @@ class _PushDiscordItem(BaseModel):
     webhook: str
     color: _Color = None
     format: Literal["embed", "markdown"] | None = None
+    wrap: bool = True
 
 
 class _PushItem(BaseModel):

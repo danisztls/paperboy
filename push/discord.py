@@ -49,8 +49,12 @@ async def post_text_to_discord(
     webhook_url: str,
     text: str,
     session: aiohttp.ClientSession,
+    *,
+    wrap: bool = True,
 ) -> None:
-    text = _wrap_text(text)
+    text = "\n" + text
+    if wrap:
+        text = _wrap_text(text)
     if len(text) > 2000:
         text = text[:1997] + "…"
     payload = json.dumps({"content": text}).encode()
@@ -246,13 +250,15 @@ class DiscordTextTarget(Target):
     """Posts each item's body as a plain Discord text message."""
 
     async def push(self, ctx: PushContext, cfg: dict, session) -> set[str]:
-        webhook = get_discord_cfg(cfg).get("webhook", "")
+        discord_cfg = get_discord_cfg(cfg)
+        webhook = discord_cfg.get("webhook", "")
+        wrap = discord_cfg.get("wrap", True)
         failed: set[str] = set()
         for item in ctx.items:
             if not item.body:
                 continue
             try:
-                await post_text_to_discord(webhook, item.body, session)
+                await post_text_to_discord(webhook, item.body, session, wrap=wrap)
                 log.info("[%s] Posted text (%d chars)", item.source, len(item.body))
             except Exception:
                 log.error("Skipping item %s due to post failure", item.id)
@@ -265,7 +271,9 @@ class DiscordMarkdownTarget(Target):
     """Posts each item as a markdown-formatted Discord message (### heading + body)."""
 
     async def push(self, ctx: PushContext, cfg: dict, session) -> set[str]:
-        webhook = get_discord_cfg(cfg).get("webhook", "")
+        discord_cfg = get_discord_cfg(cfg)
+        webhook = discord_cfg.get("webhook", "")
+        wrap = discord_cfg.get("wrap", True)
         failed: set[str] = set()
         items = sorted(ctx.items, key=lambda e: e.published or _FAR_FUTURE)
         for i, item in enumerate(items):
@@ -275,7 +283,7 @@ class DiscordMarkdownTarget(Target):
             body = item.body or ""
             text = f"{header}\n{body}" if body else header
             try:
-                await post_text_to_discord(webhook, text, session)
+                await post_text_to_discord(webhook, text, session, wrap=wrap)
                 log.info("[%s] Posted: %s", item.source, item.title[:80])
                 if i < len(items) - 1:
                     await asyncio.sleep(2)
