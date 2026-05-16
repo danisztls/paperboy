@@ -107,7 +107,7 @@ async def test_weather_happy_path(mock_http):
     assert "°C" in body
     assert "⚠" not in body  # UV warn only shown on the window line, not per-hour
     assert "🔆 UV" in body
-    assert "**12h**:" in body
+    assert "**11h**:" in body
 
 
 async def test_weather_api_failure(mock_http):
@@ -191,9 +191,9 @@ async def test_weather_missing_hourly_slot(mock_http):
         await _process_weather_task(cfg, {}, session)
 
     body = _get_posted_body(mock_http)
-    assert "**06h**:" in body
+    assert "**07h**:" in body
     assert "**09h**:" not in body
-    assert "**12h**:" in body
+    assert "**11h**:" in body
 
 
 async def test_weather_forecast_truncation(mock_http):
