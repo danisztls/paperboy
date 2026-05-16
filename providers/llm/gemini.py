@@ -3,12 +3,30 @@ from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
 
-from .base import LLMAdapter, LLMResponse, timed_call
+from .base import LLMAdapter, LLMResponse, reasoning_level, timed_call
 
-DEFAULT_MODEL = "gemini-2.0-flash"
+DEFAULT_MODEL = "gemini-2.5-flash"
 log = logging.getLogger(__name__)
 
+# Thinking budget per effort level. Provider-specific; tune as new models land.
+_THINKING_BUDGETS = {"low": 1024, "medium": 4096, "high": 16384}
+
 T = TypeVar("T", bound=BaseModel)
+
+
+def _thinking_config(reasoning: bool | str | dict):
+    from google.genai import types
+
+    level = reasoning_level(reasoning)
+    if level is None:
+        return None
+    kwargs: dict = {
+        "include_thoughts": True,
+        "thinking_budget": _THINKING_BUDGETS.get(level, _THINKING_BUDGETS["high"]),
+    }
+    if isinstance(reasoning, dict):
+        kwargs.update(reasoning)
+    return types.ThinkingConfig(**kwargs)
 
 
 class GeminiAdapter(LLMAdapter):
@@ -28,7 +46,7 @@ class GeminiAdapter(LLMAdapter):
         model: str | None = None,
         instructions: str | None = None,
         web_search: bool | dict = False,
-        reasoning: bool | dict = False,
+        reasoning: bool | str | dict = False,
     ) -> LLMResponse | None:
         from google.genai import types
 
@@ -38,11 +56,9 @@ class GeminiAdapter(LLMAdapter):
             config_kwargs["system_instruction"] = instructions
         if web_search:
             config_kwargs["tools"] = [types.Tool(google_search=types.GoogleSearch())]
-        if reasoning:
-            thinking_kwargs: dict = {"include_thoughts": True}
-            if isinstance(reasoning, dict):
-                thinking_kwargs.update(reasoning)
-            config_kwargs["thinking_config"] = types.ThinkingConfig(**thinking_kwargs)
+        thinking_cfg = _thinking_config(reasoning)
+        if thinking_cfg is not None:
+            config_kwargs["thinking_config"] = thinking_cfg
         config = types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
         response, latency = await timed_call(
             log,
@@ -60,7 +76,7 @@ class GeminiAdapter(LLMAdapter):
             return None
         usage = getattr(response, "usage_metadata", None)
         reasoning_text: str | None = None
-        if reasoning:
+        if thinking_cfg is not None:
             thoughts: list[str] = []
             for cand in getattr(response, "candidates", []) or []:
                 content = getattr(cand, "content", None)
@@ -87,7 +103,7 @@ class GeminiAdapter(LLMAdapter):
         *,
         model: str | None = None,
         instructions: str | None = None,
-        reasoning: bool | dict = False,
+        reasoning: bool | str | dict = False,
         trace: dict | None = None,
     ) -> T | None:
         from google.genai import types
@@ -99,6 +115,9 @@ class GeminiAdapter(LLMAdapter):
         }
         if instructions:
             config_kwargs["system_instruction"] = instructions
+        thinking_cfg = _thinking_config(reasoning)
+        if thinking_cfg is not None:
+            config_kwargs["thinking_config"] = thinking_cfg
         config = types.GenerateContentConfig(**config_kwargs)
         response, latency = await timed_call(
             log,

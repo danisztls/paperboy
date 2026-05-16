@@ -11,15 +11,33 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class FallbackAdapter(LLMAdapter):
-    """Tries each (adapter, model) entry in order, falling back on None return."""
+    """Tries each (adapter, model, default_reasoning) entry in order, falling back on None return.
 
-    def __init__(self, entries: list[tuple[LLMAdapter, str | None]]) -> None:
+    Each entry carries its own default reasoning level. When the caller passes a
+    truthy `reasoning` value it overrides every entry (used by `--analysis`).
+    A falsy / None value lets each entry use its own default.
+    """
+
+    def __init__(
+        self, entries: list[tuple[LLMAdapter, str | None, str | bool | dict | None]]
+    ) -> None:
         self._entries = entries
 
-    def _effective_entries(self, model: str | None) -> list[tuple[LLMAdapter, str | None]]:
+    def _effective_entries(
+        self, model: str | None
+    ) -> list[tuple[LLMAdapter, str | None, str | bool | dict | None]]:
         if model is not None:
-            return [(self._entries[0][0], model), *self._entries[1:]]
+            head = self._entries[0]
+            return [(head[0], model, head[2]), *self._entries[1:]]
         return self._entries
+
+    @staticmethod
+    def _resolve_reasoning(
+        caller: bool | str | dict, entry_default: str | bool | dict | None
+    ) -> bool | str | dict:
+        if caller:
+            return caller
+        return entry_default or False
 
     async def complete(
         self,
@@ -28,16 +46,16 @@ class FallbackAdapter(LLMAdapter):
         model: str | None = None,
         instructions: str | None = None,
         web_search: bool | dict = False,
-        reasoning: bool | dict = False,
+        reasoning: bool | str | dict = False,
     ) -> LLMResponse | None:
         entries = self._effective_entries(model)
-        for i, (adapter, effective_model) in enumerate(entries):
+        for i, (adapter, effective_model, entry_reasoning) in enumerate(entries):
             result = await adapter.complete(
                 prompt,
                 model=effective_model,
                 instructions=instructions,
                 web_search=web_search,
-                reasoning=reasoning,
+                reasoning=self._resolve_reasoning(reasoning, entry_reasoning),
             )
             if result is not None:
                 return result
@@ -56,17 +74,17 @@ class FallbackAdapter(LLMAdapter):
         *,
         model: str | None = None,
         instructions: str | None = None,
-        reasoning: bool | dict = False,
+        reasoning: bool | str | dict = False,
         trace: dict | None = None,
     ) -> T | None:
         entries = self._effective_entries(model)
-        for i, (adapter, effective_model) in enumerate(entries):
+        for i, (adapter, effective_model, entry_reasoning) in enumerate(entries):
             result = await adapter.complete_structured(
                 prompt,
                 response_model,
                 model=effective_model,
                 instructions=instructions,
-                reasoning=reasoning,
+                reasoning=self._resolve_reasoning(reasoning, entry_reasoning),
                 trace=trace,
             )
             if result is not None:

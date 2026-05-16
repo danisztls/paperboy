@@ -3,13 +3,29 @@ from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
 
-from .base import LLMAdapter, LLMResponse, timed_call
+from .base import LLMAdapter, LLMResponse, reasoning_level, timed_call
 
 DEFAULT_MODEL = "claude-haiku-4-5"
 TOOL_NAME = "structured_response"
 log = logging.getLogger(__name__)
 
+# Anthropic thinking budgets per effort level. Provider-specific.
+_THINKING_BUDGETS = {"low": 2000, "medium": 4000, "high": 8000}
+
 T = TypeVar("T", bound=BaseModel)
+
+
+def _thinking_arg(reasoning: bool | str | dict) -> dict | None:
+    level = reasoning_level(reasoning)
+    if level is None:
+        return None
+    arg: dict = {
+        "type": "enabled",
+        "budget_tokens": _THINKING_BUDGETS.get(level, _THINKING_BUDGETS["high"]),
+    }
+    if isinstance(reasoning, dict):
+        arg.update(reasoning)
+    return arg
 
 
 class AnthropicAdapter(LLMAdapter):
@@ -31,7 +47,7 @@ class AnthropicAdapter(LLMAdapter):
         model: str | None = None,
         instructions: str | None = None,
         web_search: bool | dict = False,
-        reasoning: bool | dict = False,
+        reasoning: bool | str | dict = False,
     ) -> LLMResponse | None:
         _model = model or DEFAULT_MODEL
         tools: list[dict] = []
@@ -42,10 +58,8 @@ class AnthropicAdapter(LLMAdapter):
             kwargs["system"] = instructions
         if tools:
             kwargs["tools"] = tools
-        if reasoning:
-            thinking_arg: dict = {"type": "enabled", "budget_tokens": 8000}
-            if isinstance(reasoning, dict):
-                thinking_arg.update(reasoning)
+        thinking_arg = _thinking_arg(reasoning)
+        if thinking_arg is not None:
             kwargs["thinking"] = thinking_arg
 
         async def _call():
@@ -64,7 +78,7 @@ class AnthropicAdapter(LLMAdapter):
         if not text:
             return None
         reasoning_text: str | None = None
-        if reasoning:
+        if thinking_arg is not None:
             thoughts = [
                 getattr(block, "thinking", "")
                 for block in message.content
@@ -84,6 +98,8 @@ class AnthropicAdapter(LLMAdapter):
             finish_reason=getattr(message, "stop_reason", None),
         )
 
+    _structured_reasoning_warned = False
+
     async def complete_structured(
         self,
         prompt: str,
@@ -91,9 +107,15 @@ class AnthropicAdapter(LLMAdapter):
         *,
         model: str | None = None,
         instructions: str | None = None,
-        reasoning: bool | dict = False,
+        reasoning: bool | str | dict = False,
         trace: dict | None = None,
     ) -> T | None:
+        if reasoning_level(reasoning) is not None and not type(self)._structured_reasoning_warned:
+            log.warning(
+                "Anthropic structured output requires forced tool_choice, which is "
+                "incompatible with extended thinking — reasoning will be ignored on this call."
+            )
+            type(self)._structured_reasoning_warned = True
         _model = model or DEFAULT_MODEL
         tool = {
             "name": TOOL_NAME,

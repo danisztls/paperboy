@@ -1,4 +1,5 @@
 import json
+import logging
 import pathlib
 import re
 from datetime import timedelta
@@ -6,6 +7,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from pydantic.functional_validators import AfterValidator, BeforeValidator
+
+log = logging.getLogger(__name__)
 
 _PERIOD_UNITS = {"m": "minutes", "h": "hours", "d": "days"}
 
@@ -69,21 +72,12 @@ def get_file_path(task_cfg: dict) -> str | None:
     return next((item["file"] for item in task_cfg.get("push", []) if "file" in item), None)
 
 
-def _resolve_model_spec(spec) -> tuple[str | None, str | None]:
-    """Return (provider, model_name) from a {provider: model_name} dict, or (None, None)."""
-    if spec is None:
-        return None, None
-    provider, model = next(iter(spec.items()))
-    return provider or None, model or None
-
-
-def resolve_model_specs(spec) -> list[tuple[str | None, str | None]]:
-    """Return list of (provider, model_name) from a single or list model spec."""
+def resolve_model_specs(spec) -> list[ModelSpec]:
+    """Return list of ModelSpec from a raw config value (single dict or list of dicts)."""
     if spec is None:
         return []
-    if isinstance(spec, list):
-        return [_resolve_model_spec(s) for s in spec]
-    return [_resolve_model_spec(spec)]
+    raw = spec if isinstance(spec, list) else [spec]
+    return [ModelSpec.model_validate(s) for s in raw if s is not None]
 
 
 def get_api_key_for_provider(api_key_cfg, provider: str | None) -> str | None:
@@ -163,21 +157,61 @@ class _Retention(BaseModel):
     days: int = 30  # 0 disables pruning
 
 
-_KNOWN_PROVIDERS = {"openai", "gemini", "deepseek", "anthropic"}
+Provider = Literal["openai", "gemini", "deepseek", "anthropic"]
+ReasoningLevel = Literal["off", "low", "medium", "high"]
 
 
-def _validate_model_spec(v) -> dict:
-    if not isinstance(v, dict) or len(v) != 1:
-        raise ValueError("model spec must be a single-key dict like {openai: gpt-4o-mini}")
-    provider = next(iter(v))
-    if provider not in _KNOWN_PROVIDERS:
-        raise ValueError(
-            f"unknown provider {provider!r}; must be one of {sorted(_KNOWN_PROVIDERS)}"
-        )
-    return v
+def _load_models_registry() -> dict[str, dict[str, dict]]:
+    path = pathlib.Path(__file__).resolve().parent.parent / "providers" / "llm" / "models.json"
+    try:
+        return json.loads(path.read_text())
+    except FileNotFoundError:
+        log.warning("models.json not found at %s — model capability checks disabled", path)
+        return {}
 
 
-_ModelSpec = Annotated[dict, AfterValidator(_validate_model_spec)]
+_MODELS_REGISTRY = _load_models_registry()
+
+
+class ModelSpec(BaseModel):
+    """Verbose model spec: {provider, name, reasoning?}.
+
+    `reasoning` is plumbed through every LLM call; adapters translate the level
+    to provider-specific dicts (effort / budget_tokens / thinking_budget).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    provider: Provider
+    name: str
+    reasoning: ReasoningLevel | None = None
+
+    @model_validator(mode="after")
+    def _check_against_registry(self):
+        provider_models = _MODELS_REGISTRY.get(self.provider, {})
+        if not provider_models:
+            return self
+        entry = provider_models.get(self.name)
+        if entry is None:
+            log.warning(
+                "Model %r is not in providers/llm/models.json under %r — "
+                "capability checks skipped (add it if it's a known model)",
+                self.name,
+                self.provider,
+            )
+            return self
+        if self.reasoning in ("low", "medium", "high") and not entry.get("thinking"):
+            raise ValueError(
+                f"model {self.provider}:{self.name} does not support thinking — "
+                f"remove reasoning: {self.reasoning} or pick a thinking-capable model"
+            )
+        if entry.get("deprecated"):
+            log.warning(
+                "Model %s:%s is marked deprecated in providers/llm/models.json — "
+                "still functional but should be replaced",
+                self.provider,
+                self.name,
+            )
+        return self
 
 
 def _normalize_model_spec_list(v):
@@ -186,7 +220,7 @@ def _normalize_model_spec_list(v):
     return [v]
 
 
-_ModelSpecList = Annotated[list[_ModelSpec] | None, BeforeValidator(_normalize_model_spec_list)]
+ModelSpecList = Annotated[list[ModelSpec] | None, BeforeValidator(_normalize_model_spec_list)]
 
 
 class _ApiKeys(BaseModel):
@@ -204,19 +238,19 @@ class _GlobalLLM(BaseModel):
 
 class _GlobalCurate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    model: _ModelSpecList = None
+    model: ModelSpecList = None
     language: str | None = None
 
 
 class _GlobalSearch(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    model: _ModelSpecList = None
+    model: ModelSpecList = None
     instructions: str | None = None
 
 
 class _GlobalSummarize(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    model: _ModelSpecList = None
+    model: ModelSpecList = None
 
 
 class _FilterOp(BaseModel):
@@ -305,7 +339,7 @@ class _PullFeedItem(BaseModel):
 class _PullSearchItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     prompt: str
-    model: _ModelSpec | None = None
+    model: ModelSpec | None = None
     web_search: bool | dict = True
     instructions: str | None = None
 
@@ -369,7 +403,7 @@ class _PushItem(BaseModel):
 class _TaskCurate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     criteria: str
-    model: _ModelSpec | None = None
+    model: ModelSpec | None = None
     language: str | None = None
     instructions: str | None = None
     web_search: bool | dict | None = None

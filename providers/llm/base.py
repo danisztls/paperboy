@@ -38,6 +38,24 @@ async def timed_call[T](
         return None, time.monotonic() - t0
 
 
+def reasoning_level(reasoning: bool | str | dict) -> str | None:
+    """Map the public reasoning value to a level string ('off'/'low'/'medium'/'high') or None.
+
+    Adapters use this to pick provider-specific budgets/effort levels.
+    - `False` / `"off"` / falsy → None (reasoning disabled)
+    - `True` → "high" (back-compat with the old bool toggle)
+    - "low" / "medium" / "high" → returned as-is
+    - dict → "high" (caller's dict will be applied on top by the adapter)
+    """
+    if not reasoning or reasoning == "off":
+        return None
+    if reasoning is True or isinstance(reasoning, dict):
+        return "high"
+    if isinstance(reasoning, str):
+        return reasoning
+    return "high"
+
+
 class LLMAdapter(ABC):
     @abstractmethod
     async def complete(
@@ -47,7 +65,7 @@ class LLMAdapter(ABC):
         model: str | None = None,
         instructions: str | None = None,
         web_search: bool | dict = False,
-        reasoning: bool | dict = False,
+        reasoning: bool | str | dict = False,
     ) -> LLMResponse | None: ...
 
     @abstractmethod
@@ -58,7 +76,7 @@ class LLMAdapter(ABC):
         *,
         model: str | None = None,
         instructions: str | None = None,
-        reasoning: bool | dict = False,
+        reasoning: bool | str | dict = False,
         trace: dict | None = None,
     ) -> T | None:
         """Return a Pydantic instance via provider-native structured output.

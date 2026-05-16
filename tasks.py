@@ -35,6 +35,13 @@ PERIOD_GRACE = timedelta(seconds=60)
 log = logging.getLogger(__name__)
 
 
+def _effective_reasoning(default: str | bool | dict | None, analysis: bool) -> bool | str | dict:
+    """`--analysis` forces reasoning on; otherwise honor the per-spec default."""
+    if analysis:
+        return True
+    return default or False
+
+
 def _merge_feed_state(
     prev_items: list[dict],
     current_items: list[dict],
@@ -176,6 +183,7 @@ async def _summarize_items(
     model: str | None,
     session: aiohttp.ClientSession | None = None,
     *,
+    default_reasoning: str | bool | dict | None = None,
     collector=None,
     analysis: bool = False,
 ) -> list[Item]:
@@ -214,7 +222,7 @@ async def _summarize_items(
                 model=model,
                 language=cfg_by_id[e.id][0],
                 instructions=cfg_by_id[e.id][1],
-                reasoning=analysis,
+                reasoning=_effective_reasoning(default_reasoning, analysis),
                 trace=trace,
             )
         except Exception as exc:
@@ -259,6 +267,7 @@ async def _apply_curate(
     memory_history: list[tuple[str, str]] | None,
     curate_adapter: LLMAdapter | None,
     *,
+    default_reasoning: str | bool | dict | None = None,
     collector=None,
     analysis: bool = False,
 ) -> FilterResult:
@@ -306,7 +315,7 @@ async def _apply_curate(
         memory_history=memory_history,
         adapter=curate_adapter,
         extra_instructions=effective_filter_cfg.get("instructions") or None,
-        reasoning=analysis,
+        reasoning=_effective_reasoning(default_reasoning, analysis),
         trace=filter_trace,
     )
     llm_return = await curate_entries(payload_groups, effective_filter_cfg, model, **_filter_kwargs)
@@ -399,6 +408,7 @@ async def _process_search_task(
     instructions: str | None = None,
     search_model: str | None = None,
     search_adapter: LLMAdapter | None,
+    search_reasoning: str | bool | dict | None = None,
     collector=None,
     analysis: bool = False,
 ) -> dict:
@@ -417,7 +427,7 @@ async def _process_search_task(
             instructions,
             search_model,
             adapter=search_adapter,
-            reasoning=analysis,
+            reasoning=_effective_reasoning(search_reasoning, analysis),
             trace=trace,
         )
         if collector and trace is not None:
@@ -575,6 +585,7 @@ async def _run_summarize_stage(
     task_summarize,
     summarize_adapter: LLMAdapter | None,
     summarize_model: str | None,
+    summarize_reasoning: str | bool | dict | None = None,
     session: aiohttp.ClientSession,
     collector,
     analysis: bool,
@@ -610,6 +621,7 @@ async def _run_summarize_stage(
         summarize_adapter,
         summarize_model,
         session,
+        default_reasoning=summarize_reasoning,
         collector=collector,
         analysis=analysis,
     )
@@ -730,8 +742,10 @@ async def _process_feed_task(
     *,
     curate_model: str | None = None,
     curate_adapter: LLMAdapter | None = None,
+    curate_reasoning: str | bool | dict | None = None,
     summarize_model: str | None = None,
     summarize_adapter: LLMAdapter | None = None,
+    summarize_reasoning: str | bool | dict | None = None,
     global_color: int | None = None,
     global_language: str = "EN-US",
     max_age_seconds: int | None = None,
@@ -802,6 +816,7 @@ async def _process_feed_task(
                 task_summarize=task_summarize,
                 summarize_adapter=summarize_adapter,
                 summarize_model=summarize_model,
+                summarize_reasoning=summarize_reasoning,
                 session=session,
                 collector=collector,
                 analysis=analysis,
@@ -818,6 +833,7 @@ async def _process_feed_task(
                 language,
                 memory_history,
                 curate_adapter,
+                default_reasoning=curate_reasoning,
                 collector=collector,
                 analysis=analysis,
             )

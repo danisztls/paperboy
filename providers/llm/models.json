@@ -1,0 +1,30 @@
+{
+  "openai": {
+    "gpt-5.5": {"thinking": true, "web_search": true},
+    "gpt-5.4": {"thinking": true, "web_search": true},
+    "gpt-5.4-mini": {"thinking": true, "web_search": true},
+    "gpt-5.4-nano": {"thinking": true, "web_search": true}
+  },
+  "gemini": {
+    "gemini-3.1-pro-preview": {"thinking": true, "web_search": true},
+    "gemini-3-flash-preview": {"thinking": true, "web_search": true},
+    "gemini-3.1-flash-lite": {"thinking": true, "web_search": true},
+    "gemini-3.1-flash-lite-preview": {"thinking": true, "web_search": true},
+    "gemini-2.5-pro": {"thinking": true, "web_search": true},
+    "gemini-2.5-flash": {"thinking": true, "web_search": true},
+    "gemini-2.5-flash-lite": {"thinking": true, "web_search": true}
+  },
+  "anthropic": {
+    "claude-opus-4-7": {"thinking": false, "web_search": true},
+    "claude-sonnet-4-6": {"thinking": true, "web_search": true},
+    "claude-haiku-4-5": {"thinking": true, "web_search": true},
+    "claude-opus-4-6": {"thinking": true, "web_search": true, "deprecated": true},
+    "claude-sonnet-4-5": {"thinking": true, "web_search": true, "deprecated": true}
+  },
+  "deepseek": {
+    "deepseek-v4-pro": {"thinking": true, "web_search": false},
+    "deepseek-v4-flash": {"thinking": true, "web_search": false},
+    "deepseek-chat": {"thinking": false, "web_search": false, "deprecated": true},
+    "deepseek-reasoner": {"thinking": true, "web_search": false, "deprecated": true}
+  }
+}

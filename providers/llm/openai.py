@@ -4,12 +4,22 @@ from typing import TypeVar
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ValidationError
 
-from .base import LLMAdapter, LLMResponse, timed_call
+from .base import LLMAdapter, LLMResponse, reasoning_level, timed_call
 
 DEFAULT_MODEL = "gpt-5.4-mini"
 log = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
+
+
+def _reasoning_arg(reasoning: bool | str | dict) -> dict | None:
+    level = reasoning_level(reasoning)
+    if level is None:
+        return None
+    arg: dict = {"effort": level, "summary": "auto"}
+    if isinstance(reasoning, dict):
+        arg.update(reasoning)
+    return arg
 
 
 class OpenAIAdapter(LLMAdapter):
@@ -23,7 +33,7 @@ class OpenAIAdapter(LLMAdapter):
         model: str | None = None,
         instructions: str | None = None,
         web_search: bool | dict = False,
-        reasoning: bool | dict = False,
+        reasoning: bool | str | dict = False,
     ) -> LLMResponse | None:
         _model = model or DEFAULT_MODEL
         tools: list[dict] = []
@@ -32,11 +42,7 @@ class OpenAIAdapter(LLMAdapter):
             if isinstance(web_search, dict):
                 tool.update(web_search)
             tools = [tool]
-        reasoning_arg: dict | None = None
-        if reasoning:
-            reasoning_arg = {"effort": "high", "summary": "auto"}
-            if isinstance(reasoning, dict):
-                reasoning_arg.update(reasoning)
+        reasoning_arg = _reasoning_arg(reasoning)
         response, latency = await timed_call(
             log,
             "OpenAI",
@@ -79,10 +85,11 @@ class OpenAIAdapter(LLMAdapter):
         *,
         model: str | None = None,
         instructions: str | None = None,
-        reasoning: bool | dict = False,
+        reasoning: bool | str | dict = False,
         trace: dict | None = None,
     ) -> T | None:
         _model = model or DEFAULT_MODEL
+        reasoning_arg = _reasoning_arg(reasoning)
         response, latency = await timed_call(
             log,
             "OpenAI",
@@ -91,6 +98,7 @@ class OpenAIAdapter(LLMAdapter):
                 input=prompt,
                 text_format=response_model,
                 **({"instructions": instructions} if instructions else {}),
+                **({"reasoning": reasoning_arg} if reasoning_arg else {}),
             ),
         )
         if response is None:
