@@ -1,14 +1,12 @@
 import logging
-from typing import TYPE_CHECKING, TypeVar
+from typing import TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from .base import LLMAdapter, LLMResponse, timed_call
 
-if TYPE_CHECKING:
-    import instructor
-
 DEFAULT_MODEL = "claude-haiku-4-5"
+TOOL_NAME = "structured_response"
 log = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
@@ -25,14 +23,6 @@ class AnthropicAdapter(LLMAdapter):
         self._client = (
             _anthropic.AsyncAnthropic(api_key=api_key) if api_key else _anthropic.AsyncAnthropic()
         )
-        self._instructor: instructor.AsyncInstructor | None = None
-
-    def _get_instructor(self):
-        if self._instructor is None:
-            import instructor
-
-            self._instructor = instructor.from_anthropic(self._client)
-        return self._instructor
 
     async def complete(
         self,
@@ -105,24 +95,42 @@ class AnthropicAdapter(LLMAdapter):
         trace: dict | None = None,
     ) -> T | None:
         _model = model or DEFAULT_MODEL
-        client = self._get_instructor()
+        tool = {
+            "name": TOOL_NAME,
+            "description": f"Return a {response_model.__name__} object.",
+            "input_schema": response_model.model_json_schema(),
+        }
         kwargs: dict = {
             "model": _model,
             "max_tokens": 16000,
             "messages": [{"role": "user", "content": prompt}],
-            "response_model": response_model,
-            "max_retries": 2,
+            "tools": [tool],
+            "tool_choice": {"type": "tool", "name": TOOL_NAME},
         }
         if instructions:
             kwargs["system"] = instructions
 
-        async def _call():
-            return await client.messages.create_with_completion(**kwargs)
-
-        result, latency = await timed_call(log, "Anthropic", _call)
-        if result is None:
+        message, latency = await timed_call(
+            log, "Anthropic", lambda: self._client.messages.create(**kwargs)
+        )
+        if message is None:
             return None
-        obj, message = result
+        tool_input: dict | None = None
+        for block in message.content:
+            if (
+                getattr(block, "type", None) == "tool_use"
+                and getattr(block, "name", None) == TOOL_NAME
+            ):
+                tool_input = block.input
+                break
+        if tool_input is None:
+            log.warning("Anthropic structured call returned no tool_use block")
+            return None
+        try:
+            parsed = response_model.model_validate(tool_input)
+        except ValidationError as exc:
+            log.warning("Anthropic structured response failed validation: %s", exc)
+            return None
         if trace is not None:
             trace["latency_s"] = latency
             trace["model_used"] = getattr(message, "model", _model)
@@ -130,4 +138,4 @@ class AnthropicAdapter(LLMAdapter):
             if usage:
                 trace["input_tokens"] = getattr(usage, "input_tokens", None)
                 trace["output_tokens"] = getattr(usage, "output_tokens", None)
-        return obj
+        return parsed

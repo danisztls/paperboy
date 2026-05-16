@@ -1,13 +1,10 @@
 import logging
-from typing import TYPE_CHECKING, TypeVar
+from typing import TypeVar
 
 from openai import AsyncOpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from .base import LLMAdapter, LLMResponse, timed_call
-
-if TYPE_CHECKING:
-    import instructor
 
 DEFAULT_MODEL = "gpt-5.4-mini"
 log = logging.getLogger(__name__)
@@ -18,14 +15,6 @@ T = TypeVar("T", bound=BaseModel)
 class OpenAIAdapter(LLMAdapter):
     def __init__(self, api_key: str | None = None) -> None:
         self._client = AsyncOpenAI(api_key=api_key) if api_key else AsyncOpenAI()
-        self._instructor: instructor.AsyncInstructor | None = None
-
-    def _get_instructor(self):
-        if self._instructor is None:
-            import instructor
-
-            self._instructor = instructor.from_openai(self._client, mode=instructor.Mode.TOOLS)
-        return self._instructor
 
     async def complete(
         self,
@@ -94,29 +83,30 @@ class OpenAIAdapter(LLMAdapter):
         trace: dict | None = None,
     ) -> T | None:
         _model = model or DEFAULT_MODEL
-        client = self._get_instructor()
-        messages: list[dict] = []
-        if instructions:
-            messages.append({"role": "system", "content": instructions})
-        messages.append({"role": "user", "content": prompt})
-
-        async def _call():
-            return await client.chat.completions.create_with_completion(
+        response, latency = await timed_call(
+            log,
+            "OpenAI",
+            lambda: self._client.responses.parse(
                 model=_model,
-                messages=messages,
-                response_model=response_model,
-                max_retries=2,
-            )
-
-        result, latency = await timed_call(log, "OpenAI", _call)
-        if result is None:
+                input=prompt,
+                text_format=response_model,
+                **({"instructions": instructions} if instructions else {}),
+            ),
+        )
+        if response is None:
             return None
-        obj, completion = result
+        parsed = getattr(response, "output_parsed", None)
+        if parsed is None:
+            try:
+                parsed = response_model.model_validate_json(response.output_text or "")
+            except ValidationError as exc:
+                log.warning("OpenAI structured response failed validation: %s", exc)
+                return None
         if trace is not None:
             trace["latency_s"] = latency
-            trace["model_used"] = getattr(completion, "model", _model)
-            usage = getattr(completion, "usage", None)
+            trace["model_used"] = getattr(response, "model", _model)
+            usage = getattr(response, "usage", None)
             if usage:
-                trace["input_tokens"] = getattr(usage, "prompt_tokens", None)
-                trace["output_tokens"] = getattr(usage, "completion_tokens", None)
-        return obj
+                trace["input_tokens"] = getattr(usage, "input_tokens", None)
+                trace["output_tokens"] = getattr(usage, "output_tokens", None)
+        return parsed

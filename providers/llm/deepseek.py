@@ -1,14 +1,12 @@
+import json
 import logging
 import os
-from typing import TYPE_CHECKING, TypeVar
+from typing import TypeVar
 
 from openai import AsyncOpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from .base import LLMAdapter, LLMResponse, timed_call
-
-if TYPE_CHECKING:
-    import instructor
 
 DEFAULT_MODEL = "deepseek-v4-flash"
 BASE_URL = "https://api.deepseek.com"
@@ -21,14 +19,6 @@ class DeepSeekAdapter(LLMAdapter):
     def __init__(self, api_key: str | None = None) -> None:
         key = api_key or os.environ.get("DEEPSEEK_API_KEY")
         self._client = AsyncOpenAI(api_key=key, base_url=BASE_URL)
-        self._instructor: instructor.AsyncInstructor | None = None
-
-    def _get_instructor(self):
-        if self._instructor is None:
-            import instructor
-
-            self._instructor = instructor.from_openai(self._client, mode=instructor.Mode.TOOLS)
-        return self._instructor
 
     async def complete(
         self,
@@ -86,33 +76,37 @@ class DeepSeekAdapter(LLMAdapter):
         reasoning: bool | dict = False,
         trace: dict | None = None,
     ) -> T | None:
-        # Thinking mode doesn't accept tool_choice="required" (what instructor.Mode.TOOLS sends);
-        # disable it for structured calls regardless of the configured model.
         _model = model or DEFAULT_MODEL
-        client = self._get_instructor()
-        messages: list[dict] = []
-        if instructions:
-            messages.append({"role": "system", "content": instructions})
-        messages.append({"role": "user", "content": prompt})
-
-        async def _call():
-            return await client.chat.completions.create_with_completion(
+        schema = json.dumps(response_model.model_json_schema(), ensure_ascii=False)
+        schema_note = f"\n\nRespond with JSON matching this schema:\n{schema}"
+        sys_content = (instructions or "") + schema_note
+        messages = [
+            {"role": "system", "content": sys_content},
+            {"role": "user", "content": prompt},
+        ]
+        response, latency = await timed_call(
+            log,
+            "DeepSeek",
+            lambda: self._client.chat.completions.create(
                 model=_model,
                 messages=messages,
-                response_model=response_model,
-                max_retries=2,
+                response_format={"type": "json_object"},
                 extra_body={"thinking": {"type": "disabled"}},
-            )
-
-        result, latency = await timed_call(log, "DeepSeek", _call)
-        if result is None:
+            ),
+        )
+        if response is None:
             return None
-        obj, completion = result
+        text = response.choices[0].message.content or ""
+        try:
+            parsed = response_model.model_validate_json(text)
+        except ValidationError as exc:
+            log.warning("DeepSeek structured response failed validation: %s", exc)
+            return None
         if trace is not None:
             trace["latency_s"] = latency
-            trace["model_used"] = getattr(completion, "model", _model)
-            usage = getattr(completion, "usage", None)
+            trace["model_used"] = getattr(response, "model", _model)
+            usage = getattr(response, "usage", None)
             if usage:
                 trace["input_tokens"] = getattr(usage, "prompt_tokens", None)
                 trace["output_tokens"] = getattr(usage, "completion_tokens", None)
-        return obj
+        return parsed
