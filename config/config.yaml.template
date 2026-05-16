@@ -121,6 +121,23 @@ tasks:
   #         webhook: !secret discord_webhook_imoveis
   #         # color: "#00b894"
 
+  # Weather task: fetches daily forecast from Open-Meteo (no API key required) and posts
+  # a wttr.in-style plain-text report to Discord. Detected by pull containing a weather item.
+  # Must have at least one discord push target.
+  # - name: weather
+  #   period: 1d
+  #   pull:
+  #     - weather:
+  #         latitude: -23.55
+  #         longitude: -46.63
+  #         location_name: "São Paulo, SP"
+  #         timezone: "America/Sao_Paulo"
+  #         uv_warn_threshold: 6   # optional — UV index considered unsafe (default: 6)
+  #         forecast_days: 5       # optional — days including today (default: 5)
+  #   push:
+  #     - discord:
+  #         webhook: !secret discord_webhook_weather
+
   # Search task: calls an LLM with web search and posts the plain-text response to Discord.
   # Detected by pull containing a search item. Web search is always on.
   - name: world-news

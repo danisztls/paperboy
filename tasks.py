@@ -5,7 +5,14 @@ from datetime import UTC, datetime, timedelta
 
 import aiohttp
 
-from config import get_discord_cfg, get_feeds, get_file_path, parse_color, task_kind
+from config import (
+    get_discord_cfg,
+    get_feeds,
+    get_file_path,
+    get_weather_cfg,
+    parse_color,
+    task_kind,
+)
 from pipeline import Citation, FilterResult, Item, MemoryParagraph, PushContext
 from process.curate import curate_entries
 from process.summarize import _YOUTUBE_RE, fetch_item_content, summarize_entry
@@ -13,6 +20,7 @@ from providers.llm.base import LLMAdapter
 from pull.feed import RSSSource
 from pull.scraper import ScraperSource
 from pull.search import run_search_task
+from pull.weather import WeatherSource
 from push.discord import (
     DiscordDigestTarget,
     DiscordEmbedTarget,
@@ -453,6 +461,47 @@ async def _process_search_task(
 
         if collector:
             collector.record_push(len(new_items))
+        return {name: {"last_run": datetime.now(UTC).replace(microsecond=0).isoformat()}}
+    finally:
+        if collector:
+            collector.finish_task()
+
+
+async def _process_weather_task(
+    task_cfg: dict,
+    state: dict,
+    session: aiohttp.ClientSession,
+    *,
+    collector=None,
+    analysis: bool = False,
+) -> dict:
+    """Fetch Open-Meteo forecast, post as plain text. Returns {name: task_state} or {}."""
+    name = task_cfg["name"]
+    if collector:
+        collector.begin_task(name, "weather")
+    try:
+        weather_cfg = get_weather_cfg(task_cfg)
+        result = await WeatherSource().pull(weather_cfg, set(), session)
+        if result is None or not result.new_items:
+            return {}
+
+        if analysis:
+            if collector:
+                collector.record_push(len(result.new_items))
+            return {}
+
+        ctx = PushContext(items=result.new_items)
+        try:
+            await DiscordTextTarget().push(ctx, task_cfg, session)
+        except Exception:
+            log.error("Skipping weather task %s due to post failure", name)
+            return {}
+
+        if get_file_path(task_cfg):
+            await FileEmbedTarget().push(ctx, task_cfg, session)
+
+        if collector:
+            collector.record_push(len(result.new_items))
         return {name: {"last_run": datetime.now(UTC).replace(microsecond=0).isoformat()}}
     finally:
         if collector:

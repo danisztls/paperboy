@@ -40,6 +40,8 @@ def task_kind(task_cfg: dict) -> str:
         return "scraper"
     if any("search" in item for item in pull):
         return "search"
+    if any("weather" in item for item in pull):
+        return "weather"
     return "feeds"
 
 
@@ -53,6 +55,10 @@ def get_discord_cfg(task_cfg: dict) -> dict:
 
 def get_search_cfg(task_cfg: dict) -> dict:
     return next((item["search"] for item in task_cfg.get("pull", []) if "search" in item), {})
+
+
+def get_weather_cfg(task_cfg: dict) -> dict:
+    return next((item["weather"] for item in task_cfg.get("pull", []) if "weather" in item), {})
 
 
 def _get_scraper_cfg(task_cfg: dict) -> dict:
@@ -311,18 +317,31 @@ class _PullScraperItem(BaseModel):
     max_items: int | None = None
 
 
+class _PullWeatherItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    latitude: float
+    longitude: float
+    location_name: str
+    timezone: str
+    uv_warn_threshold: int = 6
+    forecast_days: int = 5
+
+
 class _PullItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     feed: _PullFeedItem | None = None
     search: _PullSearchItem | None = None
     scraper: _PullScraperItem | None = None
+    weather: _PullWeatherItem | None = None
 
     @model_validator(mode="after")
     def _exactly_one(self):
-        present = [k for k in ("feed", "search", "scraper") if k in self.model_fields_set]
+        present = [
+            k for k in ("feed", "search", "scraper", "weather") if k in self.model_fields_set
+        ]
         if len(present) != 1:
             raise ValueError(
-                "each pull item must have exactly one key: 'feed', 'search', or 'scraper'"
+                "each pull item must have exactly one key: 'feed', 'search', 'scraper', or 'weather'"
             )
         return self
 
@@ -359,7 +378,7 @@ class _TaskCurate(BaseModel):
 class _Task(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str
-    kind: Literal["digest", "scraper"] | None = None
+    kind: Literal["digest", "scraper", "weather"] | None = None
     period: _Period = None
     pull: list[_PullItem]
     push: list[_PushItem]
@@ -373,6 +392,7 @@ class _Task(BaseModel):
         has_search_pull = any(item.search is not None for item in self.pull)
         has_feed_pull = any(item.feed is not None for item in self.pull)
         has_scraper_pull = any(item.scraper is not None for item in self.pull)
+        has_weather_pull = any(item.weather is not None for item in self.pull)
         has_discord_push = any(item.discord is not None for item in self.push)
         has_file_push = any(item.file is not None for item in self.push)
         if not (has_discord_push or has_file_push):
@@ -383,6 +403,10 @@ class _Task(BaseModel):
             raise ValueError("pull can have at most one scraper item")
         if has_search_pull and has_feed_pull:
             raise ValueError("pull cannot mix feed and search items")
+        if has_weather_pull and (has_feed_pull or has_search_pull or has_scraper_pull):
+            raise ValueError("pull cannot mix weather with other pull types")
+        if has_weather_pull and sum(1 for item in self.pull if item.weather is not None) > 1:
+            raise ValueError("pull can have at most one weather item")
         return self
 
 

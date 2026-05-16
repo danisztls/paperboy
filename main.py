@@ -37,6 +37,7 @@ from tasks import (
     _process_feed_task,
     _process_scraper_task,
     _process_search_task,
+    _process_weather_task,
 )
 
 
@@ -349,6 +350,22 @@ async def _async_main(args: argparse.Namespace) -> None:
                         continue
                     feed_tasks.append(
                         _process_scraper_task(task_cfg, state, session, global_color=global_color)
+                    )
+                elif kind == "weather":
+                    if (
+                        not force_task
+                        and not analysis
+                        and not _check_due_or_skip(name, task_state.get("last_run"), period, now)
+                    ):
+                        continue
+                    feed_tasks.append(
+                        _process_weather_task(
+                            task_cfg,
+                            state,
+                            session,
+                            collector=collector,
+                            analysis=analysis,
+                        )
                     )
                 else:
                     feeds_state = task_state.get("feeds", {})

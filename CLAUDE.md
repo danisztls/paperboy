@@ -9,6 +9,7 @@ A personal notifier that posts to Discord webhooks on a cron schedule. Supports 
 - **Digest tasks**: like RSS tasks but all passing entries are collected and posted as a single text message (splits on 2000-char limit). No OG image fetching. Uses `[Title](<url>)` to suppress Discord link previews.
 - **Scraper tasks**: browser-based extraction from JavaScript-heavy sites via Camoufox (hardened Firefox, drop-in Playwright API); posts new listings as Discord embeds. One-time setup: `uv run camoufox fetch` to download the ~700MB browser binary.
 - **Search tasks**: calls a configurable LLM (OpenAI or Gemini) with a prompt + web search, posts the plain-text response. Good for scheduled digests ("today's news, filter for signal > noise").
+- **Weather tasks**: fetches the daily forecast from Open-Meteo (no API key) and posts a `wttr.in`-style plain-text report with emoji: today's min/max/avg, apparent-temperature hourly curve, unsafe UV window, rain mm + probability; followed by compact per-day lines for upcoming days. Detected by `pull` containing a `weather` item. Must have a Discord push target.
 
 Each task can push to any combination of targets. Supported targets: `discord` (webhook), `file` (local markdown file).
 
@@ -108,6 +109,7 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
   - `ScraperSource(Source)` — launches a headless Camoufox browser, delegates to a site adapter, returns new listings as `Item`s. Camoufox manages the fingerprint itself — adapters must not set a custom User-Agent.
 - `pull/scrapers/base.py` — `SiteAdapter` ABC and the `@register_adapter` decorator-based registry (`get_adapter`, `available_adapters`).
 - `pull/scrapers/vivareal.py` — `VivaRealAdapter`: parses property listings from VivaReal search pages.
+- `pull/weather.py` — `WeatherSource(Source)`: fetches Open-Meteo forecast JSON (no auth), formats a wttr.in-style plain-text message into `Item.body`, returns a single `Item`. Helpers: `_format_message`, `_format_today` (header + daily summary + hourly rows at 6/9/12/15/18/21h), `_format_forecast` (one compact line per upcoming day), `_uv_window` (first contiguous hourly block ≥ threshold), `_wmo_emoji` (WMO code → emoji), `_uv_label` (PT-BR label by index value), `_build_url`. Uses `zoneinfo.ZoneInfo` (stdlib) for local-time alignment; no new dependencies.
 
 #### `push/` — target implementations
 
