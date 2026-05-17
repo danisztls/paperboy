@@ -138,6 +138,21 @@ def _pack(units: list[str], sep: str, limit: int) -> list[str]:
     return chunks
 
 
+def _split_themes(memory: list[MemoryParagraph]) -> list[list[MemoryParagraph]]:
+    """Group paragraphs by section. A new theme starts at each paragraph with `section` set;
+    paragraphs without `section` belong to the current theme (or a leading sectionless group)."""
+    themes: list[list[MemoryParagraph]] = []
+    current: list[MemoryParagraph] = []
+    for para in memory:
+        if para.section and current:
+            themes.append(current)
+            current = []
+        current.append(para)
+    if current:
+        themes.append(current)
+    return themes
+
+
 def _build_digest_chunks(
     memory: list[MemoryParagraph] | None,
     cite_map: dict[int, Citation] | None = None,
@@ -173,11 +188,13 @@ async def post_digest_to_discord(
 ) -> None:
     if not memory:
         return
-    chunks = _build_digest_chunks(memory, cite_map)
-    for i, chunk in enumerate(chunks):
-        if i:
-            await asyncio.sleep(1)
-        await post_text_to_discord(webhook_url, chunk, session)
+    first = True
+    for theme in _split_themes(memory):
+        for chunk in _build_digest_chunks(theme, cite_map):
+            if not first:
+                await asyncio.sleep(1)
+            await post_text_to_discord(webhook_url, chunk, session)
+            first = False
 
 
 async def post_to_discord(
