@@ -48,7 +48,11 @@ tasks:
   # RSS task: fetches feeds and posts new entries as Discord embeds.
   - name: my-feeds
     # Minimum time between processing this task's feeds. Default: 1h.
-    # Requires a suffix: "30m", "6h", "1d".
+    # Suffix decides the comparison kind:
+    #   "30m"/"6h" — sliding-window duration since last run.
+    #   "1d"/"1w"  — calendar-aligned: fires on the next sweep after the local
+    #                date / ISO week has advanced. Use these for "once daily,
+    #                as early as the cron tick allows".
     period: 1h
     # kind: digest           # posts a single digest message instead of individual embeds; affects LLM processing
     # curate:                # optional — LLM pre-post filter applied to all feeds in this task

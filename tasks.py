@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import aiohttp
 
 from config import (
+    Period,
     get_discord_cfg,
     get_feeds,
     get_file_path,
@@ -30,7 +31,7 @@ from push.discord import (
 )
 from push.file import FileDigestTarget, FileEmbedTarget
 
-DEFAULT_PERIOD = timedelta(hours=1)
+DEFAULT_PERIOD = Period(count=1, unit="h")
 PERIOD_GRACE = timedelta(seconds=60)
 
 log = logging.getLogger(__name__)
@@ -112,7 +113,7 @@ def _merge_filter(task_f: dict, feed_f: dict) -> dict:
     return merged
 
 
-def _is_due(feed_state: dict, period: timedelta, now: datetime) -> bool:
+def _is_due(feed_state: dict, period: Period, now: datetime) -> bool:
     last_run = feed_state.get("last_run")
     if not last_run:
         return True
@@ -120,7 +121,16 @@ def _is_due(feed_state: dict, period: timedelta, now: datetime) -> bool:
         last = datetime.fromisoformat(last_run)
     except ValueError:
         return True
-    return (now - last) >= period - PERIOD_GRACE
+    if not period.is_calendar:
+        return (now - last) >= period.as_timedelta() - PERIOD_GRACE
+    last_local = last.astimezone().date()
+    now_local = now.astimezone().date()
+    if period.unit == "d":
+        return (now_local - last_local).days >= period.count
+    # period.unit == "w" — ISO week, Monday-anchored
+    ly, lw, _ = last_local.isocalendar()
+    ny, nw, _ = now_local.isocalendar()
+    return (ny * 53 + nw) - (ly * 53 + lw) >= period.count
 
 
 async def _pull_feeds(

@@ -2,6 +2,7 @@ import json
 import logging
 import pathlib
 import re
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import Annotated, Any, Literal
 
@@ -10,7 +11,30 @@ from pydantic.functional_validators import AfterValidator, BeforeValidator
 
 log = logging.getLogger(__name__)
 
-_PERIOD_UNITS = {"m": "minutes", "h": "hours", "d": "days"}
+_DURATION_UNITS = {"m": "minutes", "h": "hours"}
+_CALENDAR_UNITS = ("d", "w")
+
+
+@dataclass(frozen=True)
+class Period:
+    """A polling period. Unit decides comparison kind: m/h are sliding-window
+    durations; d/w align to local calendar days/ISO weeks."""
+
+    count: float
+    unit: Literal["m", "h", "d", "w"]
+
+    @property
+    def is_calendar(self) -> bool:
+        return self.unit in _CALENDAR_UNITS
+
+    def as_timedelta(self) -> timedelta:
+        if self.is_calendar:
+            raise ValueError(f"{self} has no fixed duration; use calendar arithmetic")
+        return timedelta(**{_DURATION_UNITS[self.unit]: self.count})
+
+    def __str__(self) -> str:
+        n = int(self.count) if float(self.count).is_integer() else self.count
+        return f"{n}{self.unit}"
 
 
 def parse_color(value) -> int | None:
@@ -24,14 +48,21 @@ def parse_color(value) -> int | None:
     return None
 
 
-def parse_period(value) -> timedelta:
+def parse_period(value) -> Period:
     s = str(value).strip() if not isinstance(value, str) else value.strip()
     if not s:
         raise ValueError("empty period")
     suffix = s[-1].lower()
-    if suffix not in _PERIOD_UNITS:
-        raise ValueError(f"missing suffix in {value!r} — use e.g. '30m', '6h', '1d'")
-    return timedelta(**{_PERIOD_UNITS[suffix]: float(s[:-1])})
+    if suffix not in _DURATION_UNITS and suffix not in _CALENDAR_UNITS:
+        raise ValueError(f"missing suffix in {value!r} — use e.g. '30m', '6h', '1d', '1w'")
+    raw = float(s[:-1])
+    if suffix in _CALENDAR_UNITS:
+        if not raw.is_integer() or raw <= 0:
+            raise ValueError(
+                f"calendar period {value!r} must be a positive integer count of '{suffix}'"
+            )
+        return Period(count=int(raw), unit=suffix)
+    return Period(count=raw, unit=suffix)
 
 
 def task_kind(task_cfg: dict) -> str:
@@ -131,7 +162,7 @@ def _period_validator(v):
         try:
             parse_period(v)
         except ValueError, TypeError:
-            raise ValueError(f"invalid value {v!r} — expected e.g. '30m', '6h', '1d'")
+            raise ValueError(f"invalid value {v!r} — expected e.g. '30m', '6h', '1d', '1w'")
     return v
 
 
