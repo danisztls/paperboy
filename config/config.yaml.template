@@ -108,7 +108,7 @@ tasks:
   # and posted as a single text message (splits into multiple if the 2000-char limit is hit).
   # No OG image fetching. URLs use [Title](<url>) to suppress Discord link previews.
   # - name: my-digest
-  #   type: digest
+  #   kind: digest
   #   period: 24h
   #   curate:
   #     criteria: "Only keep items about AI and machine learning"
