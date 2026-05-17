@@ -123,6 +123,17 @@ def _merge_task_results(state: dict, results: list) -> None:
                     tasks_state[task_name] = task_state
 
 
+def _humanize_minutes(mins: int) -> str:
+    if mins < 60:
+        return f"{mins}m"
+    if mins < 1440:
+        h, m = divmod(mins, 60)
+        return f"{h}h {m}m" if m else f"{h}h"
+    d, rem = divmod(mins, 1440)
+    h = rem // 60
+    return f"{d}d {h}h" if h else f"{d}d"
+
+
 def _check_due_or_skip(name: str, last_run: str | None, period: Period, now: datetime) -> bool:
     """True if the task is due. Otherwise log a skip message and return False."""
     if _is_due({"last_run": last_run}, period, now):
@@ -130,7 +141,12 @@ def _check_due_or_skip(name: str, last_run: str | None, period: Period, now: dat
     if last_run:
         last = datetime.fromisoformat(last_run)
         mins = int((now - last).total_seconds() // 60)
-        log.info("[%s] Skipping — last run %d min ago, period is %s", name, mins, period)
+        log.info(
+            "[%s] Skipping — last run %s ago, period is %s",
+            name,
+            _humanize_minutes(mins),
+            period,
+        )
     return False
 
 
