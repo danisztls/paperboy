@@ -76,7 +76,7 @@ async def test_digest_cite_map(mock_http, fake_adapter, tmp_path):
 
 
 async def test_digest_sections(mock_http, fake_adapter, tmp_path):
-    """Section headings in structured memory render as **bold** in Discord (glued to their
+    """Section headings in structured memory render as ## in Discord (glued to their
     paragraph) and as ### in the file. A heading is never orphaned into a separate chunk."""
     mock_http.get(FEED_URL, body=load_fixture("feed_basic.xml"))
     article_html = load_fixture("article_basic.html")
@@ -124,5 +124,5 @@ async def test_digest_sections(mock_http, fake_adapter, tmp_path):
         call for key, calls in mock_http.requests.items() if key[0] == "POST" for call in calls
     ]
     contents = [json.loads(call.kwargs["data"].decode())["content"] for call in post_calls]
-    assert any("**Brasil**\n\n" in c and "Cat update." in c for c in contents)
-    assert any("**Geopolítica**\n\n" in c and "Quantum advance." in c for c in contents)
+    assert any("## Brasil\n\n" in c and "Cat update." in c for c in contents)
+    assert any("## Geopolítica\n\n" in c and "Quantum advance." in c for c in contents)
