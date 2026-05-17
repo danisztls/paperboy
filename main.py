@@ -9,11 +9,12 @@ import os
 import pathlib
 import sys
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import aiohttp
 
 from config import (
+    Period,
     get_api_key_for_provider,
     get_discord_cfg,
     get_feeds,
@@ -122,7 +123,7 @@ def _merge_task_results(state: dict, results: list) -> None:
                     tasks_state[task_name] = task_state
 
 
-def _check_due_or_skip(name: str, last_run: str | None, period: timedelta, now: datetime) -> bool:
+def _check_due_or_skip(name: str, last_run: str | None, period: Period, now: datetime) -> bool:
     """True if the task is due. Otherwise log a skip message and return False."""
     if _is_due({"last_run": last_run}, period, now):
         return True
