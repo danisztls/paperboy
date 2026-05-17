@@ -208,8 +208,8 @@ def print_stats(config: dict, state: dict) -> None:
                     f"  [dim]↳[/dim] [dim]{escape(display)}[/dim]",
                     "",
                     "",
-                    _format_last(fs.get("last_run"), now),
-                    _format_next(fs.get("last_run"), period, now),
+                    "",
+                    "",
                     _format_count(items, curated),
                 )
         elif kind == "scraper":
