@@ -153,6 +153,26 @@ tasks:
   #         webhook: !secret discord_webhook_weather
   #         wrap: false        # recommended — weather lines are intentionally long
 
+  # Weather (smart): signal-only variant. Today: apparent min/max, dangerous UV window,
+  # rain window if significant. Upcoming days: only days with significant rain OR an
+  # apparent-temp / humidity anomaly vs the location's climate normal for the current
+  # calendar month (fetched once/month from Open-Meteo Archive, cached in state under
+  # tasks.<name>.climate). On archive failure, falls back to forecast-window mean.
+  # - name: weather-smart
+  #   period: 1d
+  #   pull:
+  #     - weather:
+  #         kind: smart            # smart-mode formatter; omit for verbose wttr.in-style output
+  #         latitude: -23.55
+  #         longitude: -46.63
+  #         location_name: "São Paulo, SP"
+  #         timezone: "America/Sao_Paulo"
+  #         uv_warn_threshold: 6
+  #         forecast_days: 7
+  #   push:
+  #     - discord:
+  #         webhook: !secret discord_webhook_weather
+
   # Search task: calls an LLM with web search and posts the plain-text response to Discord.
   # Detected by pull containing a search item. Web search is always on.
   - name: world-news
