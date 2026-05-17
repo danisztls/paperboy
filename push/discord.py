@@ -168,7 +168,7 @@ def _build_digest_chunks(
             continue
         rendered = _render_paragraph(para, cite_map)
         if para.section:
-            rendered = f"**{para.section}**\n\n{rendered}"
+            rendered = f"## {para.section}\n\n{rendered}"
         if len(rendered) <= _CONTENT_LIMIT:
             units.append(rendered)
             continue
@@ -296,7 +296,7 @@ class DiscordMarkdownTarget(Target):
         for i, item in enumerate(items):
             title_part = f"[{item.title}](<{item.url}>)" if item.url else item.title
             source_part = f" [{item.source}]" if item.source else ""
-            header = f"## {title_part}{source_part}"
+            header = f"### {title_part}{source_part}"
             body = item.body or ""
             text = f"{header}\n{body}" if body else header
             try:
