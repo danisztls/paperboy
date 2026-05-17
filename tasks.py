@@ -2,6 +2,7 @@ import asyncio
 import logging
 from dataclasses import replace as dc_replace
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
@@ -20,7 +21,7 @@ from providers.llm.base import LLMAdapter
 from pull.feed import RSSSource
 from pull.scraper import ScraperSource
 from pull.search import run_search_task
-from pull.weather import WeatherSource
+from pull.weather import WeatherSource, _climate_cache_fresh, fetch_climate_normals
 from push.discord import (
     DiscordDigestTarget,
     DiscordEmbedTarget,
@@ -490,7 +491,19 @@ async def _process_weather_task(
     if collector:
         collector.begin_task(name, "weather")
     try:
-        weather_cfg = get_weather_cfg(task_cfg)
+        weather_cfg = dict(get_weather_cfg(task_cfg))
+
+        fresh_climate: dict | None = None
+        if weather_cfg.get("kind") == "smart":
+            tz = ZoneInfo(weather_cfg["timezone"])
+            now_local = datetime.now(tz)
+            cache = state.get("tasks", {}).get(name, {}).get("climate")
+            if _climate_cache_fresh(cache, now_local):
+                weather_cfg["_climate_normals"] = cache
+            else:
+                fresh_climate = await fetch_climate_normals(weather_cfg, session)
+                weather_cfg["_climate_normals"] = fresh_climate or cache
+
         result = await WeatherSource().pull(weather_cfg, set(), session)
         if result is None or not result.new_items:
             return {}
@@ -512,7 +525,10 @@ async def _process_weather_task(
 
         if collector:
             collector.record_push(len(result.new_items))
-        return {name: {"last_run": datetime.now(UTC).replace(microsecond=0).isoformat()}}
+        task_state = {"last_run": datetime.now(UTC).replace(microsecond=0).isoformat()}
+        if fresh_climate is not None:
+            task_state["climate"] = fresh_climate
+        return {name: task_state}
     finally:
         if collector:
             collector.finish_task()

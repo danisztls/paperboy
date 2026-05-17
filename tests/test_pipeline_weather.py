@@ -100,7 +100,7 @@ async def test_weather_happy_path(mock_http):
     assert result["test-weather"]["last_run"]
 
     body = _get_posted_body(mock_http)
-    assert body.startswith("\n")
+    assert body.startswith("​\n")
     assert "### " in body
     assert "Baixo Guandu" in body
     assert "**Próximos dias**" in body

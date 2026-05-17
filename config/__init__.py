@@ -359,6 +359,7 @@ class _PullWeatherItem(BaseModel):
     timezone: str
     uv_warn_threshold: int = 6
     forecast_days: int = 7
+    kind: Literal["smart"] | None = None
 
 
 class _PullItem(BaseModel):

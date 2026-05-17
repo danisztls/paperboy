@@ -9,7 +9,7 @@ A personal notifier that posts to Discord webhooks on a cron schedule. Supports 
 - **Digest tasks**: like RSS tasks but all passing entries are collected and posted as a single text message (splits on 2000-char limit). No OG image fetching. Uses `[Title](<url>)` to suppress Discord link previews.
 - **Scraper tasks**: browser-based extraction from JavaScript-heavy sites via Camoufox (hardened Firefox, drop-in Playwright API); posts new listings as Discord embeds. One-time setup: `uv run camoufox fetch` to download the ~700MB browser binary.
 - **Search tasks**: calls a configurable LLM (OpenAI or Gemini) with a prompt + web search, posts the plain-text response. Good for scheduled digests ("today's news, filter for signal > noise").
-- **Weather tasks**: fetches the daily forecast from Open-Meteo (no API key) and posts a `wttr.in`-style plain-text report with emoji: today's min/max/avg, apparent-temperature hourly curve, unsafe UV window, rain mm + probability; followed by compact per-day lines for upcoming days. Detected by `pull` containing a `weather` item. Must have a Discord push target.
+- **Weather tasks**: fetches the daily forecast from Open-Meteo (no API key) and posts a `wttr.in`-style plain-text report with emoji: today's min/max/avg, apparent-temperature hourly curve, unsafe UV window, rain mm + probability; followed by compact per-day lines for upcoming days. Detected by `pull` containing a `weather` item. Must have a Discord push target. Setting `kind: smart` inside the `weather:` block switches to a signal-only variant: today shows only apparent min/max + dangerous UV window + rain window when significant; upcoming days show only those with significant rain or an apparent-temp / humidity anomaly. Anomaly triggers are σ-based with OR semantics: a day fires if its value is ≥2σ off the calendar-month climate normal (5-year ERA5 window, cached) OR ≥1σ off the past-7-days mean (computed each run from the forecast response's `past_days=7` block).
 
 Each task can push to any combination of targets. Supported targets: `discord` (webhook), `file` (local markdown file).
 
@@ -109,7 +109,14 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
   - `ScraperSource(Source)` — launches a headless Camoufox browser, delegates to a site adapter, returns new listings as `Item`s. Camoufox manages the fingerprint itself — adapters must not set a custom User-Agent.
 - `pull/scrapers/base.py` — `SiteAdapter` ABC and the `@register_adapter` decorator-based registry (`get_adapter`, `available_adapters`).
 - `pull/scrapers/vivareal.py` — `VivaRealAdapter`: parses property listings from VivaReal search pages.
-- `pull/weather.py` — `WeatherSource(Source)`: fetches Open-Meteo forecast JSON (no auth), formats a wttr.in-style plain-text message into `Item.body`, returns a single `Item`. Helpers: `_format_message`, `_format_today` (header + daily summary + hourly rows at 6/9/12/15/18/21h), `_format_forecast` (one compact line per upcoming day), `_uv_window` (first contiguous hourly block ≥ threshold), `_wmo_emoji` (WMO code → emoji), `_uv_label` (PT-BR label by index value), `_build_url`. Uses `zoneinfo.ZoneInfo` (stdlib) for local-time alignment; no new dependencies.
+- `pull/weather.py` — `WeatherSource(Source)`: fetches Open-Meteo forecast JSON (no auth), formats a plain-text message into `Item.body`, returns a single `Item`. The forecast URL passes `past_days=7` so each response includes the last 7 days of actuals — the smart-mode practical baseline rides on the same HTTP call as the forecast. Two formatters branched by `cfg["kind"]`:
+  - Verbose (default) — `_format_message` → `_format_today` (header + daily summary + hourly rows at 5/7/9…23h) + `_format_forecast` (one compact line per upcoming day).
+  - Smart (`kind: smart`) — `_format_smart_message` → `_format_smart_today` (header + apparent min/max + conditional UV window + conditional rain window + conditional comfort windows via `_comfort_windows`) + `_format_smart_forecast`. Each upcoming day fires only if rain crosses fixed thresholds OR an apparent-temp / humidity anomaly fires. Anomaly = `_evaluate_anomaly(value, hist, recent)` checks two frames with OR semantics: hist (climate normals — `SIGMA_HIST` σ) and recent (past 7 days — `SIGMA_RECENT` σ). The stronger frame is rendered via `_render_anomaly_suffix` as e.g. `(+5° vs normal 28°)` (hist) or `(+3° vs semana 30°)` (recent). σ-multipliers drive the decision but are intentionally omitted from the rendered line to keep it scannable. If both baselines are unavailable, the anomaly section is silently skipped (rain may still emit).
+  - Baseline helpers: `_baseline_from_normals(normals)` extracts `(μ, σ)` per metric from the cache; `_recent_baseline(daily, hourly, day_idx)` computes `(μ, σ)` over the 7 daily indices before today using `statistics.fmean` / `statistics.stdev`. Both return `dict[metric, (μ, σ) | None]` — `None` when fewer than `RECENT_MIN_SAMPLES` valid values are available or required cache keys are missing.
+  - Climate fetch: `fetch_climate_normals(cfg, session)` hits the Open-Meteo Archive (5-year ERA5 window for the current calendar month) and stores both μ and σ for each metric. `_climate_cache_fresh(cache, now_local)` requires `cache["month"]` to match the current local month **and** `apparent_max_std` to be present — old σ-less caches are silently treated as stale, forcing a refetch.
+  - Shared helpers: `_uv_window`, `_rain_window` (mirrors UV — first contiguous hourly block ≥ threshold; rain scans all 24h for tighter resolution), `_daily_humidity_mean`, `_wmo_emoji`, `_uv_label`, `_pick_apparent_anomaly` (renders the line for whichever of apparent_max/min has the largest combined σ-magnitude — `_decision_magnitude` — with the máx/mín qualifier preserved), `_build_url`.
+  - Threshold constants (module-level): `RAIN_TODAY_PROB_MIN`, `RAIN_TODAY_MM_MIN`, `RAIN_NEXT_PROB_MIN`, `RAIN_NEXT_MM_MIN`, `SIGMA_HIST` (2.0), `SIGMA_RECENT` (1.0), `SIGMA_FLOOR` (0.1, avoids divide-by-near-zero), `RECENT_MIN_SAMPLES` (4), `CLIMATE_NORMAL_YEARS` (5). Not exposed via config yet.
+  - State cache: `tasks.py:_process_weather_task` reads `state["tasks"][name]["climate"]` and passes it to `WeatherSource.pull()` via `cfg["_climate_normals"]`. If the cache's `month` field doesn't match the current local-time month or the `*_std` keys are absent, a fresh fetch is attempted and included in the returned task state slice. Uses `zoneinfo.ZoneInfo` (stdlib); no new dependencies.
 
 #### `push/` — target implementations
 
@@ -172,6 +179,19 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
     },
     "world-news": {
       "last_run": "<iso8601 utc>"
+    },
+    "weather-smart": {
+      "last_run": "<iso8601 utc>",
+      "climate": {
+        "month": "2026-05",
+        "fetched_at": "<iso8601 utc>",
+        "apparent_max_mean": 27.4,
+        "apparent_max_std": 2.1,
+        "apparent_min_mean": 17.8,
+        "apparent_min_std": 1.8,
+        "humidity_mean": 72.0,
+        "humidity_std": 8.0
+      }
     }
   }
 }
@@ -179,6 +199,7 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
 
 - `feeds` sub-dict holds per-URL state. Each entry has a `name` (resolved feed title from cfg → feed `<title>` → url), `items`, and `last_run`. Each successful fetch replaces `items` with the feed's current entries (bounded by feed length). `first_seen` is stamped when an item is first seen by claudinho and carried forward; `source_date` is the entry's original pubDate from the feed (when present). `filter_pass` and `filter_reason` are only present on items from tasks with a `curate` key.
 - `memory` is only present on curated RSS/digest tasks. Each run appends one entry keyed by ISO8601 timestamp; history is capped at 20 entries (oldest evicted). The LLM receives the last 5 entries as context on each run.
+- `climate` is only present on `kind: smart` weather tasks. Holds the monthly climate-normal cache: mean and sample standard deviation for apparent max/min and daily-mean humidity over the current calendar month across the last `CLIMATE_NORMAL_YEARS` years. Written when first fetched and refreshed at month rollover. No migration is required — pre-σ caches written before the σ rollout are silently treated as stale (`apparent_max_std` absent) and force a single refetch on the next run.
 - Search tasks store only `last_run` directly under the task name key.
 - `load_state` returns the parsed JSON as-is; absent or `null` `last_run` always means "due now".
 - `_last_clean` (top-level) is reserved as a meta key (recognized by `state/migrate.py`) and appears in the template, but no code path currently writes it.
