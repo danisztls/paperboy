@@ -32,6 +32,7 @@ from providers.llm import FallbackAdapter, get_adapter
 from pull.feed import RSSSource
 from state import _auto_clean, _remove_unknown, load_state, save_state
 from state.migrate import CURRENT_VERSION, migrate, needs_migration
+from stats import _humanize_minutes, print_stats
 from tasks import (
     DEFAULT_PERIOD,
     _is_due,
@@ -121,17 +122,6 @@ def _merge_task_results(state: dict, results: list) -> None:
                     tasks_state[task_name] = {**tasks_state[task_name], **task_state}
                 else:
                     tasks_state[task_name] = task_state
-
-
-def _humanize_minutes(mins: int) -> str:
-    if mins < 60:
-        return f"{mins}m"
-    if mins < 1440:
-        h, m = divmod(mins, 60)
-        return f"{h}h {m}m" if m else f"{h}h"
-    d, rem = divmod(mins, 1440)
-    h = rem // 60
-    return f"{d}d {h}h" if h else f"{d}d"
 
 
 def _check_due_or_skip(name: str, last_run: str | None, period: Period, now: datetime) -> bool:
@@ -502,6 +492,11 @@ def main():
         help="Validate the config file and exit",
     )
     mode.add_argument(
+        "--stats",
+        action="store_true",
+        help="Print a rich-formatted summary of state.json (last_run, next_run, item counts) and exit",
+    )
+    mode.add_argument(
         "--summarize",
         metavar="URL",
         help="Fetch transcript from a YouTube video and print a summary to stdout",
@@ -574,6 +569,25 @@ def main():
                 log.error("Config error: %s", err)
             sys.exit(1)
         log.info("Config is valid: %s", config_path)
+        return
+
+    if args.stats:
+        config_path = (
+            _xdg_config_path()
+            if args.config is None
+            else pathlib.Path(args.config).expanduser().resolve()
+        )
+        if not config_path.exists():
+            log.error("Config file not found: %s", config_path)
+            sys.exit(1)
+        state_path = (
+            pathlib.Path(args.state).expanduser().resolve()
+            if args.state
+            else (_xdg_state_path() if args.config is None else config_path.parent / "state.json")
+        )
+        config = load_config(config_path)
+        state = load_state(state_path)
+        print_stats(config, state)
         return
 
     if args.replay:

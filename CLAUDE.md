@@ -26,6 +26,7 @@ The project uses `uv` (see `uv.lock`, `.python-version` pinning Python 3.14).
 - Validate config and exit: `uv run main.py --validate`
 - Migrate state to current schema version: `uv run main.py --migrate`
 - Clean stale state entries and exit: `uv run main.py --clean`
+- Print a rich-formatted summary of state.json (last_run, next_run, item counts per task and per source): `uv run main.py --stats`
 - Summarize a YouTube video to stdout: `uv run main.py --summarize <url>`
 - Sync deps: `uv sync`
 - Format: `uv run ruff format .`
@@ -48,7 +49,7 @@ Eval traces (every LLM call's prompt, response, tokens, latency, optional reason
 
 ## Architecture
 
-Three root modules (`main.py`, `tasks.py`, `pipeline.py`) plus subpackages (`pull/`, `push/`, `process/`, `providers/llm/`, `state/`, `config/`, `evals/`, `benchmark/`). The execution model follows a **pull → process → push** pipeline, with always-on capture writing every LLM call's I/O to disk:
+Four root modules (`main.py`, `tasks.py`, `pipeline.py`, `stats.py`) plus subpackages (`pull/`, `push/`, `process/`, `providers/llm/`, `state/`, `config/`, `evals/`, `benchmark/`). The execution model follows a **pull → process → push** pipeline, with always-on capture writing every LLM call's I/O to disk:
 
 ```
 Source.pull()  →  _summarize_items() + _apply_curate()  →  Target.push()
@@ -70,6 +71,7 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
 
 ### Module overview
 
+- `stats.py` — `--stats` mode renderer. `print_stats(config, state)` builds a Rich table of per-task and per-source state (kind, period, last_run, estimated next_run, item counts) and prints stale state entries (tasks/feeds in state but not in config) below it. Pure read-only: no network, no LLM, no state writes. `_humanize_minutes` and `_humanize_delta` live here; `main.py`'s `_check_due_or_skip` imports `_humanize_minutes` from this module.
 - `main.py` — CLI entry point and orchestration. Resolves config/state paths, manages a lock file, loads config + state, opens a single shared `aiohttp.ClientSession`, then dispatches to one of these short-circuit modes (`--regenerate-state`, `--clean`/`--migrate`, `--validate`, `--summarize`, `--replay`) or the normal run-due-tasks-in-parallel path. A `RunCapture` is constructed unconditionally; after tasks finish, captured LLM calls are flushed to `<state_dir>/evals/<task>/<run_iso>.jsonl`. `--analysis` reshapes the run into "expensive inspection mode" (reasoning on, ELI5 filter reasons, item/feed truncation, dry-run, render to stdout).
 - `tasks.py` — task orchestration. Every LLM-touching stage takes a `collector=` (always-on `RunCapture`) and an `analysis: bool = False`. `analysis` controls dry-run, item/feed truncation, `reasoning=True` on adapter calls, and forcing `explain=True` on the filter prompt; the collector controls only what gets recorded.
   - `_pull_feeds(source, feed_cfgs, feeds_state, task_filter, session, *, collector, analysis)` — fetches all feeds concurrently via `RSSSource`, merges heuristic filters, returns `{url: PullResult | None}`. Under `analysis`, `seen` is empty so all items look fresh.
