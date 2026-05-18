@@ -76,6 +76,8 @@ def task_kind(task_cfg: dict) -> str:
         return "search"
     if any("weather" in item for item in pull):
         return "weather"
+    if any("finance" in item for item in pull):
+        return "finance"
     return "feeds"
 
 
@@ -93,6 +95,10 @@ def get_search_cfg(task_cfg: dict) -> dict:
 
 def get_weather_cfg(task_cfg: dict) -> dict:
     return next((item["weather"] for item in task_cfg.get("pull", []) if "weather" in item), {})
+
+
+def get_finance_cfg(task_cfg: dict) -> dict:
+    return next((item["finance"] for item in task_cfg.get("pull", []) if "finance" in item), {})
 
 
 def _get_scraper_cfg(task_cfg: dict) -> dict:
@@ -393,21 +399,49 @@ class _PullWeatherItem(BaseModel):
     kind: Literal["smart"] | None = None
 
 
+class _PullFinanceReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    stocks: list[str]
+
+
+class _PullFinanceMonitorRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ticker: str
+    delta: float
+    price: tuple[float, float] | None = None
+
+
+class _PullFinanceItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    report: _PullFinanceReport | None = None
+    monitor: list[_PullFinanceMonitorRule] | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one(self):
+        present = [k for k in ("report", "monitor") if k in self.model_fields_set]
+        if len(present) != 1:
+            raise ValueError("finance pull item must have exactly one key: 'report' or 'monitor'")
+        return self
+
+
 class _PullItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     feed: _PullFeedItem | None = None
     search: _PullSearchItem | None = None
     scraper: _PullScraperItem | None = None
     weather: _PullWeatherItem | None = None
+    finance: _PullFinanceItem | None = None
 
     @model_validator(mode="after")
     def _exactly_one(self):
         present = [
-            k for k in ("feed", "search", "scraper", "weather") if k in self.model_fields_set
+            k
+            for k in ("feed", "search", "scraper", "weather", "finance")
+            if k in self.model_fields_set
         ]
         if len(present) != 1:
             raise ValueError(
-                "each pull item must have exactly one key: 'feed', 'search', 'scraper', or 'weather'"
+                "each pull item must have exactly one key: 'feed', 'search', 'scraper', 'weather', or 'finance'"
             )
         return self
 
@@ -445,7 +479,7 @@ class _TaskCurate(BaseModel):
 class _Task(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str
-    kind: Literal["digest", "scraper", "weather"] | None = None
+    kind: Literal["digest", "scraper", "weather", "finance"] | None = None
     period: _Period = None
     pull: list[_PullItem]
     push: list[_PushItem]
@@ -460,6 +494,7 @@ class _Task(BaseModel):
         has_feed_pull = any(item.feed is not None for item in self.pull)
         has_scraper_pull = any(item.scraper is not None for item in self.pull)
         has_weather_pull = any(item.weather is not None for item in self.pull)
+        has_finance_pull = any(item.finance is not None for item in self.pull)
         has_discord_push = any(item.discord is not None for item in self.push)
         has_file_push = any(item.file is not None for item in self.push)
         if not (has_discord_push or has_file_push):
@@ -474,6 +509,12 @@ class _Task(BaseModel):
             raise ValueError("pull cannot mix weather with other pull types")
         if has_weather_pull and sum(1 for item in self.pull if item.weather is not None) > 1:
             raise ValueError("pull can have at most one weather item")
+        if has_finance_pull and (
+            has_feed_pull or has_search_pull or has_scraper_pull or has_weather_pull
+        ):
+            raise ValueError("pull cannot mix finance with other pull types")
+        if has_finance_pull and sum(1 for item in self.pull if item.finance is not None) > 1:
+            raise ValueError("pull can have at most one finance item")
         return self
 
 

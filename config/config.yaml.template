@@ -177,6 +177,42 @@ tasks:
   #     - discord:
   #         webhook: !secret discord_webhook_weather
 
+  # Finance task: pulls quotes from yfinance and posts to Discord. Detected by pull
+  # containing a finance item. Two mutually-exclusive sub-modes per finance block:
+  #
+  # 1. report: periodic snapshot of a list of tickers — current price, weekly change,
+  #    52w range with % distance from current. Renders an "## 📊 Report" H2 header
+  #    followed by "### TICKER" + "$price | ±N.N% wk | 52w: ..." per ticker.
+  # - name: finance-report
+  #   period: 7d
+  #   pull:
+  #     - finance:
+  #         report:
+  #           stocks: [AAPL, MSFT, KO, PG, SPY, "EURUSD=X"]   # yfinance symbols (no aliasing)
+  #   push:
+  #     - discord:
+  #         webhook: !secret discord_webhook_finance
+  #         wrap: false
+  #
+  # 2. monitor: intraday alerts. Fires on either:
+  #    - `delta`: fractional move since the previous cron tick (0.05 = 5%)
+  #    - `price: [low, high]`: when the price crosses out of (or back into) the band
+  #    Silent on zero-alert ticks (no Discord post). State per ticker is stored under
+  #    tasks.<name>.tickers and used as the delta/crossing baseline.
+  # - name: finance-monitor
+  #   period: 15m
+  #   pull:
+  #     - finance:
+  #         monitor:
+  #           - {ticker: "EURUSD=X", delta: 0.005}
+  #           - {ticker: AAPL, delta: 0.05}
+  #           - {ticker: NVDA, delta: 0.05, price: [800, 950]}
+  #           - {ticker: MSFT, delta: 0.05, price: [400, 460]}
+  #   push:
+  #     - discord:
+  #         webhook: !secret discord_webhook_finance
+  #         wrap: false
+
   # Search task: calls an LLM with web search and posts the plain-text response to Discord.
   # Detected by pull containing a search item. Web search is always on.
   - name: world-news
