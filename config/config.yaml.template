@@ -199,15 +199,22 @@ tasks:
   #    - `price: [low, high]`: when the price crosses out of (or back into) the band
   #    Silent on zero-alert ticks (no Discord post). State per ticker is stored under
   #    tasks.<name>.tickers and used as the delta/crossing baseline.
+  #    Each rule is gated by exchange hours (DST-aware via stdlib zoneinfo) — closed-
+  #    market tickers are skipped entirely. Exchange is inferred from the symbol
+  #    suffix (.SA → b3, =X / .NYB → fx, X-USD → crypto, else us_equity); add
+  #    `exchange: us_equity|b3|fx|crypto` per rule to override. Holidays are not
+  #    modeled — a closed exchange on Thanksgiving will fetch and see no movement.
   # - name: finance-monitor
   #   period: 15m
   #   pull:
   #     - finance:
   #         monitor:
-  #           - {ticker: "EURUSD=X", delta: 0.005}
-  #           - {ticker: AAPL, delta: 0.05}
+  #           - {ticker: "EURUSD=X", delta: 0.005}                     # inferred fx
+  #           - {ticker: AAPL, delta: 0.05}                            # inferred us_equity
   #           - {ticker: NVDA, delta: 0.05, price: [800, 950]}
   #           - {ticker: MSFT, delta: 0.05, price: [400, 460]}
+  #           - {ticker: "BTC-USD", delta: 0.02}                       # inferred crypto
+  #           - {ticker: "ITSA4.SA", delta: 0.05}                      # inferred b3
   #   push:
   #     - discord:
   #         webhook: !secret discord_webhook_finance

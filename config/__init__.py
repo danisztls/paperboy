@@ -409,6 +409,7 @@ class _PullFinanceMonitorRule(BaseModel):
     ticker: str
     delta: float
     price: tuple[float, float] | None = None
+    exchange: Literal["us_equity", "b3", "fx", "crypto"] | None = None
 
 
 class _PullFinanceItem(BaseModel):

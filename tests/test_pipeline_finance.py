@@ -6,11 +6,14 @@ instead of using aioresponses.
 """
 
 import json
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import aiohttp
+import pytest
 
 import pull.finance as finance
-from pull.finance import Quote
+from pull.finance import Quote, _infer_exchange, _is_market_open
 from tasks import _process_finance_task
 from tests.conftest import WEBHOOK_URL
 
@@ -31,6 +34,12 @@ def _patch_history(monkeypatch, quotes_by_ticker):
 
 def _patch_fast(monkeypatch, quotes_by_ticker):
     monkeypatch.setattr(finance, "_fetch_quote_fast", lambda t: quotes_by_ticker.get(t))
+
+
+@pytest.fixture
+def market_open(monkeypatch):
+    """Force monitor's market-state gate open so existing tests don't depend on wall clock."""
+    monkeypatch.setattr(finance, "_is_market_open", lambda exchange, now_utc: True)
 
 
 def _report_cfg(name="test-finance-report", stocks=None):
@@ -124,7 +133,7 @@ async def test_report_all_fetches_failed_no_post(monkeypatch, mock_http):
     assert len(posts) == 0
 
 
-async def test_monitor_first_run_silent_records_baseline(monkeypatch, mock_http):
+async def test_monitor_first_run_silent_records_baseline(monkeypatch, mock_http, market_open):
     _patch_fast(
         monkeypatch,
         {
@@ -153,7 +162,7 @@ async def test_monitor_first_run_silent_records_baseline(monkeypatch, mock_http)
     assert "band_side" not in out["tickers"]["AAPL"]  # no band on AAPL rule
 
 
-async def test_monitor_delta_fires_after_baseline(monkeypatch, mock_http):
+async def test_monitor_delta_fires_after_baseline(monkeypatch, mock_http, market_open):
     _patch_fast(monkeypatch, {"AAPL": _quote("AAPL", 208.50)})  # 5.4% drop from 220.50
     mock_http.post(WEBHOOK_URL, status=204)
 
@@ -180,7 +189,7 @@ async def test_monitor_delta_fires_after_baseline(monkeypatch, mock_http):
     assert result["test-finance-monitor"]["tickers"]["AAPL"]["last_price"] == 208.50
 
 
-async def test_monitor_delta_below_threshold_silent(monkeypatch, mock_http):
+async def test_monitor_delta_below_threshold_silent(monkeypatch, mock_http, market_open):
     _patch_fast(monkeypatch, {"AAPL": _quote("AAPL", 222.00)})  # 0.68% up — under 5%
 
     cfg = _monitor_cfg(rules=[{"ticker": "AAPL", "delta": 0.05}])
@@ -201,7 +210,7 @@ async def test_monitor_delta_below_threshold_silent(monkeypatch, mock_http):
     assert result["test-finance-monitor"]["tickers"]["AAPL"]["last_price"] == 222.00
 
 
-async def test_monitor_band_crossing_fires_once(monkeypatch, mock_http):
+async def test_monitor_band_crossing_fires_once(monkeypatch, mock_http, market_open):
     """Crossing out of band fires; staying outside on subsequent ticks doesn't re-fire."""
     cfg = _monitor_cfg(rules=[{"ticker": "NVDA", "delta": 0.50, "price": [800.0, 950.0]}])
 
@@ -236,3 +245,99 @@ async def test_monitor_band_crossing_fires_once(monkeypatch, mock_http):
     posts = [c for c in mock_http.requests if c[0] == "POST"]
     assert len(posts) == 1
     assert r2["test-finance-monitor"]["tickers"]["NVDA"]["band_side"] == "above"
+
+
+# --- Market-state gating unit tests ---
+
+
+@pytest.mark.parametrize(
+    "ticker,expected",
+    [
+        ("AAPL", "us_equity"),
+        ("^GSPC", "us_equity"),
+        ("ITSA4.SA", "b3"),
+        ("EURUSD=X", "fx"),
+        ("DX-Y.NYB", "fx"),
+        ("BTC-USD", "crypto"),
+        ("ETH-EUR", "crypto"),
+        ("ABC-XYZ", "us_equity"),  # unknown quote ccy → not crypto, falls through
+    ],
+)
+def test_infer_exchange(ticker, expected):
+    assert _infer_exchange(ticker) == expected
+
+
+def _utc(year, month, day, hour, minute, tz):
+    """Build a UTC datetime from a wall-clock time in the given tz."""
+    return datetime(year, month, day, hour, minute, tzinfo=ZoneInfo(tz)).astimezone(ZoneInfo("UTC"))
+
+
+@pytest.mark.parametrize(
+    "exchange,when_local,tz,expected",
+    [
+        # us_equity: 09:30–16:00 ET, Mon–Fri
+        ("us_equity", (2026, 5, 13, 10, 0), "America/New_York", True),  # Wed 10:00
+        ("us_equity", (2026, 5, 13, 9, 29), "America/New_York", False),  # 1 min early
+        ("us_equity", (2026, 5, 13, 16, 0), "America/New_York", False),  # exactly close
+        ("us_equity", (2026, 5, 16, 12, 0), "America/New_York", False),  # Saturday
+        # DST sanity — same wall-clock open in summer (EDT) and winter (EST)
+        ("us_equity", (2026, 1, 14, 10, 0), "America/New_York", True),  # EST winter
+        ("us_equity", (2026, 7, 15, 10, 0), "America/New_York", True),  # EDT summer
+        # b3: 10:00–17:00 São Paulo, Mon–Fri
+        ("b3", (2026, 5, 13, 11, 0), "America/Sao_Paulo", True),
+        ("b3", (2026, 5, 13, 17, 0), "America/Sao_Paulo", False),
+        ("b3", (2026, 5, 16, 11, 0), "America/Sao_Paulo", False),  # Saturday
+        # fx: Sun 17:00 ET → Fri 17:00 ET
+        ("fx", (2026, 5, 13, 3, 0), "America/New_York", True),  # Wed pre-dawn
+        ("fx", (2026, 5, 15, 16, 59), "America/New_York", True),  # Fri 16:59 ET
+        ("fx", (2026, 5, 15, 17, 0), "America/New_York", False),  # Fri close
+        ("fx", (2026, 5, 16, 12, 0), "America/New_York", False),  # Saturday
+        ("fx", (2026, 5, 17, 16, 0), "America/New_York", False),  # Sun pre-open
+        ("fx", (2026, 5, 17, 17, 0), "America/New_York", True),  # Sun open
+        # crypto: always
+        ("crypto", (2026, 5, 16, 3, 0), "America/New_York", True),  # Sat 3am
+    ],
+)
+def test_is_market_open(exchange, when_local, tz, expected):
+    assert _is_market_open(exchange, _utc(*when_local, tz)) is expected
+
+
+async def test_monitor_skips_closed_market(monkeypatch, mock_http):
+    """Closed-market rules skip fetch + alerts entirely; their state is preserved."""
+    fetch_calls: list[str] = []
+
+    def _fake_fast(t):
+        fetch_calls.append(t)
+        return _quote(t, 100.00)
+
+    monkeypatch.setattr(finance, "_fetch_quote_fast", _fake_fast)
+    # Freeze the clock to a Saturday — us_equity closed, crypto open.
+    saturday = _utc(2026, 5, 16, 12, 0, "America/New_York")
+    monkeypatch.setattr(finance, "_now_utc", lambda: saturday)
+
+    cfg = _monitor_cfg(
+        rules=[
+            {"ticker": "AAPL", "delta": 0.0001},  # inferred us_equity → skipped
+            {"ticker": "BTC-USD", "delta": 0.0001},  # inferred crypto → fetched
+        ]
+    )
+    state = {
+        "tasks": {
+            "test-finance-monitor": {
+                "last_run": "2026-05-15T19:00:00+00:00",
+                "tickers": {
+                    "AAPL": {"last_price": 220.50},
+                    "BTC-USD": {"last_price": 50000.00},
+                },
+            }
+        }
+    }
+    async with aiohttp.ClientSession() as session:
+        result = await _process_finance_task(cfg, state, session)
+
+    # Only BTC-USD was fetched; AAPL skipped entirely.
+    assert fetch_calls == ["BTC-USD"]
+    # AAPL state preserved verbatim; BTC-USD rolled forward to new price.
+    out = result["test-finance-monitor"]
+    assert out["tickers"]["AAPL"] == {"last_price": 220.50}
+    assert out["tickers"]["BTC-USD"]["last_price"] == 100.00
