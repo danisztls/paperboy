@@ -37,6 +37,7 @@ from tasks import (
     DEFAULT_PERIOD,
     _is_due,
     _process_feed_task,
+    _process_finance_task,
     _process_scraper_task,
     _process_search_task,
     _process_weather_task,
@@ -388,6 +389,22 @@ async def _async_main(args: argparse.Namespace) -> None:
                         continue
                     feed_tasks.append(
                         _process_weather_task(
+                            task_cfg,
+                            state,
+                            session,
+                            collector=collector,
+                            analysis=analysis,
+                        )
+                    )
+                elif kind == "finance":
+                    if (
+                        not force_task
+                        and not analysis
+                        and not _check_due_or_skip(name, task_state.get("last_run"), period, now)
+                    ):
+                        continue
+                    feed_tasks.append(
+                        _process_finance_task(
                             task_cfg,
                             state,
                             session,

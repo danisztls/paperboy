@@ -10,6 +10,7 @@ A personal notifier that posts to Discord webhooks on a cron schedule. Supports 
 - **Scraper tasks**: browser-based extraction from JavaScript-heavy sites via Camoufox (hardened Firefox, drop-in Playwright API); posts new listings as Discord embeds. One-time setup: `uv run camoufox fetch` to download the ~700MB browser binary.
 - **Search tasks**: calls a configurable LLM (OpenAI or Gemini) with a prompt + web search, posts the plain-text response. Good for scheduled digests ("today's news, filter for signal > noise").
 - **Weather tasks**: fetches the daily forecast from Open-Meteo (no API key) and posts a `wttr.in`-style plain-text report with emoji: today's min/max/avg, apparent-temperature hourly curve, unsafe UV window, rain mm + probability; followed by compact per-day lines for upcoming days. Detected by `pull` containing a `weather` item. Must have a Discord push target. Setting `kind: smart` inside the `weather:` block switches to a signal-only variant: today shows only apparent min/max + dangerous UV window + rain window when significant; upcoming days show only those with significant rain or an apparent-temp / humidity anomaly. Anomaly triggers are σ-based with OR semantics: a day fires if its value is ≥2σ off the calendar-month climate normal (5-year ERA5 window, cached) OR ≥1σ off the past-7-days mean (computed each run from the forecast response's `past_days=7` block).
+- **Finance tasks**: pulls quotes from yfinance (sync lib wrapped in `asyncio.to_thread`) and posts to Discord wrapped in a code block. Detected by `pull` containing a `finance` item, which has exactly one of two sub-keys: `report` (periodic snapshot — current price, weekly change, 52w range with % distance from current) or `monitor` (intraday alerts on `delta` moves since the previous cron tick and/or `price: [low, high]` band crossings). Monitor mode is silent on zero-alert ticks and persists per-ticker `last_price` + `band_side` in state for the next tick's baseline. User writes yfinance symbols verbatim (no alias map).
 
 Each task can push to any combination of targets. Supported targets: `discord` (webhook), `file` (local markdown file).
 
@@ -119,6 +120,10 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
   - Shared helpers: `_uv_window`, `_rain_window` (mirrors UV — first contiguous hourly block ≥ threshold; rain scans all 24h for tighter resolution), `_daily_humidity_mean`, `_wmo_emoji`, `_uv_label`, `_pick_apparent_anomaly` (renders the line for whichever of apparent_max/min has the largest combined σ-magnitude — `_decision_magnitude` — with the máx/mín qualifier preserved), `_build_url`.
   - Threshold constants (module-level): `RAIN_TODAY_PROB_MIN`, `RAIN_TODAY_MM_MIN`, `RAIN_NEXT_PROB_MIN`, `RAIN_NEXT_MM_MIN`, `SIGMA_HIST` (2.0), `SIGMA_RECENT` (1.0), `SIGMA_FLOOR` (0.1, avoids divide-by-near-zero), `RECENT_MIN_SAMPLES` (4), `CLIMATE_NORMAL_YEARS` (5). Not exposed via config yet.
   - State cache: `tasks.py:_process_weather_task` reads `state["tasks"][name]["climate"]` and passes it to `WeatherSource.pull()` via `cfg["_climate_normals"]`. If the cache's `month` field doesn't match the current local-time month or the `*_std` keys are absent, a fresh fetch is attempted and included in the returned task state slice. Uses `zoneinfo.ZoneInfo` (stdlib); no new dependencies.
+- `pull/finance.py` — `FinanceSource(Source)`: yfinance quotes. yfinance is a sync library; calls run via `asyncio.to_thread`. The cfg's sub-key picks the mode:
+  - `report` — calls `_fetch_quote_with_history` (1y daily history → last close, 5-trading-days-ago close, 52w `High.max` / `Low.min`) per ticker; renders a `### TICKER` markdown H3 per ticker followed by a `$price | ±N.N% wk | 52w: $low _(−X%)_ – $high _(+Y%)_` data line under a `## 📊 Report — <date>` H2 header. `$` is prefixed unconditionally (no per-ticker currency lookup); % deltas are italicized for visual weight.
+  - `monitor` — calls `_fetch_quote_fast` (fast_info: last_price). Compares each ticker's current price against `state["tasks"][name]["tickers"][<t>]["last_price"]` for delta alerts and against `band_side` for crossing alerts. Returns zero or one batched `Item` rendered by `_format_monitor` in the same `## 🚨 <date>` + `### TICKER` + `**now**: $X | **<label>**: <value>` shape as report. Alerts on the same ticker (delta + level firing together) collapse into one section joined by `|`. Threads state bidirectionally through cfg: `_state_tickers` (input), `_new_state_tickers` (output mutated onto cfg, read by `tasks.py:_process_finance_task`).
+  - User writes yfinance symbols verbatim (e.g. `DX-Y.NYB`, `USDBRL=X`) — no alias map. `_fetch_quote_with_history` and `_fetch_quote_fast` are module-level so tests monkeypatch them.
 
 #### `push/` — target implementations
 
@@ -194,6 +199,13 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
         "humidity_mean": 72.0,
         "humidity_std": 8.0
       }
+    },
+    "finance-monitor": {
+      "last_run": "<iso8601 utc>",
+      "tickers": {
+        "AAPL": {"last_price": 220.50},
+        "NVDA": {"last_price": 955.20, "band_side": "above"}
+      }
     }
   }
 }
@@ -202,6 +214,7 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
 - `feeds` sub-dict holds per-URL state. Each entry has a `name` (resolved feed title from cfg → feed `<title>` → url), `items`, and `last_run`. Each successful fetch replaces `items` with the feed's current entries (bounded by feed length). `first_seen` is stamped when an item is first seen by claudinho and carried forward; `source_date` is the entry's original pubDate from the feed (when present). `filter_pass` and `filter_reason` are only present on items from tasks with a `curate` key.
 - `memory` is only present on curated RSS/digest tasks. Each run appends one entry keyed by ISO8601 timestamp; history is capped at 20 entries (oldest evicted). The LLM receives the last 5 entries as context on each run.
 - `climate` is only present on `kind: smart` weather tasks. Holds the monthly climate-normal cache: mean and sample standard deviation for apparent max/min and daily-mean humidity over the current calendar month across the last `CLIMATE_NORMAL_YEARS` years. Written when first fetched and refreshed at month rollover. No migration is required — pre-σ caches written before the σ rollout are silently treated as stale (`apparent_max_std` absent) and force a single refetch on the next run.
+- `tickers` is only present on finance tasks using `monitor` mode. Per-ticker `last_price` is the baseline for the next tick's delta check; `band_side` (`"in" | "above" | "below"`) is present only when the rule sets a `price:` band and gates band-crossing dedup. First-ever run for a ticker only records the baseline — no alert fires until the next tick has something to compare against. Report-mode finance tasks store only `last_run`.
 - Search tasks store only `last_run` directly under the task name key.
 - `load_state` returns the parsed JSON as-is; absent or `null` `last_run` always means "due now".
 - `_last_clean` (top-level) is reserved as a meta key (recognized by `state/migrate.py`) and appears in the template, but no code path currently writes it.

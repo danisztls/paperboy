@@ -11,6 +11,7 @@ from config import (
     get_discord_cfg,
     get_feeds,
     get_file_path,
+    get_finance_cfg,
     get_weather_cfg,
     parse_color,
     task_kind,
@@ -20,6 +21,7 @@ from process.curate import curate_entries
 from process.summarize import _YOUTUBE_RE, fetch_item_content, summarize_entry
 from providers.llm.base import LLMAdapter
 from pull.feed import RSSSource
+from pull.finance import FinanceSource
 from pull.scraper import ScraperSource
 from pull.search import run_search_task
 from pull.weather import WeatherSource, _climate_cache_fresh, fetch_climate_normals
@@ -539,6 +541,66 @@ async def _process_weather_task(
         if fresh_climate is not None:
             task_state["climate"] = fresh_climate
         return {name: task_state}
+    finally:
+        if collector:
+            collector.finish_task()
+
+
+async def _process_finance_task(
+    task_cfg: dict,
+    state: dict,
+    session: aiohttp.ClientSession,
+    *,
+    collector=None,
+    analysis: bool = False,
+) -> dict:
+    """Fetch yfinance quotes, post report or batched monitor alerts. Returns {name: task_state} or {}."""
+    name = task_cfg["name"]
+    if collector:
+        collector.begin_task(name, "finance")
+    try:
+        finance_cfg = dict(get_finance_cfg(task_cfg))
+        finance_cfg["_task_name"] = name
+
+        task_state = state.get("tasks", {}).get(name, {})
+        is_monitor = "monitor" in finance_cfg
+        if is_monitor:
+            finance_cfg["_state_tickers"] = task_state.get("tickers", {})
+            finance_cfg["_last_run"] = task_state.get("last_run")
+
+        result = await FinanceSource().pull(finance_cfg, set(), session)
+        if result is None:
+            return {}
+
+        now_iso = datetime.now(UTC).replace(microsecond=0).isoformat()
+        out_state: dict = {"last_run": now_iso}
+        if is_monitor:
+            out_state["tickers"] = finance_cfg.get("_new_state_tickers", {})
+
+        if not result.new_items:
+            # Monitor with zero alerts: still persist state so next tick has baselines.
+            if collector:
+                collector.record_push(0)
+            return {name: out_state} if is_monitor else {}
+
+        if analysis:
+            if collector:
+                collector.record_push(len(result.new_items))
+            return {}
+
+        ctx = PushContext(items=result.new_items)
+        try:
+            await DiscordTextTarget().push(ctx, task_cfg, session)
+        except Exception:
+            log.error("Skipping finance task %s due to post failure", name)
+            return {}
+
+        if get_file_path(task_cfg):
+            await FileEmbedTarget().push(ctx, task_cfg, session)
+
+        if collector:
+            collector.record_push(len(result.new_items))
+        return {name: out_state}
     finally:
         if collector:
             collector.finish_task()
