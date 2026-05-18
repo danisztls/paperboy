@@ -4,12 +4,16 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Literal
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
 from pipeline import Item, PullResult, Source
 
 log = logging.getLogger(__name__)
+
+Exchange = Literal["us_equity", "b3", "fx", "crypto"]
 
 
 @dataclass
@@ -26,6 +30,7 @@ class MonitorRule:
     ticker: str
     delta: float
     price_band: tuple[float, float] | None
+    exchange: Exchange  # inferred from ticker suffix or explicit override
 
 
 @dataclass
@@ -186,6 +191,81 @@ def _format_monitor(alerts: list[Alert], now_local: datetime) -> str:
     return "\n".join(lines)
 
 
+# --- Market schedule / gating ---
+
+
+@dataclass(frozen=True)
+class _Schedule:
+    timezone: str
+    open_hour: int
+    open_minute: int
+    close_hour: int
+    close_minute: int
+    weekdays: tuple[int, ...]  # 0=Mon, ..., 6=Sun
+
+
+# Schedules in exchange local-clock wall time. ZoneInfo handles DST automatically.
+# Holidays are intentionally ignored — false positives during half-days / holidays
+# are rare and harmless (yfinance returns stale prices, no delta fires).
+_SCHEDULES: dict[str, _Schedule] = {
+    "us_equity": _Schedule("America/New_York", 9, 30, 16, 0, (0, 1, 2, 3, 4)),
+    "b3": _Schedule("America/Sao_Paulo", 10, 0, 17, 0, (0, 1, 2, 3, 4)),
+}
+
+# Crypto-quote currency suffixes used by yfinance (e.g. BTC-USD, ETH-EUR).
+_CRYPTO_QUOTES = {"USD", "EUR", "GBP", "JPY", "BRL", "BTC", "ETH"}
+
+
+def _now_utc() -> datetime:
+    """Indirection for tests to monkeypatch the wall clock."""
+    return datetime.now(UTC)
+
+
+def _infer_exchange(ticker: str) -> Exchange:
+    """Best-effort exchange classification from the yfinance symbol shape.
+
+    `.SA` → B3, `=X` → FX, `.NYB` → FX-like (ICE futures hours), `X-USD` style
+    → crypto, anything else → US equity. Users can override per rule.
+    """
+    if ticker.endswith(".SA"):
+        return "b3"
+    if ticker.endswith("=X") or ticker.endswith(".NYB"):
+        return "fx"
+    if "-" in ticker:
+        suffix = ticker.rsplit("-", 1)[-1]
+        if suffix in _CRYPTO_QUOTES:
+            return "crypto"
+    return "us_equity"
+
+
+def _is_market_open(exchange: Exchange, now_utc: datetime) -> bool:
+    """Return True if the exchange is currently open. ZoneInfo handles DST."""
+    if exchange == "crypto":
+        return True
+    if exchange == "fx":
+        # Standard convention: open Sun 17:00 ET → Fri 17:00 ET.
+        ny = now_utc.astimezone(ZoneInfo("America/New_York"))
+        wd = ny.weekday()  # Mon=0 … Sun=6
+        if wd in (0, 1, 2, 3):  # Mon–Thu always open
+            return True
+        if wd == 4:  # Fri: open until 17:00 ET
+            return ny.hour < 17
+        if wd == 5:  # Sat always closed
+            return False
+        return ny.hour >= 17  # Sun: open from 17:00 ET
+    sched = _SCHEDULES.get(exchange)
+    if sched is None:
+        return True  # unknown → fail open
+    local = now_utc.astimezone(ZoneInfo(sched.timezone))
+    if local.weekday() not in sched.weekdays:
+        return False
+    open_t = local.replace(hour=sched.open_hour, minute=sched.open_minute, second=0, microsecond=0)
+    close_t = local.replace(
+        hour=sched.close_hour, minute=sched.close_minute, second=0, microsecond=0
+    )
+    return open_t <= local < close_t
+
+
 # --- Pull implementations ---
 
 
@@ -228,13 +308,24 @@ async def _pull_monitor(
             ticker=r["ticker"],
             delta=float(r["delta"]),
             price_band=tuple(r["price"]) if r.get("price") else None,
+            exchange=r.get("exchange") or _infer_exchange(r["ticker"]),
         )
         for r in rules_cfg
     ]
 
-    quotes = await _fetch_quotes([r.ticker for r in rules], with_history=False)
+    now = _now_utc()
+    open_rules: list[MonitorRule] = []
+    skipped_tickers: list[str] = []
+    for rule in rules:
+        if _is_market_open(rule.exchange, now):
+            open_rules.append(rule)
+        else:
+            skipped_tickers.append(rule.ticker)
+    if skipped_tickers:
+        log.debug("[finance] Skipping closed-market tickers: %s", ", ".join(skipped_tickers))
 
-    now = datetime.now(UTC)
+    quotes = await _fetch_quotes([r.ticker for r in open_rules], with_history=False)
+
     elapsed_min: int | None = None
     if last_run:
         try:
@@ -246,7 +337,13 @@ async def _pull_monitor(
     alerts: list[Alert] = []
     new_tickers: dict[str, dict] = {}
 
+    # Preserve state for tickers we skipped — they need their baseline for the
+    # next open-market tick.
     for rule in rules:
+        if rule.ticker in skipped_tickers and rule.ticker in state_tickers:
+            new_tickers[rule.ticker] = state_tickers[rule.ticker]
+
+    for rule in open_rules:
         q = quotes.get(rule.ticker)
         if q is None:
             # Preserve previous state on fetch failure
