@@ -1,15 +1,19 @@
 # claudinho
 
-A personal notifier that polls feeds and posts to Discord webhooks on a cron schedule.
+A personal notifier that polls feeds and posts to Discord webhooks (or local markdown files) on a cron schedule.
 
 ## Task types
 
 - **RSS** — fetches feeds, posts new entries as Discord embeds with OG images.
 - **Digest** — like RSS but collects all passing entries into a single text message (splits at 2000 chars). No OG images. Uses `[Title](<url>)` to suppress Discord link previews.
-- **Scraper** — browser-based extraction from JavaScript-heavy sites; posts new listings as Discord embeds.
+- **Scraper** — browser-based extraction from JavaScript-heavy sites via Camoufox; posts new listings as Discord embeds. One-time setup: `uv run camoufox fetch` to download the ~700MB browser binary.
 - **Search** — calls an LLM with web search enabled and posts the plain-text response.
+- **Weather** — pulls the daily forecast from Open-Meteo (no API key) and posts a `wttr.in`-style plain-text report. `kind: smart` switches to a signal-only variant that only surfaces dangerous UV windows, significant rain, and σ-based apparent-temp / humidity anomalies vs the location's monthly climate normal.
+- **Finance** — yfinance quotes. `report` posts a periodic snapshot (current price, weekly change, 52w range); `monitor` posts intraday alerts when prices move past a `delta` threshold or cross a `price: [low, high]` band. Monitor rules are gated by exchange hours.
 
-RSS and Digest tasks support an optional LLM filter step that classifies items before posting.
+RSS and Digest tasks support an optional LLM curate step that classifies items before posting.
+
+Each task can push to any combination of `discord` (webhook) and `file` (local markdown) targets.
 
 ## Setup
 
@@ -33,6 +37,7 @@ uv run main.py --config config.yaml    # explicit config path
 uv run main.py --validate              # validate config and exit
 uv run main.py --migrate               # migrate state file to current schema
 uv run main.py --clean                 # remove stale state entries, then exit
+uv run main.py --stats                 # rich-formatted summary of state.json (per-task/per-source last_run, next_run, item counts)
 uv run main.py --summarize <url>       # fetch YouTube transcript and print summary
 uv run main.py --analysis --task <t>   # inspection mode: LLM reasoning + ELI5 reasons, dry-run, render to stdout (extra tokens)
 uv run main.py --replay <jsonl> --models openai:gpt-4o-mini,gemini:gemini-2.5-flash --call filter
@@ -66,7 +71,7 @@ Output is written to `<state_dir>/evals/replays/<basename>__replay_<ts>.json` wi
 
 ## Config reference
 
-See [`config/config.yaml.template`](config/config.yaml.template) for all supported keys and their defaults. The four task types:
+See [`config/config.yaml.template`](config/config.yaml.template) for all supported keys and their defaults. The task types:
 
 ### RSS task
 
@@ -131,6 +136,64 @@ tasks:
           webhook: !secret discord_webhook_world_news
 ```
 
+### Weather task
+
+```yaml
+tasks:
+  - name: weather
+    period: 1d
+    pull:
+      - weather:
+          # kind: smart            # optional; signal-only variant (anomalies + significant rain only)
+          latitude: -23.55
+          longitude: -46.63
+          location_name: "São Paulo, SP"
+          timezone: "America/Sao_Paulo"
+          uv_warn_threshold: 6 # optional; default 6
+          forecast_days: 5 # optional; default 5
+    push:
+      - discord:
+          webhook: !secret discord_webhook_weather
+          wrap: false # recommended; weather lines are intentionally long
+```
+
+### Finance task
+
+`report` mode — periodic snapshot:
+
+```yaml
+tasks:
+  - name: finance-report
+    period: 7d
+    pull:
+      - finance:
+          report:
+            stocks: [AAPL, MSFT, KO, SPY, "EURUSD=X"]
+    push:
+      - discord:
+          webhook: !secret discord_webhook_finance
+          wrap: false
+```
+
+`monitor` mode — intraday alerts on `delta` moves and/or `price` band crossings. Silent on zero-alert ticks. Each rule is gated by exchange hours (DST-aware); exchange is inferred from the symbol suffix (`.SA` → b3, `=X`/`.NYB` → fx, `X-USD` → crypto, else us_equity):
+
+```yaml
+tasks:
+  - name: finance-monitor
+    period: 15m
+    pull:
+      - finance:
+          monitor:
+            - { ticker: "EURUSD=X", delta: 0.005 }
+            - { ticker: AAPL, delta: 0.05 }
+            - { ticker: NVDA, delta: 0.05, price: [800, 950] }
+            - { ticker: "BTC-USD", delta: 0.02 }
+    push:
+      - discord:
+          webhook: !secret discord_webhook_finance
+          wrap: false
+```
+
 ## LLM curation (RSS/Digest)
 
 Add a `curate` block to any RSS or Digest task to classify items before posting:
@@ -138,12 +201,16 @@ Add a `curate` block to any RSS or Digest task to classify items before posting:
 ```yaml
 curate:
   criteria: "Only keep items about AI and machine learning"
-  model:                   # optional; overrides curate.model
-    openai: gpt-4o-mini
-  language: "PT-BR"        # optional; language for memory briefings
-  web_search: true         # optional; let the LLM search for context
-  explain: true            # optional; use filter_reason as item body
+  model: # optional; overrides global curate.model
+    provider: openai # one of: openai, gemini, anthropic, deepseek
+    name: gpt-5.4-mini
+    reasoning: low # optional: off|low|medium|high (only for thinking-capable models)
+  language: "PT-BR" # optional; language for memory briefings
+  web_search: true # optional; let the LLM search for context
+  explain: true # optional; use filter_reason as item body
 ```
+
+`model:` also accepts a list — entries are tried in order and the first non-None response wins (fallback chain).
 
 The filter is fail-open: if the LLM call fails twice, all items pass.
 
