@@ -373,3 +373,17 @@ async def run_summarize(
     else:
         log.error("Summarization failed")
         sys.exit(1)
+
+
+async def run_get_content(url: str) -> None:
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=15),
+        headers={"User-Agent": USER_AGENT},
+    ) as session:
+        result = await fetch_item_content(url, session)
+
+    if not result:
+        log.error("Could not fetch content for %s", url)
+        sys.exit(1)
+    content, _og = result
+    print(content)

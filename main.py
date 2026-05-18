@@ -27,7 +27,7 @@ from config import (
 )
 from constants import USER_AGENT
 from evals.capture import RunCapture
-from process.summarize import run_summarize
+from process.summarize import run_get_content, run_summarize
 from providers.llm import FallbackAdapter, get_adapter
 from pull.feed import RSSSource
 from state import _auto_clean, _remove_unknown, load_state, save_state
@@ -519,6 +519,12 @@ def main():
         help="Fetch transcript from a YouTube video and print a summary to stdout",
     )
     mode.add_argument(
+        "--get-content",
+        metavar="URL",
+        dest="get_content",
+        help="Fetch article text or YouTube transcript and print to stdout (no LLM)",
+    )
+    mode.add_argument(
         "--replay",
         metavar="JSONL",
         help="Replay captured LLM calls in JSONL against alternative models (requires --models)",
@@ -666,6 +672,10 @@ def main():
                 args.summarize, adapter=_sum_adapter, model=_sum_model, language=_sum_language
             )
         )
+        return
+
+    if args.get_content:
+        asyncio.run(run_get_content(args.get_content))
         return
 
     asyncio.run(_async_main(args))

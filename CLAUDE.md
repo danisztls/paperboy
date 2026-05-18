@@ -29,6 +29,7 @@ The project uses `uv` (see `uv.lock`, `.python-version` pinning Python 3.14).
 - Clean stale state entries and exit: `uv run main.py --clean`
 - Print a rich-formatted summary of state.json (last_run, next_run, item counts per task and per source): `uv run main.py --stats`
 - Summarize a YouTube video to stdout: `uv run main.py --summarize <url>`
+- Print article text or YouTube transcript to stdout without summarizing: `uv run main.py --get-content <url>`
 - Sync deps: `uv sync`
 - Format: `uv run ruff format .`
 - Lint: `uv run ruff check --fix .`
