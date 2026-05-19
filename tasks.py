@@ -22,7 +22,7 @@ from process.summarize import _YOUTUBE_RE, fetch_item_content, summarize_entry
 from providers.llm.base import LLMAdapter
 from pull.feed import RSSSource
 from pull.finance import FinanceSource
-from pull.scraper import ScraperSource
+from pull.scraper import _get_scraper_cfgs, pull_scrapers
 from pull.search import run_search_task
 from pull.weather import WeatherSource, _climate_cache_fresh, fetch_climate_normals
 from push.discord import (
@@ -975,44 +975,67 @@ async def _process_scraper_task(
     *,
     global_color: int | None = None,
 ) -> dict:
-    """Scrape a site, post new listings as Discord embeds. Returns {task_name: task_state}."""
+    """Scrape one or more sites, post new listings as one batched Discord stream.
+
+    State is per-adapter (`scrapers[<adapter>]: {items, last_run}`). A failed
+    adapter preserves its prior state; task-level `last_run` advances if at
+    least one adapter succeeded. The `__legacy__` bucket (from the v3→v4
+    migration) contributes URLs to every adapter's `seen` set for dedup but is
+    never written to.
+    """
     task_name = task_cfg["name"]
     task_discord = get_discord_cfg(task_cfg)
     task_color = parse_color(task_discord.get("color")) or global_color
 
     task_state = state.get("tasks", {}).get(task_name, {})
-    prev_items = task_state.get("items", [])
-    seen = {item["url"] for item in prev_items}
+    scrapers_state = task_state.get("scrapers", {})
+    legacy_seen = {
+        it["url"] for it in scrapers_state.get("__legacy__", {}).get("items", []) if "url" in it
+    }
 
-    source = ScraperSource()
-    pull_result = await source.pull(task_cfg, seen, session)
-    if pull_result is None:
+    scraper_cfgs = _get_scraper_cfgs(task_cfg)
+    seen_per_adapter: dict[str, set[str]] = {}
+    for sc in scraper_cfgs:
+        adapter = sc.get("adapter", "")
+        prev = scrapers_state.get(adapter, {}).get("items", [])
+        seen_per_adapter[adapter] = {it["url"] for it in prev} | legacy_seen
+
+    results = await pull_scrapers(scraper_cfgs, seen_per_adapter)
+    if not results or all(r is None for r in results.values()):
         return {}
 
     now_iso = datetime.now(UTC).replace(microsecond=0).isoformat()
 
-    if not pull_result.new_items:
-        return {task_name: {**task_state, "last_run": now_iso}}
+    all_new_items: list[Item] = []
+    for result in results.values():
+        if result is None:
+            continue
+        for it in result.new_items:
+            all_new_items.append(dc_replace(it, meta={**it.meta, "color": task_color}))
 
-    colored_items = [
-        dc_replace(item, meta={**item.meta, "color": task_color}) for item in pull_result.new_items
-    ]
+    failed_ids: set[str] = set()
+    if all_new_items:
+        discord_format = task_discord.get("format")
+        ctx = PushContext(items=all_new_items)
+        if discord_format == "markdown":
+            failed_ids = await DiscordMarkdownTarget().push(ctx, task_cfg, session)
+        else:
+            failed_ids = await DiscordEmbedTarget().push(ctx, task_cfg, session)
+        if get_file_path(task_cfg):
+            await FileEmbedTarget().push(ctx, task_cfg, session)
 
-    discord_format = task_discord.get("format")
-    ctx = PushContext(items=colored_items)
-    if discord_format == "markdown":
-        failed_ids = await DiscordMarkdownTarget().push(ctx, task_cfg, session)
-    else:
-        failed_ids = await DiscordEmbedTarget().push(ctx, task_cfg, session)
-    if get_file_path(task_cfg):
-        await FileEmbedTarget().push(ctx, task_cfg, session)
+    new_scrapers_state = dict(scrapers_state)
+    for adapter, result in results.items():
+        if result is None:
+            continue
+        prev_items = scrapers_state.get(adapter, {}).get("items", [])
+        prev_by_url = {it["url"]: it for it in prev_items}
+        merged = list(prev_items)
+        for ci in result.current_items:
+            if ci["url"] not in prev_by_url:
+                merged.append({**ci, "first_seen": now_iso})
+        if failed_ids:
+            merged = [it for it in merged if it["url"] not in failed_ids]
+        new_scrapers_state[adapter] = {"items": merged, "last_run": now_iso}
 
-    prev_by_url = {item["url"]: item for item in prev_items}
-    merged = list(prev_items)
-    for ci in pull_result.current_items:
-        if ci["url"] not in prev_by_url:
-            merged.append({**ci, "first_seen": now_iso})
-    if failed_ids:
-        merged = [it for it in merged if it["url"] not in failed_ids]
-
-    return {task_name: {"items": merged, "last_run": now_iso}}
+    return {task_name: {**task_state, "scrapers": new_scrapers_state, "last_run": now_iso}}

@@ -1,6 +1,6 @@
 """State file schema migrations."""
 
-CURRENT_VERSION = 3
+CURRENT_VERSION = 4
 
 
 def needs_migration(state: dict) -> bool:
@@ -33,7 +33,27 @@ def _to_v3(state: dict) -> dict:
     return state
 
 
-_STEPS = {0: _to_v2, 1: _to_v2, 2: _to_v3}
+def _to_v4(state: dict) -> dict:
+    """Move flat scraper `items` into `scrapers["__legacy__"]` bucket (v3 → v4).
+
+    Only scraper tasks have a task-level `items` key (feeds nest under `feeds`;
+    search/weather/finance have no items). The `__legacy__` bucket keeps the URLs
+    around for dedup so we don't re-post old listings; it has no adapter writer
+    so its contents only shrink as URLs cycle out of new pulls' current_items.
+    """
+    for task_state in state.get("tasks", {}).values():
+        if not isinstance(task_state, dict):
+            continue
+        items = task_state.get("items")
+        if isinstance(items, list):
+            task_state.pop("items")
+            scrapers = task_state.setdefault("scrapers", {})
+            scrapers.setdefault("__legacy__", {"items": items})
+    state["_version"] = 4
+    return state
+
+
+_STEPS = {0: _to_v2, 1: _to_v2, 2: _to_v3, 3: _to_v4}
 
 
 def migrate(state: dict) -> dict:

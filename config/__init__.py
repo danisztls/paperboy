@@ -101,10 +101,6 @@ def get_finance_cfg(task_cfg: dict) -> dict:
     return next((item["finance"] for item in task_cfg.get("pull", []) if "finance" in item), {})
 
 
-def _get_scraper_cfg(task_cfg: dict) -> dict:
-    return next((item["scraper"] for item in task_cfg.get("pull", []) if "scraper" in item), {})
-
-
 def get_file_path(task_cfg: dict) -> str | None:
     return next((item["file"] for item in task_cfg.get("push", []) if "file" in item), None)
 
@@ -502,8 +498,15 @@ class _Task(BaseModel):
             raise ValueError("push must contain at least one target (discord or file)")
         if has_scraper_pull and (has_search_pull or has_feed_pull):
             raise ValueError("pull cannot mix scraper with feed or search items")
-        if has_scraper_pull and sum(1 for item in self.pull if item.scraper is not None) > 1:
-            raise ValueError("pull can have at most one scraper item")
+        if has_scraper_pull:
+            seen_adapters: set[str] = set()
+            for item in self.pull:
+                if item.scraper is None:
+                    continue
+                adapter = item.scraper.adapter
+                if adapter in seen_adapters:
+                    raise ValueError(f"pull has duplicate scraper adapter: {adapter}")
+                seen_adapters.add(adapter)
         if has_search_pull and has_feed_pull:
             raise ValueError("pull cannot mix feed and search items")
         if has_weather_pull and (has_feed_pull or has_search_pull or has_scraper_pull):

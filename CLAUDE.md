@@ -81,7 +81,7 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
   - `_apply_curate(items, filter_cfg, ..., *, collector, analysis)` — groups items by source, calls `curate_entries` (with `reasoning=analysis` and `explain` forced when `analysis`), maps results back onto items as `filter_pass`/`filter_reason`, retries once on failure; returns `FilterResult`.
   - `_process_search_task` — LLM web-search pipeline: `SearchSource.pull()` → `DiscordTextTarget.push()` (+ `FileEmbedTarget` if configured). Skipped under `analysis` after recording.
   - `_process_feed_task` — RSS/digest pipeline: pull → summarize → curate → `DiscordEmbedTarget`, `DiscordMarkdownTarget`, or `DiscordDigestTarget` (+ file target if configured) → state update. Push step short-circuits under `analysis`.
-  - `_process_scraper_task` — scraper pipeline: `ScraperSource.pull()` → `DiscordEmbedTarget` or `DiscordMarkdownTarget` → state update. Skipped entirely under `analysis`.
+  - `_process_scraper_task` — scraper pipeline: `pull_scrapers(scraper_cfgs, seen_per_adapter)` → `DiscordEmbedTarget` or `DiscordMarkdownTarget` → per-adapter state update. Multiple `scraper:` items per task are supported (one per adapter); each gets its own `scrapers[<adapter>]` state bucket with its own `last_run`. Failed adapters preserve prior state; task-level `last_run` advances if at least one adapter succeeded. The `__legacy__` bucket (from v3→v4 migration) contributes URLs to every adapter's `seen` set for dedup but is never written to. Skipped entirely under `analysis`.
   - `_is_due` checks period with 60s grace. `_merge_filter` combines task-level and feed-level heuristic filter dicts.
 
 #### `config/` — config loading and validation
@@ -92,7 +92,7 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
 #### `state/` — state I/O and migrations
 
 - `state/__init__.py` — `load_state`, `save_state` (writes `.old` backup, stamps `_version` and `_last_run`), `_auto_clean` (removes malformed items), and `_remove_unknown` (prunes tasks/feeds absent from config).
-- `state/migrate.py` — state schema migrations. `needs_migration(state)` checks `state["_version"]` against `CURRENT_VERSION` (3). `migrate(state)` steps through `_STEPS` until current. The v2 migration nests all task keys under a top-level `"tasks"` key; the v3 migration renames `access_date` → `first_seen` on every item.
+- `state/migrate.py` — state schema migrations. `needs_migration(state)` checks `state["_version"]` against `CURRENT_VERSION` (4). `migrate(state)` steps through `_STEPS` until current. The v2 migration nests all task keys under a top-level `"tasks"` key; the v3 migration renames `access_date` → `first_seen` on every item; the v4 migration moves any task-level flat `items: [...]` (only scraper tasks had this) into `scrapers["__legacy__"]: {items: [...]}` so per-adapter dedup keeps working without re-posting old listings.
 - `state/state.json.template` — example state file shape.
 
 #### `process/` — between-pull-and-push processing stages
@@ -110,7 +110,7 @@ To add a new source (e.g. Reddit, YouTube), implement `Source`. To add a new tar
   - `SearchSource(Source)` — calls `run_search_task` and wraps the response as a single `Item`.
   - `run_search_task(task_cfg, instructions, model, adapter)` — calls the configured LLM with web search enabled, returns plain-text response or `None`.
 - `pull/scraper.py` — browser-based extraction via Camoufox (hardened Firefox build with C++-level anti-detection patches). Drop-in Playwright API; the `SiteAdapter.scrape()` contract is unchanged.
-  - `ScraperSource(Source)` — launches a headless Camoufox browser, delegates to a site adapter, returns new listings as `Item`s. Camoufox manages the fingerprint itself — adapters must not set a custom User-Agent.
+  - `pull_scrapers(scraper_cfgs, seen_per_adapter)` — module-level coroutine; launches one Camoufox browser, opens a fresh page per adapter (serial), runs each adapter's `scrape()`, and returns `dict[adapter_name, PullResult | None]`. A `None` value means that adapter failed (unknown name, missing url, navigation/extraction error or exception) and the caller must preserve its prior state. Camoufox manages the fingerprint itself — adapters must not set a custom User-Agent. `_get_scraper_cfgs(task_cfg)` returns the list of `scraper:` items from `pull:`.
 - `pull/scrapers/base.py` — `SiteAdapter` ABC and the `@register_adapter` decorator-based registry (`get_adapter`, `available_adapters`).
 - `pull/scrapers/vivareal.py` — `VivaRealAdapter`: parses property listings from VivaReal search pages.
 - `pull/scrapers/imoveis_romildo.py` — `ImoveisRomildoAdapter`: parses listings from corretorromildobinda.com.br. Server-rendered PHP page (no JS gating, no JSON-LD); reads `.pgl-property` cards via `page.evaluate()`. Price IS on the card.
@@ -168,7 +168,7 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
 
 ```json
 {
-  "_version": 3,
+  "_version": 4,
   "_last_run": "<iso8601 utc>",
   "_last_clean": "<iso8601 utc>",
   "tasks": {
@@ -210,6 +210,25 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
         "AAPL": {"last_price": 220.50},
         "NVDA": {"last_price": 955.20, "band_side": "above"}
       }
+    },
+    "imoveis": {
+      "last_run": "<iso8601 utc>",
+      "scrapers": {
+        "vivareal": {
+          "last_run": "<iso8601 utc>",
+          "items": [
+            {"url": "...", "title": "...", "first_seen": "<iso8601 utc>"},
+            ...
+          ]
+        },
+        "imoveis_romildo": {
+          "last_run": "<iso8601 utc>",
+          "items": [...]
+        },
+        "__legacy__": {
+          "items": [...]
+        }
+      }
     }
   }
 }
@@ -219,6 +238,7 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
 - `memory` is only present on curated RSS/digest tasks. Each run appends one entry keyed by ISO8601 timestamp; history is capped at 20 entries (oldest evicted). The LLM receives the last 5 entries as context on each run.
 - `climate` is only present on `kind: smart` weather tasks. Holds the monthly climate-normal cache: mean and sample standard deviation for apparent max/min and daily-mean humidity over the current calendar month across the last `CLIMATE_NORMAL_YEARS` years. Written when first fetched and refreshed at month rollover. No migration is required — pre-σ caches written before the σ rollout are silently treated as stale (`apparent_max_std` absent) and force a single refetch on the next run.
 - `tickers` is only present on finance tasks using `monitor` mode. Per-ticker `last_price` is the baseline for the next tick's delta check; `band_side` (`"in" | "above" | "below"`) is present only when the rule sets a `price:` band and gates band-crossing dedup. First-ever run for a ticker only records the baseline — no alert fires until the next tick has something to compare against. Report-mode finance tasks store only `last_run`.
+- `scrapers` is only present on scraper tasks (v4+). Maps adapter name → `{items, last_run}`. Each successful adapter pull replaces its own `items` (bounded by listings on the page) and stamps its own `last_run`. Task-level `last_run` is the latest among adapters. The `__legacy__` bucket is written by the v3→v4 migration to preserve flat-`items` URLs for dedup; it has no adapter writer, never updates, and is preserved by `--clean` so it can shrink only as URLs cycle out of other adapters' coverage.
 - Search tasks store only `last_run` directly under the task name key.
 - `load_state` returns the parsed JSON as-is; absent or `null` `last_run` always means "due now".
 - `_last_clean` (top-level) is reserved as a meta key (recognized by `state/migrate.py`) and appears in the template, but no code path currently writes it.

@@ -1,5 +1,5 @@
 {
-  "_version": 3,
+  "_version": 4,
   "_last_run": "2026-05-04T12:00:00+00:00",
   "_last_clean": "2026-05-04T12:00:00+00:00",
   "tasks": {
@@ -26,6 +26,21 @@
     },
     "world-news": {
       "last_run": "2026-05-04T12:00:00+00:00"
+    },
+    "my-scrapers": {
+      "last_run": "2026-05-04T12:00:00+00:00",
+      "scrapers": {
+        "vivareal": {
+          "last_run": "2026-05-04T12:00:00+00:00",
+          "items": [
+            {
+              "url": "https://www.vivareal.com.br/imovel/...",
+              "title": "Apartamento 2q - Centro, São Paulo",
+              "first_seen": "2026-05-04T12:00:00+00:00"
+            }
+          ]
+        }
+      }
     }
   }
 }
