@@ -13,7 +13,7 @@ A personal notifier that posts to Discord webhooks on a cron schedule. Supported
 - **Weather** — fetches the daily forecast from Open-Meteo (no API key) and posts a `wttr.in`-style text report. `kind: smart` switches to a signal-only variant gated by σ-based anomaly thresholds against climate normals + past 7 days.
 - **Finance** — pulls quotes from yfinance (sync lib wrapped in `asyncio.to_thread`). Detected by `pull` containing a `finance` item with exactly one of two sub-keys: `report` (periodic snapshot) or `monitor` (intraday alerts on deltas + price-band crossings). User writes yfinance symbols verbatim (no alias map).
 
-Each task can push to any combination of targets. Supported targets: `discord` (webhook), `file` (local markdown file).
+Each task can push to any combination of targets. Supported targets: `discord` (webhook), `file` (local markdown or JSONL file — extension decides).
 
 Intended to be run on a cron, not as a long-lived process.
 

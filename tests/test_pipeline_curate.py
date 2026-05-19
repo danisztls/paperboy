@@ -1,6 +1,6 @@
 """E2E tests for the LLM curate (RSS) pipeline.
 
-Real RSSSource, Discord*Target, FileEmbedTarget run. Only the LLM adapter
+Real RSSSource, Discord*Target, FileItemTarget run. Only the LLM adapter
 (passed as a parameter to _process_feed_task) and the aiohttp transport
 (via aioresponses) are faked.
 """

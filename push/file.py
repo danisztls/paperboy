@@ -1,6 +1,8 @@
+import json
 import logging
 import os
 import pathlib
+from dataclasses import asdict
 from datetime import UTC, datetime
 
 from config import get_file_path
@@ -13,6 +15,46 @@ _FAR_FUTURE = datetime.max.replace(tzinfo=UTC)
 
 def _resolve_path(path_str: str) -> pathlib.Path:
     return pathlib.Path(os.path.expandvars(os.path.expanduser(path_str)))
+
+
+def _drop_none(d: dict) -> dict:
+    return {k: v for k, v in d.items() if v is not None}
+
+
+def _serialize_item(item: Item) -> dict:
+    raw = asdict(item)
+    if item.published is not None:
+        raw["published"] = item.published.isoformat()
+    if not raw.get("meta"):
+        raw.pop("meta", None)
+    return _drop_none(raw)
+
+
+def _serialize_digest(memory: list[MemoryParagraph], cite_map: dict[int, Citation] | None) -> dict:
+    paragraphs: list[dict] = []
+    for para in memory or []:
+        if not para.text.strip():
+            continue
+        entry: dict = {"text": para.text.rstrip()}
+        if para.section:
+            entry["section"] = para.section
+        if para.citations and cite_map:
+            cites = [
+                _drop_none({"source": c.source, "url": c.url})
+                for id_ in para.citations
+                if (c := cite_map.get(id_))
+            ]
+            if cites:
+                entry["citations"] = cites
+        paragraphs.append(entry)
+    return {"date": datetime.now(UTC).isoformat(), "paragraphs": paragraphs}
+
+
+def _append_jsonl(path: pathlib.Path, records: list[dict]) -> None:
+    with path.open("a", encoding="utf-8") as f:
+        for rec in records:
+            f.write(json.dumps(rec, ensure_ascii=False))
+            f.write("\n")
 
 
 def _render_paragraph_md(para: MemoryParagraph, cite_map: dict[int, Citation] | None) -> str:
@@ -47,8 +89,8 @@ def _item_to_markdown(item: Item) -> str:
     return "\n".join(lines)
 
 
-class FileEmbedTarget(Target):
-    """Appends each item as a markdown section to a file."""
+class FileItemTarget(Target):
+    """Appends each item to a file. Format chosen by path extension."""
 
     async def push(self, ctx: PushContext, cfg: dict, session) -> set[str]:
         path_str = get_file_path(cfg)
@@ -57,14 +99,18 @@ class FileEmbedTarget(Target):
 
         path = _resolve_path(path_str)
         path.parent.mkdir(parents=True, exist_ok=True)
+        ext = path.suffix.lower()
 
         items = sorted(ctx.items, key=lambda e: e.published or _FAR_FUTURE)
-        content = "\n".join(_item_to_markdown(item) for item in items)
 
         failed: set[str] = set()
         try:
-            with path.open("a", encoding="utf-8") as f:
-                f.write(content)
+            if ext == ".jsonl":
+                _append_jsonl(path, [_serialize_item(item) for item in items])
+            else:
+                content = "\n".join(_item_to_markdown(item) for item in items)
+                with path.open("a", encoding="utf-8") as f:
+                    f.write(content)
             log.info("Appended %d item(s) to %s", len(items), path)
         except OSError as exc:
             log.error("Failed to write to %s: %s", path, exc)
@@ -74,7 +120,7 @@ class FileEmbedTarget(Target):
 
 
 class FileDigestTarget(Target):
-    """Appends the memory digest as a dated markdown section to a file."""
+    """Appends the memory digest to a file. Format chosen by path extension."""
 
     async def push(self, ctx: PushContext, cfg: dict, session) -> set[str]:
         path_str = get_file_path(cfg)
@@ -83,16 +129,20 @@ class FileDigestTarget(Target):
 
         path = _resolve_path(path_str)
         path.parent.mkdir(parents=True, exist_ok=True)
-
-        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
-        paragraphs = [_render_paragraph_md(p, ctx.cite_map) for p in ctx.memory if p.text.strip()]
-        text = "\n\n".join(paragraphs)
-
-        block = f"## {date_str}\n\n{text}\n\n---\n\n"
+        ext = path.suffix.lower()
 
         try:
-            with path.open("a", encoding="utf-8") as f:
-                f.write(block)
+            if ext == ".jsonl":
+                _append_jsonl(path, [_serialize_digest(ctx.memory, ctx.cite_map)])
+            else:
+                date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+                paragraphs = [
+                    _render_paragraph_md(p, ctx.cite_map) for p in ctx.memory if p.text.strip()
+                ]
+                text = "\n\n".join(paragraphs)
+                block = f"## {date_str}\n\n{text}\n\n---\n\n"
+                with path.open("a", encoding="utf-8") as f:
+                    f.write(block)
             log.info("Appended digest to %s", path)
         except OSError as exc:
             log.error("Failed to write to %s: %s", path, exc)
