@@ -31,7 +31,7 @@ from push.discord import (
     DiscordMarkdownTarget,
     DiscordTextTarget,
 )
-from push.file import FileDigestTarget, FileEmbedTarget
+from push.file import FileDigestTarget, FileItemTarget
 
 DEFAULT_PERIOD = Period(count=1, unit="h")
 PERIOD_GRACE = timedelta(seconds=60)
@@ -480,7 +480,7 @@ async def _process_search_task(
             return {}
 
         if get_file_path(task_cfg):
-            await FileEmbedTarget().push(ctx, task_cfg, session)
+            await FileItemTarget().push(ctx, task_cfg, session)
 
         if collector:
             collector.record_push(len(new_items))
@@ -533,7 +533,7 @@ async def _process_weather_task(
             return {}
 
         if get_file_path(task_cfg):
-            await FileEmbedTarget().push(ctx, task_cfg, session)
+            await FileItemTarget().push(ctx, task_cfg, session)
 
         if collector:
             collector.record_push(len(result.new_items))
@@ -596,7 +596,7 @@ async def _process_finance_task(
             return {}
 
         if get_file_path(task_cfg):
-            await FileEmbedTarget().push(ctx, task_cfg, session)
+            await FileItemTarget().push(ctx, task_cfg, session)
 
         if collector:
             collector.record_push(len(result.new_items))
@@ -768,7 +768,7 @@ async def _push_curate(
         target = DiscordEmbedTarget()
     failed_ids = await target.push(ctx, task_cfg, session)
     if get_file_path(task_cfg):
-        await FileEmbedTarget().push(ctx, task_cfg, session)
+        await FileItemTarget().push(ctx, task_cfg, session)
     return failed_ids
 
 
@@ -1022,7 +1022,7 @@ async def _process_scraper_task(
         else:
             failed_ids = await DiscordEmbedTarget().push(ctx, task_cfg, session)
         if get_file_path(task_cfg):
-            await FileEmbedTarget().push(ctx, task_cfg, session)
+            await FileItemTarget().push(ctx, task_cfg, session)
 
     new_scrapers_state = dict(scrapers_state)
     for adapter, result in results.items():

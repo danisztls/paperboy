@@ -456,6 +456,16 @@ class _PushItem(BaseModel):
     discord: _PushDiscordItem | None = None
     file: str | None = None
 
+    @field_validator("file")
+    @classmethod
+    def _validate_file_ext(cls, v):
+        if v is None:
+            return v
+        ext = pathlib.Path(v).suffix.lower()
+        if ext not in {".md", ".jsonl"}:
+            raise ValueError(f"file push target must end in .md or .jsonl (got {v!r})")
+        return v
+
     @model_validator(mode="after")
     def _has_target(self):
         if not self.model_fields_set:

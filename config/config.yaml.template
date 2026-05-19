@@ -106,7 +106,7 @@ tasks:
           # color: "#5865F2"   # optional — overrides global discord.color for all feeds in this task
           # format: markdown   # optional — 'markdown' posts "### [Title](url)\nbody"; default 'embed'
           # wrap: false        # optional — disable line wrapping at 120 chars (default: true)
-      # - file: "~/notes/my-feeds.md"  # optional — also append new items to a local markdown file
+      # - file: "~/notes/my-feeds.md"  # optional — also append new items to a local file (.md or .jsonl)
 
   # Digest task: like RSS task but all passing entries from all feeds are collected
   # and posted as a single text message (splits into multiple if the 2000-char limit is hit).
