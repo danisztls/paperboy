@@ -11,7 +11,11 @@ import logging
 from camoufox.async_api import AsyncCamoufox
 
 from pipeline import PullResult, Source
-from pull.scrapers import vivareal  # noqa: F401 — registers via @register_adapter
+from pull.scrapers import (  # noqa: F401 — registers via @register_adapter
+    portal_b,
+    portal_a,
+    vivareal,
+)
 from pull.scrapers.base import available_adapters, get_adapter
 
 log = logging.getLogger(__name__)
