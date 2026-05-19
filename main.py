@@ -249,7 +249,16 @@ async def _async_main(args: argparse.Namespace) -> None:
             for t in config.get("tasks", [])
             if t.get("name") and t.get("pull")
         }
-        _remove_unknown(state, known_tasks, known_feeds)
+        known_adapters = {
+            t["name"]: {
+                item["scraper"]["adapter"]
+                for item in t.get("pull", [])
+                if "scraper" in item and item["scraper"].get("adapter")
+            }
+            for t in config.get("tasks", [])
+            if t.get("name") and t.get("pull")
+        }
+        _remove_unknown(state, known_tasks, known_feeds, known_adapters)
         save_state(state_path, state)
         log.info("Done. State saved to %s", state_path)
         return

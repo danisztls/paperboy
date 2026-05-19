@@ -129,6 +129,9 @@ tasks:
   # Adapters: vivareal, portal_a, portal_b. Add new ones by writing
   # a SiteAdapter subclass in pull/scrapers/, decorating with @register_adapter("name"),
   # and importing it from pull/scraper.py so the decorator runs at startup.
+  # Multiple `scraper:` items are allowed (one per adapter); each gets its own
+  # state bucket and per-adapter last_run/failure isolation, but all post to the
+  # same push targets as one batched stream.
   # - name: imoveis-vivareal
   #   period: 4h
   #   pull:
@@ -136,6 +139,9 @@ tasks:
   #         adapter: vivareal          # one of: vivareal, portal_a, portal_b
   #         url: "https://www.vivareal.com.br/venda/sp/sao-paulo/..."  # search URL with filters
   #         max_items: 10              # optional — cap new items per run (avoids Discord spam on first run)
+  #     - scraper:                     # additional adapter for the same task — different state bucket
+  #         adapter: portal_a
+  #         url: "https://portal-a.com.br/pt/pesq_imovel.php?pja=true&pcid=1&pcat=0&ptip=A"
   #   push:
   #     - discord:
   #         webhook: !secret discord_webhook_imoveis

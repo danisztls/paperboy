@@ -127,6 +127,7 @@ def print_stats(config: dict, state: dict) -> None:
 
     known_task_names: set[str] = set()
     known_feeds_by_task: dict[str, set[str]] = {}
+    known_adapters_by_task: dict[str, set[str]] = {}
 
     for task_cfg in tasks_cfg:
         name = task_cfg.get("name")
@@ -213,15 +214,57 @@ def print_stats(config: dict, state: dict) -> None:
                     _format_count(items, curated),
                 )
         elif kind == "scraper":
-            items = ts.get("items", []) or []
+            scrapers_state = ts.get("scrapers", {}) or {}
+            scraper_cfgs = [
+                item["scraper"] for item in task_cfg.get("pull", []) if "scraper" in item
+            ]
+            known_adapters_by_task[name] = {sc.get("adapter") for sc in scraper_cfgs}
+
+            last_runs: list[str] = []
+            next_runs: list[datetime] = []
+            total = 0
+            any_no_last = False
+            for sc in scraper_cfgs:
+                adapter = sc.get("adapter")
+                ss = scrapers_state.get(adapter, {}) or {}
+                lr = ss.get("last_run")
+                if lr:
+                    last_runs.append(lr)
+                else:
+                    any_no_last = True
+                nr = _next_run(lr, period)
+                if nr is None:
+                    any_no_last = True
+                else:
+                    next_runs.append(nr)
+                total += len(ss.get("items", []) or [])
+
+            task_last = max(last_runs) if last_runs else ts.get("last_run")
+            if any_no_last or not next_runs:
+                task_next_str = "[green]due now[/green]"
+            else:
+                task_next_str = _format_next_from_dt(min(next_runs), now)
+
             table.add_row(
                 name_cell,
                 _format_kind(kind),
                 str(period),
-                _format_last(ts.get("last_run"), now),
-                _format_next(ts.get("last_run"), period, now),
-                _format_scalar(len(items)),
+                _format_last(task_last, now),
+                task_next_str,
+                _format_scalar(total),
             )
+            for sc in sorted(scraper_cfgs, key=lambda s: s.get("adapter", "")):
+                adapter = sc.get("adapter") or "?"
+                ss = scrapers_state.get(adapter, {}) or {}
+                items = ss.get("items", []) or []
+                table.add_row(
+                    f"  [dim]↳[/dim] [dim]{escape(adapter)}[/dim]",
+                    "",
+                    "",
+                    "",
+                    "",
+                    _format_scalar(len(items)),
+                )
         else:  # search, weather, or any other task-level-only kind
             table.add_row(
                 name_cell,
@@ -246,6 +289,14 @@ def print_stats(config: dict, state: dict) -> None:
                     stale_lines.append(
                         f"  [yellow]\\[{escape(tname)}][/yellow] [dim]{escape(fname)}[/dim]"
                     )
+            scrapers_state = (ts or {}).get("scrapers", {}) or {}
+            known_adapters = known_adapters_by_task.get(tname, set())
+            for adapter in scrapers_state:
+                if adapter == "__legacy__" or adapter in known_adapters:
+                    continue
+                stale_lines.append(
+                    f"  [yellow]\\[{escape(tname)}][/yellow] [dim]{escape(adapter)}[/dim]"
+                )
         else:
             stale_lines.append(f"  [yellow]{escape(tname)}[/yellow]")
     if stale_lines:

@@ -85,8 +85,17 @@ def _auto_clean(state: dict) -> None:
     log.info("Clean: removed %d malformed entries", removed)
 
 
-def _remove_unknown(state: dict, known_tasks: set, known_feeds: dict) -> None:
-    """Remove state for tasks/feeds no longer present in config."""
+def _remove_unknown(
+    state: dict,
+    known_tasks: set,
+    known_feeds: dict,
+    known_adapters: dict | None = None,
+) -> None:
+    """Remove state for tasks/feeds/scraper-adapters no longer present in config.
+
+    `known_adapters` maps task_name → set of adapter names; the `__legacy__`
+    bucket is always preserved (it has no config representation by design).
+    """
     tasks_state = state.get("tasks", {})
 
     stale_tasks = [name for name in list(tasks_state) if name not in known_tasks]
@@ -100,3 +109,14 @@ def _remove_unknown(state: dict, known_tasks: set, known_feeds: dict) -> None:
         for url in stale_feeds:
             log.warning("Clean: removing state for unknown feed %s in task %r", url[:80], task_name)
             del feeds_state[url]
+
+    for task_name, adapters in (known_adapters or {}).items():
+        scrapers_state = tasks_state.get(task_name, {}).get("scrapers", {})
+        stale = [a for a in list(scrapers_state) if a != "__legacy__" and a not in adapters]
+        for adapter in stale:
+            log.warning(
+                "Clean: removing state for unknown scraper adapter %r in task %r",
+                adapter,
+                task_name,
+            )
+            del scrapers_state[adapter]
