@@ -52,6 +52,7 @@ async def post_text_to_discord(
     *,
     wrap: bool = True,
 ) -> None:
+    text = _suppress_embeds(text)
     text = "​\n" + text
     if wrap:
         text = _wrap_text(text)
@@ -77,6 +78,49 @@ _CONTENT_LIMIT = 2000
 _LINE_WIDTH = 120
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 _LINK_RE = re.compile(r"\[+[^\]]*\]\(<[^>]*>\)\]*")
+_MASKED_LINK_RE = re.compile(r"(\[[^\]]*\])\((https?://[^)\s]+)\)")
+_WRAPPED_URL_RE = re.compile(r"<https?://[^>\s]+>")
+_BARE_URL_RE = re.compile(r"https?://[^\s<>]+")
+_TRAILING_PUNCT = ".,;:!?'\""
+
+
+def _wrap_bare_url(m: re.Match) -> str:
+    url = m.group(0)
+    trailing = ""
+    while url:
+        c = url[-1]
+        if c in _TRAILING_PUNCT:
+            pass
+        elif c == ")" and url.count("(") < url.count(")"):
+            pass
+        elif c == "]" and url.count("[") < url.count("]"):
+            pass
+        else:
+            break
+        trailing = c + trailing
+        url = url[:-1]
+    return f"<{url}>{trailing}" if url else m.group(0)
+
+
+def _suppress_embeds(text: str) -> str:
+    """Wrap unwrapped URLs in ``<...>`` so Discord suppresses link previews.
+
+    Already-wrapped forms (``<url>``, ``[text](<url>)``) are left alone;
+    unwrapped masked links (``[text](url)``) get their inner URL wrapped;
+    bare URLs get wrapped, sparing trailing punctuation likely outside the URL.
+    """
+    text = _MASKED_LINK_RE.sub(r"\1(<\2>)", text)
+    stash: list[str] = []
+
+    def _hold(m: re.Match) -> str:
+        stash.append(m.group(0))
+        return f"\x00{len(stash) - 1:04d}\x00"
+
+    text = _WRAPPED_URL_RE.sub(_hold, text)
+    text = _BARE_URL_RE.sub(_wrap_bare_url, text)
+    for i, original in enumerate(stash):
+        text = text.replace(f"\x00{i:04d}\x00", original)
+    return text
 
 
 def _protect_links(line: str) -> tuple[str, list[str]]:
@@ -114,7 +158,7 @@ def _render_paragraph(para: MemoryParagraph, cite_map: dict[int, Citation] | Non
         for id_ in para.citations:
             cit = cite_map.get(id_)
             if cit:
-                links.append(f"[[{cit.source}](<{cit.url}>)]" if cit.url else f"[{cit.source}]")
+                links.append(f"[[{cit.source}]({cit.url})]" if cit.url else f"[{cit.source}]")
         if links:
             text += " " + " ".join(links)
     return text
@@ -294,7 +338,7 @@ class DiscordMarkdownTarget(Target):
         failed: set[str] = set()
         items = sorted(ctx.items, key=lambda e: e.published or _FAR_FUTURE)
         for i, item in enumerate(items):
-            title_part = f"[{item.title}](<{item.url}>)" if item.url else item.title
+            title_part = f"[{item.title}]({item.url})" if item.url else item.title
             source_part = f" [{item.source}]" if item.source else ""
             header = f"## {title_part}{source_part}"
             body = item.body or ""
