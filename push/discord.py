@@ -285,7 +285,7 @@ class DiscordTextTarget(Target):
 
 
 class DiscordMarkdownTarget(Target):
-    """Posts each item as a markdown-formatted Discord message (### heading + body)."""
+    """Posts each item as a markdown-formatted Discord message (## heading + body)."""
 
     async def push(self, ctx: PushContext, cfg: dict, session) -> set[str]:
         discord_cfg = get_discord_cfg(cfg)
@@ -296,7 +296,7 @@ class DiscordMarkdownTarget(Target):
         for i, item in enumerate(items):
             title_part = f"[{item.title}](<{item.url}>)" if item.url else item.title
             source_part = f" [{item.source}]" if item.source else ""
-            header = f"### {title_part}{source_part}"
+            header = f"## {title_part}{source_part}"
             body = item.body or ""
             text = f"{header}\n{body}" if body else header
             try:

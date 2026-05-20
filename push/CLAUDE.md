@@ -6,7 +6,7 @@ Target implementations. Each implements `pipeline.Target.push(ctx, cfg, session)
 
 - `DiscordEmbedTarget` — each item as a Discord embed. The embed image is `Item.image` (set during pull from the feed entry or during summarize from the article's `og:image`); `item.meta["skip_image"]` (from task/feed `image.skip`) suppresses it.
 - `DiscordTextTarget` — each item's body as plain text (truncated to 2000 chars).
-- `DiscordMarkdownTarget` — each item as `### [title](<url>) source\nbody` (markdown, no embed).
+- `DiscordMarkdownTarget` — each item as `## [title](<url>) source\nbody` (markdown, no embed).
 - `DiscordDigestTarget` — renders each `MemoryParagraph` to plain text with source links appended (`[[Source](<url>)]`), posts as ≤2000-char chunks.
 
 All use `_post_webhook` which retries once on 429.

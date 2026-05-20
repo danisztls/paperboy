@@ -104,7 +104,7 @@ tasks:
       - discord:
           webhook: !secret discord_webhook_my_feeds  # or a literal URL string
           # color: "#5865F2"   # optional — overrides global discord.color for all feeds in this task
-          # format: markdown   # optional — 'markdown' posts "### [Title](url)\nbody"; default 'embed'
+          # format: markdown   # optional — 'markdown' posts "## [Title](url)\nbody"; default 'embed'
           # wrap: false        # optional — disable line wrapping at 120 chars (default: true)
       # - file: "~/notes/my-feeds.md"  # optional — also append new items to a local file (.md or .jsonl)
 
