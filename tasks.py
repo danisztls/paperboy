@@ -243,17 +243,23 @@ async def _summarize_items(
             summary = None
         return e, content, summary, og_image, trace
 
-    results = await asyncio.gather(*[_fetch_and_summarize(e) for e in items])
+    def _dedup_key(e: Item) -> str:
+        return e.url or f"__no_url__:{e.id}"
 
-    updated: dict[str, Item] = {}
+    seen_keys: set[str] = set()
+    unique: list[Item] = []
+    for e in items:
+        key = _dedup_key(e)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        unique.append(e)
+
+    results = await asyncio.gather(*[_fetch_and_summarize(e) for e in unique])
+
+    by_key: dict[str, tuple[str | None, str | None]] = {}
     for e, content, summary, og_image, trace in results:
-        fields: dict = {}
-        if summary:
-            fields["summary"] = summary
-        if og_image and not e.image:
-            fields["image"] = og_image
-        if fields:
-            updated[e.id] = dc_replace(e, **fields)
+        by_key[_dedup_key(e)] = (summary, og_image)
         if collector and trace is not None:
             collector.record_summarization(
                 item_id=e.id,
@@ -269,6 +275,17 @@ async def _summarize_items(
                 latency_s=trace.get("latency_s"),
                 reasoning=trace.get("reasoning"),
             )
+
+    updated: dict[str, Item] = {}
+    for e in items:
+        summary, og_image = by_key.get(_dedup_key(e), (None, None))
+        fields: dict = {}
+        if summary:
+            fields["summary"] = summary
+        if og_image and not e.image:
+            fields["image"] = og_image
+        if fields:
+            updated[e.id] = dc_replace(e, **fields)
     return [updated.get(e.id, e) for e in items]
 
 
