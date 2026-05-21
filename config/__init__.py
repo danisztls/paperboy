@@ -289,6 +289,7 @@ class _GlobalSummarize(BaseModel):
 class _Youtube(BaseModel):
     model_config = ConfigDict(extra="forbid")
     cookies_from_browser: str | None = None
+    cookies_browser_profile: str | None = None
 
 
 class _FilterOp(BaseModel):
