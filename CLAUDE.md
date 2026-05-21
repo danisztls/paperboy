@@ -157,6 +157,7 @@ Any change that adds, removes, or renames a config key must also update the corr
 - LLM curate failures retry once after 10s; on second failure all items are treated as passing (fail-open).
 - All feeds in a given RSS/digest task share one LLM curate call; items are sent grouped by source with monotonically increasing integer IDs across all feeds.
 - `Item.meta` carries per-item display hints (e.g. `color`) set during the pull stage so the target doesn't need to re-resolve them from config.
+- `Item.image` is the single-image path (RSS, og:image, search); `Item.images` is the multi-image path (real-estate scrapers). When both are set, `image` should be `images[0]`. `DiscordEmbedTarget` prefers `images`, capping at 4 (Discord's embed-merge limit) and degrading to a single embed when `Item.url` is missing.
 - `web_search` is plumbed through the curate call but intentionally not through `summarize_entry`: summaries run on already-fetched article content, so extra web search is wasted tokens.
 - Feed-level `curate.skip: true` short-circuits the LLM curate call for that feed only — items always pass. Useful for trusted, low-volume feeds where the curate cost isn't justified. Other feeds in the same task still get curated normally.
 - `--analysis` forces reasoning on (passes `reasoning=True` to every adapter), overriding any per-spec `ModelSpec.reasoning` value. Normal cron runs honor the per-spec value. The `_effective_reasoning(default, analysis)` helper in `tasks.py` encodes this precedence.

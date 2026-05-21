@@ -33,6 +33,7 @@ class Item:
     url: str | None = None
     body: str | None = None  # sanitized text content
     image: str | None = None
+    images: list[str] = field(default_factory=list)
     published: datetime | None = None
     summary: str | None = None  # optional LLM-generated summary
     filter_pass: bool | None = None

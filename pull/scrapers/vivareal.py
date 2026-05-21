@@ -10,8 +10,11 @@ from .base import SiteAdapter, register_adapter
 
 log = logging.getLogger(__name__)
 
-_BASE = "https://www.vivareal.com.br"
-
+# DO NOT ASSUME __NEXT_DATA__ EXISTS. VivaReal's pages run on the Next.js App
+# Router and never emit a <script id="__NEXT_DATA__"> tag (it's a Pages-Router
+# artifact). If you reach for __NEXT_DATA__ here, you'll get None back and
+# silently lose data. Use the rendered DOM / JSON-LD `ItemList` instead. This
+# trap has been stepped in twice; don't make it three.
 _JSONLD_TYPE_MAP = {
     "Apartment": "Apartamento",
     "House": "Casa",
@@ -24,35 +27,6 @@ _JSONLD_TYPE_MAP = {
     "Residence": "Imóvel",
     "LandProperty": "Terreno",
 }
-
-# DO NOT ASSUME __NEXT_DATA__ EXISTS. VivaReal's listing detail pages run on the
-# Next.js App Router and never emit a <script id="__NEXT_DATA__"> tag (the script
-# is a Pages-Router artifact). Empirically the search-results page still ships it
-# today, so `_from_next_data` is wired up as a fallback there only — but treat it
-# as a bonus, not a contract. If you reach for __NEXT_DATA__ on a detail page you
-# will get None back and silently lose data. Use the rendered DOM (innerText /
-# JSON-LD `Product`) instead. This trap has been stepped in twice; don't make it
-# three.
-_TYPE_MAP = {
-    "APARTMENT": "Apartamento",
-    "HOME": "Casa",
-    "CONDOMINIUM": "Condomínio",
-    "FLAT": "Flat",
-    "PENTHOUSE": "Cobertura",
-    "STUDIO": "Studio",
-    "KITNET": "Kitnet",
-    "LAND": "Terreno",
-    "FARM": "Fazenda",
-    "COMMERCIAL": "Comercial",
-    "OFFICE": "Escritório",
-    "WAREHOUSE": "Galpão",
-}
-
-_NEXT_DATA_PATHS = [
-    ["initialSearch", "result", "listings"],
-    ["search", "result", "listings"],
-    ["results", "listings"],
-]
 
 # Curated whitelist for `offers.amenityFeature`. Drops table-stakes amenities
 # (Kitchen, Laundry, Garage, Service Area) and keeps the differentiators.
@@ -75,6 +49,22 @@ def _fmt_brl(value) -> str | None:
         return f"R$ {int(float(value)):,}".replace(",", ".")
     except ValueError, TypeError:
         return None
+
+
+def _dedup_images(urls, limit: int = 4) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for u in urls or []:
+        if not isinstance(u, str):
+            continue
+        s = u.strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _as_int(value) -> int | None:
@@ -188,16 +178,7 @@ class VivaRealAdapter(SiteAdapter):
             log.info("[vivareal] %d listings via JSON-LD", len(items))
             return items
 
-        # Fallback: __NEXT_DATA__ (legacy Next.js Pages Router on the search page)
-        raw = await page.evaluate(
-            "() => document.getElementById('__NEXT_DATA__')?.textContent ?? null"
-        )
-        items = self._from_next_data(raw)
-        if items is not None:
-            log.info("[vivareal] %d listings via __NEXT_DATA__", len(items))
-            return items
-
-        log.warning("[vivareal] No listing data found (tried JSON-LD and __NEXT_DATA__)")
+        log.warning("[vivareal] No JSON-LD ItemList found")
         return []
 
     # --- JSON-LD path (primary) ---
@@ -255,12 +236,13 @@ class VivaRealAdapter(SiteAdapter):
             if location:
                 title_parts.append(f"- {location}")
 
-            images = item.get("image") or []
-            image = (
-                images[0]
-                if isinstance(images, list) and images
-                else (images if isinstance(images, str) else None)
-            )
+            raw_images = item.get("image") or []
+            if isinstance(raw_images, str):
+                raw_images = [raw_images]
+            elif not isinstance(raw_images, list):
+                raw_images = []
+            images = _dedup_images(raw_images)
+            image = images[0] if images else None
 
             return Item(
                 id=url,
@@ -279,6 +261,7 @@ class VivaRealAdapter(SiteAdapter):
                     amenities=amenities,
                 ),
                 image=image,
+                images=images,
                 meta={
                     "price": price_raw,
                     "condo_fee": condo_raw,
@@ -295,110 +278,4 @@ class VivaRealAdapter(SiteAdapter):
             )
         except Exception as exc:
             log.debug("[vivareal] Failed to parse JSON-LD entry: %s — %s", exc, str(item)[:120])
-            return None
-
-    # --- __NEXT_DATA__ path (legacy fallback) ---
-
-    def _from_next_data(self, raw: str | None) -> list[Item] | None:
-        if not raw:
-            return None
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            return None
-
-        pp = data.get("props", {}).get("pageProps", {})
-        for path in _NEXT_DATA_PATHS:
-            node = pp
-            for key in path:
-                node = node.get(key) if isinstance(node, dict) else None
-                if node is None:
-                    break
-            if isinstance(node, list):
-                items = [self._parse_next_data_entry(e) for e in node]
-                return [it for it in items if it is not None]
-
-        log.warning("[vivareal] __NEXT_DATA__ paths not found; pageProps keys: %s", list(pp))
-        return None
-
-    def _parse_next_data_entry(self, entry: dict) -> Item | None:
-        listing = entry.get("listing") or entry
-        try:
-            lid = listing.get("id") or listing.get("externalId")
-            if not lid:
-                return None
-
-            permalink = listing.get("permalink") or ""
-            url = permalink if permalink.startswith("http") else f"{_BASE}{permalink}"
-            if not url:
-                return None
-
-            def _first(lst):
-                return lst[0] if isinstance(lst, list) and lst else None
-
-            unit_types = listing.get("unitTypes") or []
-            ltype = _TYPE_MAP.get(_first(unit_types) or "", "Imóvel")
-
-            bedrooms = _first(listing.get("bedrooms"))
-            bathrooms = _first(listing.get("bathrooms"))
-            parking = _first(listing.get("parkingSpaces"))
-            area = _first(listing.get("usableAreas")) or _first(listing.get("totalAreas"))
-
-            addr = listing.get("address") or {}
-            neighborhood = addr.get("neighborhood") or addr.get("zone") or ""
-            city = addr.get("city") or ""
-            location = ", ".join(p for p in [neighborhood, city] if p)
-
-            pricing = _first(listing.get("pricingInfos")) or {}
-            price_raw = pricing.get("price")
-            condo_raw = pricing.get("monthlyCondoFee")
-            iptu_yearly = _as_int(pricing.get("yearlyIptu"))
-            iptu_raw = pricing.get("monthlyIptu") or (iptu_yearly // 12 if iptu_yearly else None)
-            street = (addr.get("street") or "").strip() or None
-
-            title_parts = [ltype]
-            if bedrooms:
-                title_parts.append(f"{bedrooms}q")
-            if location:
-                title_parts.append(f"- {location}")
-
-            medias = listing.get("medias") or entry.get("medias") or []
-            image = next(
-                (m.get("url") or m.get("src") for m in medias if m.get("type") == "IMAGE"),
-                None,
-            ) or (medias[0].get("url") or medias[0].get("src") if medias else None)
-
-            return Item(
-                id=url,
-                title=" ".join(title_parts)[:256],
-                source="VivaReal",
-                url=url,
-                body=_format_body(
-                    price_raw,
-                    condo_raw,
-                    iptu_raw,
-                    area,
-                    bedrooms,
-                    bathrooms,
-                    parking,
-                    street=street,
-                ),
-                image=image,
-                meta={
-                    "price": price_raw,
-                    "condo_fee": condo_raw,
-                    "iptu": iptu_raw,
-                    "area": area,
-                    "bedrooms": bedrooms,
-                    "bathrooms": bathrooms,
-                    "parking": parking,
-                    "neighborhood": neighborhood,
-                    "city": city,
-                    "street": street,
-                },
-            )
-        except Exception as exc:
-            log.debug(
-                "[vivareal] Failed to parse __NEXT_DATA__ entry: %s — %s", exc, str(entry)[:120]
-            )
             return None

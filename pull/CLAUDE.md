@@ -30,9 +30,9 @@ Camoufox is a hardened Firefox build with C++-level anti-detection patches. Drop
 ### Adapters
 
 - `scrapers/base.py` — `SiteAdapter` ABC + `@register_adapter` decorator registry (`get_adapter`, `available_adapters`).
-- `scrapers/vivareal.py` — `VivaRealAdapter`: parses VivaReal search pages.
-- `scrapers/portal_a.py` — server-rendered PHP (no JS gating, no JSON-LD); reads `.pgl-property` cards via `page.evaluate()`. Price IS on the card.
-- `scrapers/portal_b.py` — WordPress + Elementor "Loop Grid". Reads `.imovel.type-imovel` cards. Specs from the first icon-list widget (positional: beds/baths/parking/area); location from the second. Type derived from `tipo_de_imovel-*` body classes (more stable than parsing labels). No price on the listing card.
+- `scrapers/vivareal.py` — `VivaRealAdapter`: parses VivaReal search pages. Multi-image: both JSON-LD `image` and `__NEXT_DATA__` `medias` already expose the full gallery on the search page; capped at 4 for Discord's embed-merge limit.
+- `scrapers/portal_a.py` — server-rendered PHP (no JS gating, no JSON-LD); reads `.pgl-property` cards via `page.evaluate()`. Price IS on the card. Multi-image: card only carries one `_360.jpeg` thumbnail; the adapter visits each listing's detail page (`imovel.php?id=N`) for new URLs (not in `seen`) and pulls up to 4 `_848.jpeg` gallery photos. Falls back to the card thumbnail on detail-page failure.
+- `scrapers/portal_b.py` — WordPress + Elementor "Loop Grid". Reads `.imovel.type-imovel` cards. Specs from the first icon-list widget (positional: beds/baths/parking/area); location from the second. Type derived from `tipo_de_imovel-*` body classes (more stable than parsing labels). No price on the listing card. Single-image only: the detail page's gallery sits next to unrelated `wp-content/uploads/` images (other listings' photos, marketing assets) that can't be reliably separated from the listing's own gallery, so the adapter only surfaces the card thumbnail.
 
 ## `weather.py` — Open-Meteo forecast
 
