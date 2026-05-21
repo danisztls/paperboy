@@ -284,7 +284,10 @@ async def _async_main(args: argparse.Namespace) -> None:
     )
     instructions = search_cfg_global.get("instructions") or None
     global_language = curate_cfg.get("language") or "EN-US"
-    configure_youtube_cookies((config.get("youtube") or {}).get("cookies_from_browser"))
+    _yt_cfg = config.get("youtube") or {}
+    configure_youtube_cookies(
+        _yt_cfg.get("cookies_from_browser"), _yt_cfg.get("cookies_browser_profile")
+    )
     discord_cfg = config.get("discord", {})
     global_color = parse_color(discord_cfg.get("color"))
     feeds_cfg = config.get("feeds") or {}

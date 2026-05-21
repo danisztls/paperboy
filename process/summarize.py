@@ -181,18 +181,26 @@ async def _fetch_sponsorblock(video_id: str, session: aiohttp.ClientSession) -> 
 
 
 _YT_COOKIES_FROM_BROWSER: str | None = None
+_YT_COOKIES_BROWSER_PROFILE: str | None = None
 
 
-def configure_youtube_cookies(browser: str | None) -> None:
-    """Tell yt-dlp to read cookies from the named browser (e.g. 'firefox'). None disables."""
-    global _YT_COOKIES_FROM_BROWSER
+def configure_youtube_cookies(browser: str | None, profile: str | None = None) -> None:
+    """Tell yt-dlp to read cookies from the named browser (e.g. 'firefox'), optionally
+    pinning a profile (e.g. 'default-release'). browser=None disables."""
+    global _YT_COOKIES_FROM_BROWSER, _YT_COOKIES_BROWSER_PROFILE
     _YT_COOKIES_FROM_BROWSER = browser or None
+    _YT_COOKIES_BROWSER_PROFILE = profile or None
 
 
 def _ytdl_opts(**extra) -> dict:
     opts = {"skip_download": True, "quiet": True, "no_warnings": True, **extra}
     if _YT_COOKIES_FROM_BROWSER:
-        opts["cookiesfrombrowser"] = (_YT_COOKIES_FROM_BROWSER,)
+        opts["cookiesfrombrowser"] = (
+            _YT_COOKIES_FROM_BROWSER,
+            _YT_COOKIES_BROWSER_PROFILE,
+            None,
+            None,
+        )
     return opts
 
 
