@@ -86,6 +86,8 @@ log = logging.getLogger(__name__)
 
 for _noisy in ("httpx", "httpcore"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
+for _noisy in ("trafilatura", "htmldate"):
+    logging.getLogger(_noisy).setLevel(logging.CRITICAL)
 
 _LOG_FORMAT = logging.Formatter(
     "%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
