@@ -74,6 +74,16 @@ def _as_int(value) -> int | None:
         return None
 
 
+def _passes_area_per_room(item: Item, min_ratio: float) -> bool:
+    """Drop listings whose area / bedrooms is below `min_ratio` (m²/quarto).
+    Listings missing either field pass — can't evaluate the ratio."""
+    area = _as_int(item.meta.get("area"))
+    bedrooms = _as_int(item.meta.get("bedrooms"))
+    if not area or not bedrooms:
+        return True
+    return (area / bedrooms) >= min_ratio
+
+
 def _format_price(rent, condo, iptu) -> str:
     rent_s = _fmt_brl(rent)
     if rent_s is None:
@@ -175,7 +185,19 @@ class VivaRealAdapter(SiteAdapter):
         )
         items = self._from_jsonld(jsonld_blocks)
         if items is not None:
-            log.info("[vivareal] %d listings via JSON-LD", len(items))
+            min_area_per_room = cfg.get("min_area_per_room")
+            if min_area_per_room is not None:
+                before = len(items)
+                items = [it for it in items if _passes_area_per_room(it, min_area_per_room)]
+                log.info(
+                    "[vivareal] %d listings via JSON-LD (%d → %d after min_area_per_room=%s m²/quarto)",
+                    before,
+                    before,
+                    len(items),
+                    min_area_per_room,
+                )
+            else:
+                log.info("[vivareal] %d listings via JSON-LD", len(items))
             return items
 
         log.warning("[vivareal] No JSON-LD ItemList found")
