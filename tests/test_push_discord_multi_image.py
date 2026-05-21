@@ -6,7 +6,7 @@ import aiohttp
 from yarl import URL
 
 from pipeline import Item
-from pull.scrapers.vivareal import VivaRealAdapter
+from pull.scrapers.vivareal import VivaRealAdapter, _passes_area_per_room
 from push.discord import post_to_discord
 from tests.conftest import WEBHOOK_URL
 
@@ -142,3 +142,28 @@ def test_vivareal_jsonld_string_image_becomes_singleton():
     assert item is not None
     assert item.images == ["https://img/v/solo.jpg"]
     assert item.image == "https://img/v/solo.jpg"
+
+
+def test_vivareal_min_area_per_room_filter():
+    adapter = VivaRealAdapter()
+
+    def _entry(*, url: str, bedrooms, area):
+        d = {
+            "@type": "Apartment",
+            "url": url,
+            "name": "Apartamento em Centro, Cidade",
+            "address": {"addressLocality": "Cidade"},
+            "numberOfBedrooms": bedrooms,
+            "offers": {"price": 1500},
+        }
+        if area is not None:
+            d["floorSize"] = {"value": area}
+        return d
+
+    cramped = adapter._parse_jsonld_entry(_entry(url="https://v/cramped", bedrooms=3, area=60))
+    spacious = adapter._parse_jsonld_entry(_entry(url="https://v/spacious", bedrooms=3, area=90))
+    unknown = adapter._parse_jsonld_entry(_entry(url="https://v/unknown", bedrooms=3, area=None))
+
+    assert not _passes_area_per_room(cramped, 25)
+    assert _passes_area_per_room(spacious, 25)
+    assert _passes_area_per_room(unknown, 25)
