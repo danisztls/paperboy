@@ -177,11 +177,11 @@ async def _pull_feeds(
 
     fetch_map: dict[str, object] = {}
     filter_log_map: dict[str, dict] = {}
-    for item in results:
+    for fc, item in zip(feed_cfgs, results):
         if isinstance(item, Exception):
-            log.error("Feed fetch failed: %s", item)
+            log.error("Feed fetch failed for %s: %s: %s", fc["url"], type(item).__name__, item)
             continue
-        fc, pull_result, filter_log = item
+        _, pull_result, filter_log = item
         fetch_map[fc["url"]] = pull_result
         if filter_log is not None:
             filter_log_map[fc["url"]] = filter_log
