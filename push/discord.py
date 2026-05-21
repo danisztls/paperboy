@@ -241,6 +241,9 @@ async def post_digest_to_discord(
             first = False
 
 
+_EMBED_IMAGE_CAP = 4  # Discord merges up to 4 embeds sharing the same `url`.
+
+
 async def post_to_discord(
     webhook_url: str,
     entry: Item,
@@ -258,11 +261,29 @@ async def post_to_discord(
     if entry.source:
         embed["footer"] = {"text": entry.source}
 
-    if not skip_image and entry.image:
-        embed["image"] = {"url": entry.image}
+    embeds = [embed]
+    if not skip_image:
+        imgs: list[str] = []
+        seen: set[str] = set()
+        sources = entry.images if entry.images else ([entry.image] if entry.image else [])
+        for u in sources:
+            if not isinstance(u, str):
+                continue
+            s = u.strip()
+            if not s or s in seen:
+                continue
+            seen.add(s)
+            imgs.append(s)
+            if len(imgs) >= _EMBED_IMAGE_CAP:
+                break
+        if imgs:
+            embed["image"] = {"url": imgs[0]}
+            # Merging extra images requires a shared, non-empty `url` on every embed.
+            if len(imgs) > 1 and entry.url:
+                embeds.extend({"url": entry.url, "image": {"url": u}} for u in imgs[1:])
 
     log.debug("Posting embed to Discord: %s", embed.get("title", ""))
-    payload = json.dumps({"embeds": [embed]}).encode()
+    payload = json.dumps({"embeds": embeds}).encode()
     try:
         await _post_webhook(
             session,
