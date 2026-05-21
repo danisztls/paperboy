@@ -29,3 +29,4 @@ Pure functions used by `pull/feed.py` during feed parsing:
   - Article text via trafilatura plus `og:image` scraped from the same HTML.
   - YouTube URLs fetched via `yt-dlp` (subtitle VTTs downloaded with `writesubtitles` / `writeautomaticsub` flags, parsed and SponsorBlock-filtered) return the transcript with `og_image=None`.
 - `extract_og_image(html)` is the standalone helper used at end of trafilatura extraction.
+- `configure_youtube_cookies(browser)` — set at startup from `youtube.cookies_from_browser` config. When set, every `yt-dlp` call adds `cookiesfrombrowser=(browser,)`, which is required to bypass the "Sign in to confirm you're not a bot" wall. Module-level state so deep call sites don't need to thread it.

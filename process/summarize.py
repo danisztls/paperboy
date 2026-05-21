@@ -180,11 +180,27 @@ async def _fetch_sponsorblock(video_id: str, session: aiohttp.ClientSession) -> 
         return []
 
 
+_YT_COOKIES_FROM_BROWSER: str | None = None
+
+
+def configure_youtube_cookies(browser: str | None) -> None:
+    """Tell yt-dlp to read cookies from the named browser (e.g. 'firefox'). None disables."""
+    global _YT_COOKIES_FROM_BROWSER
+    _YT_COOKIES_FROM_BROWSER = browser or None
+
+
+def _ytdl_opts(**extra) -> dict:
+    opts = {"skip_download": True, "quiet": True, "no_warnings": True, **extra}
+    if _YT_COOKIES_FROM_BROWSER:
+        opts["cookiesfrombrowser"] = (_YT_COOKIES_FROM_BROWSER,)
+    return opts
+
+
 async def _fetch_youtube_data(url: str, session: aiohttp.ClientSession) -> tuple[str, str] | None:
     """Return (title, transcript) for a YouTube URL, or None on failure."""
 
     def _extract():
-        with yt_dlp.YoutubeDL({"skip_download": True, "quiet": True, "no_warnings": True}) as ydl:
+        with yt_dlp.YoutubeDL(_ytdl_opts()) as ydl:
             return ydl.extract_info(url, download=False)
 
     log.info("Fetching video info: %s", url)
@@ -222,16 +238,13 @@ async def _fetch_youtube_data(url: str, session: aiohttp.ClientSession) -> tuple
 
     def _download_vtt() -> str | None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            opts = {
-                "skip_download": True,
-                "quiet": True,
-                "no_warnings": True,
-                "writesubtitles": not is_auto,
-                "writeautomaticsub": is_auto,
-                "subtitlesformat": "vtt",
-                "subtitleslangs": [selected_lang],
-                "outtmpl": str(pathlib.Path(tmpdir) / "sub"),
-            }
+            opts = _ytdl_opts(
+                writesubtitles=not is_auto,
+                writeautomaticsub=is_auto,
+                subtitlesformat="vtt",
+                subtitleslangs=[selected_lang],
+                outtmpl=str(pathlib.Path(tmpdir) / "sub"),
+            )
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([url])
             vtt_files = list(pathlib.Path(tmpdir).glob("*.vtt"))
