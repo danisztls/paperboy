@@ -97,7 +97,10 @@ tasks:
           # summarize: true         # optional — override task-level summarize for this feed (also accepts dict form)
           # curate:
           #   skip: true             # optional — bypass LLM curation for this feed (items always pass)
-          # filter:
+          # filter:                                # feed-level filter sub-keys fully replace the
+          #                                        # task-level value for the same sub-key
+          #                                        # (e.g. set `description: clear: false` to opt
+          #                                        # out of a task-wide `description: clear: true`)
           #   title:
           #     extract: "\\d+ de \\w+"           # extract match (group 1 if captured, else group 0)
           #   url:
