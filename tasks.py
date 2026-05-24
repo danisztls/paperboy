@@ -99,20 +99,14 @@ def _decode_filter_results(
 
 
 def _merge_filter(task_f: dict, feed_f: dict) -> dict:
-    """Combine task-level and feed-level filter dicts, concatenating rules for shared keys."""
-    merged = {}
-    for key in set(task_f) | set(feed_f):
-        task_val = task_f.get(key)
-        feed_val = feed_f.get(key)
-        if task_val is None:
-            merged[key] = feed_val
-        elif feed_val is None:
-            merged[key] = task_val
-        else:
-            task_list = task_val if isinstance(task_val, list) else [task_val]
-            feed_list = feed_val if isinstance(feed_val, list) else [feed_val]
-            merged[key] = task_list + feed_list
-    return merged
+    """Combine task-level and feed-level filter dicts.
+
+    Feed-level entries fully replace task-level entries for shared sub-keys
+    (title/description/url) so a feed can opt out of a task-wide rule
+    (e.g. task sets `description: clear: true` while one feed pins
+    `description: clear: false`). Disjoint sub-keys are inherited as-is.
+    """
+    return {**task_f, **feed_f}
 
 
 def _is_due(feed_state: dict, period: Period, now: datetime) -> bool:
