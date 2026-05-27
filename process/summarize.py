@@ -186,8 +186,12 @@ _YT_COOKIES_BROWSER_PROFILE: str | None = None
 
 def configure_youtube_cookies(browser: str | None, profile: str | None = None) -> None:
     """Tell yt-dlp to read cookies from the named browser (e.g. 'firefox'), optionally
-    pinning a profile (e.g. 'default-release'). browser=None disables."""
+    pinning a profile (e.g. 'default-release'). browser=None disables.
+    Accepts 'browser:profile' shorthand in the browser arg."""
     global _YT_COOKIES_FROM_BROWSER, _YT_COOKIES_BROWSER_PROFILE
+    if browser and ":" in browser:
+        browser, inline_profile = browser.split(":", 1)
+        profile = profile or inline_profile
     _YT_COOKIES_FROM_BROWSER = browser or None
     _YT_COOKIES_BROWSER_PROFILE = profile or None
 
