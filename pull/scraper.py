@@ -3,12 +3,16 @@
 Vasco handles the transport layer (HTTP with auto-escalation to browser on
 bot-blocked sites, SQLite caching, domain strategy). Adapters parse the
 returned raw HTML with BeautifulSoup to extract structured listing data.
+
+JS-rendered pages (e.g. Elementor) need ``mode: browser`` in the scraper
+config to force vasco to use a headless browser instead of plain HTTP.
 """
 
+import asyncio
 import logging
 
 from pipeline import PullResult
-from process._vasco import fetch_raw_html_batch
+from process._vasco import fetch_raw_html
 from pull.scrapers import (  # noqa: F401 — registers via @register_adapter
     portal_b,
     portal_a,
@@ -55,8 +59,13 @@ async def pull_scrapers(
     if not valid:
         return results
 
-    urls_to_fetch = [sc["url"] for _, sc in valid]
-    html_map = await fetch_raw_html_batch(urls_to_fetch)
+    async def _fetch(sc: dict) -> tuple[str, str | None]:
+        url = sc["url"]
+        mode = sc.get("mode", "auto")
+        return url, await fetch_raw_html(url, mode=mode)
+
+    fetched = await asyncio.gather(*[_fetch(sc) for _, sc in valid])
+    html_map = {url: html for url, html in fetched}
 
     for adapter_name, sc in valid:
         url = sc["url"]
