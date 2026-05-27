@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace as dc_replace
 from typing import Any
 
 from vasco.cache import Cache
-from vasco.config import Config, YouTubeCfg
+from vasco.config import Config, YouTubeCfg, load_config
 from vasco.fetch import fetch_many, fetch_one
 
 log = logging.getLogger(__name__)
@@ -17,8 +18,10 @@ _cache: Cache | None = None
 
 def configure(*, cookies_from_browser: str | None = None) -> None:
     global _cfg, _cache
-    yt = YouTubeCfg(cookies_from_browser=cookies_from_browser or "")
-    _cfg = Config(youtube=yt)
+    cfg = load_config()
+    if cookies_from_browser:
+        cfg = dc_replace(cfg, youtube=YouTubeCfg(cookies_from_browser=cookies_from_browser))
+    _cfg = cfg
     _cache = Cache()
 
 
