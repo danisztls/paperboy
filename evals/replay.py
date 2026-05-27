@@ -122,7 +122,7 @@ async def replay(
     out_dir = state_dir / "evals" / "replays"
     out_dir.mkdir(parents=True, exist_ok=True)
     basename = f"{jsonl_path.parent.name}__{jsonl_path.stem}"
-    stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S")
+    stamp = datetime.now(UTC).astimezone().strftime("%Y-%m-%dT%H-%M-%S")
     out_path = out_dir / f"{basename}__replay_{stamp}.json"
 
     payload = {

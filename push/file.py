@@ -135,7 +135,7 @@ class FileDigestTarget(Target):
             if ext == ".jsonl":
                 _append_jsonl(path, [_serialize_digest(ctx.memory, ctx.cite_map)])
             else:
-                date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+                date_str = datetime.now(UTC).astimezone().strftime("%Y-%m-%d")
                 paragraphs = [
                     _render_paragraph_md(p, ctx.cite_map) for p in ctx.memory if p.text.strip()
                 ]

@@ -210,7 +210,7 @@ async def main() -> None:
     urls: list[str] = cfg["urls"]
     models: list[tuple[str, str]] = [(m["provider"], m["model"]) for m in cfg["models"]]
 
-    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now(UTC).astimezone().strftime("%Y%m%d_%H%M%S")
     out_dir = pathlib.Path(__file__).parent / "results"
     out_dir.mkdir(exist_ok=True)
     out_path = out_dir / f"benchmark_{ts}.json"

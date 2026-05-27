@@ -210,7 +210,8 @@ async def _async_main(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     _run_ts = datetime.now(UTC).replace(microsecond=0)
-    _setup_log_file(state_path.parent / "logs", _run_ts)
+    _run_local = _run_ts.astimezone()
+    _setup_log_file(state_path.parent / "logs", _run_local)
 
     log.info("Config: %s", config_path)
     log.info("State:  %s", state_path)
@@ -462,7 +463,7 @@ async def _async_main(args: argparse.Namespace) -> None:
             results = await asyncio.gather(*feed_tasks, return_exceptions=True)
 
             evals_dir = state_path.parent / "evals"
-            run_stamp = _run_ts.strftime("%Y-%m-%dT%H-%M-%S")
+            run_stamp = _run_local.strftime("%Y-%m-%dT%H-%M-%S")
             written = collector.write_jsonl(evals_dir, run_stamp)
             if written:
                 log.info("Wrote eval traces: %d file(s) under %s", len(written), evals_dir)
