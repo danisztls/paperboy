@@ -25,7 +25,7 @@ Pure functions used by `pull/feed.py` during feed parsing:
 
 Thin wrapper around the `vasco` library (sibling project) for content fetching and raw HTML retrieval.
 
-- `configure(cookies_from_browser=...)` — constructs `vasco.config.Config` + `vasco.cache.Cache` singletons. Called once at startup from `main.py`.
+- `configure()` — loads `vasco.config.Config` (from `~/.config/vasco/config.yaml`) + `vasco.cache.Cache` singletons. Called once at startup from `main.py`.
 - `fetch_content(url, refresh=False)` → `(markdown, og_image) | None` — single-URL fetch via `vasco.fetch.fetch_one(mode="auto")`. Used by `tasks.py` during batch summarization.
 - `fetch_content_batch(urls)` → `{url: (markdown, og_image)}` — batch fetch via `vasco.fetch.fetch_many(workers=4)`.
 - `fetch_content_with_title(url, refresh=False)` → `(markdown, title, og_image, is_youtube) | None` — single-URL fetch returning metadata. Used by CLI `--summarize`, `--get-content`, and benchmark.
