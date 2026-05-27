@@ -67,8 +67,6 @@ class DeepSeekAdapter(LLMAdapter):
             finish_reason=getattr(response.choices[0], "finish_reason", None),
         )
 
-    _structured_reasoning_warned = False
-
     async def complete_structured(
         self,
         prompt: str,
@@ -79,16 +77,34 @@ class DeepSeekAdapter(LLMAdapter):
         reasoning: bool | str | dict = False,
         trace: dict | None = None,
     ) -> T | None:
-        if reasoning_level(reasoning) is not None and not type(self)._structured_reasoning_warned:
-            log.warning(
-                "DeepSeek thinking mode rejects tool_choice='required' / strict JSON, so "
-                "reasoning is ignored on structured calls."
-            )
-            type(self)._structured_reasoning_warned = True
         _model = model or DEFAULT_MODEL
         schema = json.dumps(response_model.model_json_schema(), ensure_ascii=False)
         schema_note = f"\n\nRespond with JSON matching this schema:\n{schema}"
         sys_content = (instructions or "") + schema_note
+
+        if reasoning_level(reasoning) is not None:
+            # Thinking mode is incompatible with json_object / tool_choice on
+            # DeepSeek, so delegate to complete() which supports it natively.
+            resp = await self.complete(
+                prompt,
+                model=_model,
+                instructions=sys_content,
+                reasoning=reasoning,
+            )
+            if resp is None:
+                return None
+            try:
+                parsed = response_model.model_validate_json(resp.text)
+            except ValidationError as exc:
+                log.warning("DeepSeek structured response failed validation: %s", exc)
+                return None
+            if trace is not None:
+                trace["latency_s"] = resp.latency_s
+                trace["model_used"] = resp.model
+                trace["input_tokens"] = resp.input_tokens
+                trace["output_tokens"] = resp.output_tokens
+            return parsed
+
         messages = [
             {"role": "system", "content": sys_content},
             {"role": "user", "content": prompt},
