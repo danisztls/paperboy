@@ -152,7 +152,7 @@ Any change that adds, removes, or renames a config key must also update the corr
 
 - Errors posting one entry must not kill the run — `main.py` catches per-task exceptions, the gather uses `return_exceptions=True`.
 - Keep the 2-second sleep between posts in the same task (Discord webhook rate limits).
-- Don't add a sync HTTP path; feed fetching and article+og:image extraction during summarize all run concurrently via the shared aiohttp session.
+- Don't add a sync HTTP path; feed fetching runs concurrently via the shared aiohttp session. Article content extraction (summarize step) is handled by `vasco` (sibling project, library dep) which uses httpx internally with auto-mode escalation and SQLite caching.
 - Only update `last_run` on a successful feed fetch. A `None` from `Source.pull()` must short-circuit the state write so a transiently broken feed retries on the next cron tick rather than waiting `period` hours.
 - LLM curate failures retry once after 10s; on second failure all items are treated as passing (fail-open).
 - All feeds in a given RSS/digest task share one LLM curate call; items are sent grouped by source with monotonically increasing integer IDs across all feeds.

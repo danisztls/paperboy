@@ -1,18 +1,9 @@
-"""Transcript/article fetch and LLM summarization for YouTube and arbitrary URLs."""
+"""LLM summarization for articles and YouTube transcripts."""
 
-import asyncio
 import logging
-import pathlib
-import re
 import sys
-import tempfile
 
-import aiohttp
-import trafilatura
-import yt_dlp
-from bs4 import BeautifulSoup
-
-from constants import USER_AGENT
+from process._vasco import fetch_content_with_title
 from providers.llm.base import LLMAdapter
 
 log = logging.getLogger(__name__)
@@ -86,313 +77,23 @@ async def summarize_transcript(
     return resp.text if resp else None
 
 
-_VTT_CUE_RE = re.compile(r"^(\d{2}):(\d{2}):(\d{2})[.,](\d{3})\s*-->")
-_VTT_TAGS_RE = re.compile(r"<[^>]+>")
-_VTT_META_RE = re.compile(r"^(WEBVTT|Kind:|Language:)")
-
-_YOUTUBE_RE = re.compile(r"https?://(?:[a-z0-9-]+\.)*youtube\.com(?:\.[a-z]{2,})?/", re.IGNORECASE)
-
-
-def _parse_vtt(content: str) -> list[tuple[float, str]]:
-    """Extract (start_seconds, text) tuples from a WebVTT subtitle file.
-
-    YouTube auto-captions use a rolling-window format with two cue types:
-    - Regular blocks: carryover sentence (no tags) + new words with timing tags.
-    - Transition blocks (10ms): a single clean, completed sentence with no tags.
-    Only transition blocks are emitted; they form a clean, non-duplicated transcript.
-    """
-    cues: list[tuple[float, str]] = []
-    current_start: float | None = None
-    current_lines: list[str] = []
-    current_has_tags: bool = False
-
-    def _flush():
-        if current_start is None or not current_lines:
-            return
-        if current_has_tags:
-            return
-        deduped: list[str] = []
-        for ln in current_lines:
-            if not deduped or ln != deduped[-1]:
-                deduped.append(ln)
-        text = " ".join(deduped)
-        if text:
-            cues.append((current_start, text))
-
-    for raw in content.splitlines():
-        line = raw.strip()
-        if not line:
-            _flush()
-            current_start = None
-            current_lines = []
-            current_has_tags = False
-            continue
-        if _VTT_META_RE.match(line) or line.isdigit():
-            continue
-        m = _VTT_CUE_RE.match(line)
-        if m:
-            _flush()
-            h, mn, s, ms = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
-            current_start = h * 3600 + mn * 60 + s + ms / 1000
-            current_lines = []
-            current_has_tags = False
-            continue
-        if "<" in line:
-            current_has_tags = True
-        cleaned = _VTT_TAGS_RE.sub("", line).strip()
-        if cleaned:
-            current_lines.append(cleaned)
-
-    _flush()
-    return cues
-
-
-def _apply_sponsorblock(
-    cues: list[tuple[float, str]], segments: list[dict]
-) -> list[tuple[float, str]]:
-    """Remove cues whose start time falls inside any SponsorBlock segment."""
-    if not segments:
-        return cues
-    blocked = [(seg["segment"][0], seg["segment"][1]) for seg in segments]
-    return [(t, text) for t, text in cues if not any(start <= t < end for start, end in blocked)]
-
-
-def _cues_to_text(cues: list[tuple[float, str]]) -> str:
-    """Deduplicate consecutive identical cue texts and join."""
-    deduped: list[str] = []
-    for _, text in cues:
-        if not deduped or text != deduped[-1]:
-            deduped.append(text)
-    return " ".join(deduped)
-
-
-async def _fetch_sponsorblock(video_id: str, session: aiohttp.ClientSession) -> list[dict]:
-    categories = '["sponsor","selfpromo","interaction","intro","outro"]'
-    url = f"https://sponsor.ajay.app/api/skipSegments?videoID={video_id}&categories={categories}"
-    try:
-        async with session.get(url) as resp:
-            if resp.status == 404:
-                return []
-            resp.raise_for_status()
-            return await resp.json()
-    except Exception as exc:
-        log.warning("SponsorBlock lookup failed: %s", exc)
-        return []
-
-
-_YT_COOKIES_FROM_BROWSER: str | None = None
-_YT_COOKIES_BROWSER_PROFILE: str | None = None
-
-
-def configure_youtube_cookies(browser: str | None, profile: str | None = None) -> None:
-    """Tell yt-dlp to read cookies from the named browser (e.g. 'firefox'), optionally
-    pinning a profile (e.g. 'default-release'). browser=None disables.
-    Accepts 'browser:profile' shorthand in the browser arg."""
-    global _YT_COOKIES_FROM_BROWSER, _YT_COOKIES_BROWSER_PROFILE
-    if browser and ":" in browser:
-        browser, inline_profile = browser.split(":", 1)
-        profile = profile or inline_profile
-    _YT_COOKIES_FROM_BROWSER = browser or None
-    _YT_COOKIES_BROWSER_PROFILE = profile or None
-
-
-def _ytdl_opts(**extra) -> dict:
-    opts = {"skip_download": True, "quiet": True, "no_warnings": True, **extra}
-    if _YT_COOKIES_FROM_BROWSER:
-        opts["cookiesfrombrowser"] = (
-            _YT_COOKIES_FROM_BROWSER,
-            _YT_COOKIES_BROWSER_PROFILE,
-            None,
-            None,
-        )
-    return opts
-
-
-async def _fetch_youtube_data(url: str, session: aiohttp.ClientSession) -> tuple[str, str] | None:
-    """Return (title, transcript) for a YouTube URL, or None on failure."""
-
-    def _extract():
-        with yt_dlp.YoutubeDL(_ytdl_opts()) as ydl:
-            return ydl.extract_info(url, download=False)
-
-    log.info("Fetching video info: %s", url)
-    try:
-        info = await asyncio.to_thread(_extract)
-    except Exception as exc:
-        log.warning("yt-dlp failed for %s: %s", url, exc)
-        return None
-
-    title = info.get("title", "")
-    video_id = info.get("id", "")
-    subs = info.get("subtitles") or {}
-    auto = info.get("automatic_captions") or {}
-
-    # Prefer human subtitles, then original-language auto-captions, then translated fallback
-    selected_lang: str | None = None
-    is_auto = False
-    for lang in ("en", "en-orig", *subs.keys()):
-        if lang in subs:
-            selected_lang = lang
-            break
-    if not selected_lang:
-        orig_keys = [k for k in auto if k.endswith("-orig")]
-        for lang in (*orig_keys, "en", *auto.keys()):
-            if lang in auto:
-                selected_lang = lang
-                is_auto = True
-                break
-
-    if not selected_lang:
-        log.warning("No subtitles or captions found for %s", url)
-        return None
-
-    log.info("Fetching captions for %r (lang=%s)", title, selected_lang)
-
-    def _download_vtt() -> str | None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            opts = _ytdl_opts(
-                writesubtitles=not is_auto,
-                writeautomaticsub=is_auto,
-                subtitlesformat="vtt",
-                subtitleslangs=[selected_lang],
-                outtmpl=str(pathlib.Path(tmpdir) / "sub"),
-            )
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                ydl.download([url])
-            vtt_files = list(pathlib.Path(tmpdir).glob("*.vtt"))
-            return vtt_files[0].read_text() if vtt_files else None
-
-    try:
-        vtt_content, sb_segments = await asyncio.gather(
-            asyncio.to_thread(_download_vtt),
-            _fetch_sponsorblock(video_id, session),
-        )
-    except Exception as exc:
-        log.warning("Failed to download captions for %s: %s", url, exc)
-        return None
-
-    if vtt_content is None:
-        log.warning("yt-dlp wrote no VTT file for %s", url)
-        return None
-
-    cues = _parse_vtt(vtt_content)
-    if not cues:
-        log.warning("No text extracted from captions for %s", url)
-        return None
-
-    if sb_segments:
-        before = len(cues)
-        cues = _apply_sponsorblock(cues, sb_segments)
-        log.info(
-            "SponsorBlock removed %d/%d cues (%d segments)",
-            before - len(cues),
-            before,
-            len(sb_segments),
-        )
-    else:
-        log.info("No SponsorBlock segments found")
-
-    transcript = _cues_to_text(cues)
-    if not transcript:
-        log.warning("No text remained after SponsorBlock filtering for %s", url)
-        return None
-
-    log.info("Transcript length: %d chars", len(transcript))
-    return title, transcript
-
-
-def extract_og_image(html: str) -> str | None:
-    """Return the og:image URL from raw HTML, or None if absent."""
-    meta = BeautifulSoup(html, "html.parser").find("meta", property="og:image")
-    return meta.get("content") if meta else None
-
-
-async def _fetch_article(
-    url: str, session: aiohttp.ClientSession, *, with_title: bool = False
-) -> tuple[str, str, str | None] | None:
-    """Extract (title, body, og_image) from a URL using trafilatura.
-
-    `title` is `""` unless `with_title=True`. Returns None on fetch or extraction failure.
-    """
-    try:
-        async with session.get(url, allow_redirects=True) as resp:
-            resp.raise_for_status()
-            html = await resp.text()
-    except Exception as exc:
-        log.warning("Failed to fetch %s: %s", url, exc)
-        return None
-
-    def _extract():
-        doc = trafilatura.extract(
-            html,
-            url=url,
-            include_comments=False,
-            include_tables=True,
-            no_fallback=False,
-            favor_recall=True,
-            output_format="markdown",
-        )
-        if not doc:
-            return None
-        title = ""
-        if with_title:
-            meta = trafilatura.extract_metadata(html, default_url=url)
-            title = (meta.title if meta else "") or ""
-        return title, doc, extract_og_image(html)
-
-    result = await asyncio.to_thread(_extract)
-    if not result:
-        log.warning("trafilatura extracted no content from %s", url)
-        return None
-
-    log.info("Article extracted: %d chars from %s", len(result[1]), url)
-    return result
-
-
-async def fetch_item_content(
-    url: str, session: aiohttp.ClientSession
-) -> tuple[str, str | None] | None:
-    """Return (content, og_image) for a feed item URL, or None.
-
-    YouTube URLs: returns the video transcript via yt-dlp + SponsorBlock filtering (no og:image).
-    Other URLs: returns article text extracted by trafilatura (markdown format) plus the og:image
-    URL scraped from the same HTML, if present.
-    """
-    if _YOUTUBE_RE.match(url):
-        result = await _fetch_youtube_data(url, session)
-        return (result[1], None) if result else None
-    article = await _fetch_article(url, session)
-    if not article:
-        return None
-    _title, body, og = article
-    return body, og
-
-
 async def run_summarize(
     url: str, adapter: LLMAdapter, model: str | None, language: str = "EN-US"
 ) -> None:
-    is_youtube = bool(_YOUTUBE_RE.match(url))
+    result = await fetch_content_with_title(url, refresh=True)
+    if not result:
+        log.error("Could not fetch content for %s", url)
+        sys.exit(1)
 
-    async with aiohttp.ClientSession(
-        timeout=aiohttp.ClientTimeout(total=15),
-        headers={"User-Agent": USER_AGENT},
-    ) as session:
-        if is_youtube:
-            result = await _fetch_youtube_data(url, session)
-            if not result:
-                log.error("Could not fetch transcript for %s", url)
-                sys.exit(1)
-            title, transcript = result
-            summary = await summarize_transcript(
-                title, transcript, adapter, model=model, language=language
-            )
-        else:
-            result = await _fetch_article(url, session)
-            if not result:
-                log.error("Could not fetch article content for %s", url)
-                sys.exit(1)
-            _title, content, _og = result
-            summary = await summarize_entry(url, content, adapter, model=model, language=language)
+    content, title, _image, is_youtube = result
+    if is_youtube:
+        summary = await summarize_transcript(
+            title, content, adapter, model=model, language=language
+        )
+    else:
+        summary = await summarize_entry(
+            title or url, content, adapter, model=model, language=language
+        )
 
     if summary:
         print(summary)
@@ -402,14 +103,9 @@ async def run_summarize(
 
 
 async def run_get_content(url: str) -> None:
-    async with aiohttp.ClientSession(
-        timeout=aiohttp.ClientTimeout(total=15),
-        headers={"User-Agent": USER_AGENT},
-    ) as session:
-        result = await fetch_item_content(url, session)
-
+    result = await fetch_content_with_title(url, refresh=True)
     if not result:
         log.error("Could not fetch content for %s", url)
         sys.exit(1)
-    content, _og = result
+    content, _title, _image, _is_youtube = result
     print(content)

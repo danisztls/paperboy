@@ -17,8 +17,9 @@ from config import (
     task_kind,
 )
 from pipeline import Citation, FilterResult, Item, MemoryParagraph, PushContext
+from process._vasco import fetch_content
 from process.curate import curate_entries
-from process.summarize import _YOUTUBE_RE, fetch_item_content, summarize_entry
+from process.summarize import summarize_entry
 from providers.llm.base import LLMAdapter
 from pull.feed import RSSSource
 from pull.finance import FinanceSource
@@ -188,7 +189,6 @@ async def _summarize_items(
     cfg_by_id: dict[str, tuple[str, str | None]],
     summarize_adapter: LLMAdapter | None,
     model: str | None,
-    session: aiohttp.ClientSession | None = None,
     *,
     default_reasoning: str | bool | dict | None = None,
     collector=None,
@@ -197,17 +197,13 @@ async def _summarize_items(
     """Replace .summary on items that have fetchable content or a body, concurrently.
 
     Also fills Item.image with the article's og:image when the item had no image
-    yet, piggybacking on the HTML fetch trafilatura already performed.
+    yet, piggybacking on the content fetch vasco already performed.
     """
 
     async def _get_content(e: Item) -> tuple[str, str | None]:
-        """Return (content, og_image). og_image is None for body-only fallback or YouTube."""
-        if session:
-            fetched = await fetch_item_content(e.url, session)
-            if fetched:
-                return fetched
-            if _YOUTUBE_RE.match(e.url):
-                return None, None
+        fetched = await fetch_content(e.url)
+        if fetched:
+            return fetched
         return e.body, None
 
     if summarize_adapter is None:
@@ -685,7 +681,6 @@ async def _run_summarize_stage(
     summarize_adapter: LLMAdapter | None,
     summarize_model: str | None,
     summarize_reasoning: str | bool | dict | None = None,
-    session: aiohttp.ClientSession,
     collector,
     analysis: bool,
 ) -> list[Item]:
@@ -719,7 +714,6 @@ async def _run_summarize_stage(
         summarize_cfg_by_id,
         summarize_adapter,
         summarize_model,
-        session,
         default_reasoning=summarize_reasoning,
         collector=collector,
         analysis=analysis,
@@ -916,7 +910,6 @@ async def _process_feed_task(
                 summarize_adapter=summarize_adapter,
                 summarize_model=summarize_model,
                 summarize_reasoning=summarize_reasoning,
-                session=session,
                 collector=collector,
                 analysis=analysis,
             )

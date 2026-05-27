@@ -21,12 +21,20 @@ Pure functions used by `pull/feed.py` during feed parsing:
 - `apply_regex(cfg, text)` runs `extract` / `replace` / `remove_phrases_with_urls` / `remove_phrases_containing` / `clear` ops.
 - `url_filtered(url, cfg)` checks `skip_containing`.
 
-## `summarize.py` — LLM summarization + content extraction
+## `_vasco.py` — bridge to vasco for URL content extraction
+
+Thin wrapper around the `vasco` library (sibling project) that handles article/YouTube content fetching. Replaces the former in-process trafilatura + yt-dlp + SponsorBlock pipeline.
+
+- `configure(cookies_from_browser=...)` — constructs `vasco.config.Config` + `vasco.cache.Cache` singletons. Called once at startup from `main.py`.
+- `fetch_content(url, refresh=False)` → `(markdown, og_image) | None` — single-URL fetch via `vasco.fetch.fetch_one(mode="auto")`. Used by `tasks.py` during batch summarization.
+- `fetch_content_batch(urls)` → `{url: (markdown, og_image)}` — batch fetch via `vasco.fetch.fetch_many(workers=4)`.
+- `fetch_content_with_title(url, refresh=False)` → `(markdown, title, og_image, is_youtube) | None` — single-URL fetch returning metadata. Used by CLI `--summarize`, `--get-content`, and benchmark.
+
+Vasco's `mode="auto"` tries plain HTTP first, escalating to browser (Camoufox) only on bot-blocked pages. The browser cold-starts once per run (singleton). Shares vasco's global SQLite cache (`~/.cache/vasco/cache.db`). CLI one-shots use `refresh=True` to bypass cache reads.
+
+## `summarize.py` — LLM summarization
 
 - `summarize_entry(title, body, adapter, ...)` summarizes a feed entry.
-- `summarize_transcript(transcript, adapter, ...)` summarizes a YouTube transcript.
-- `fetch_item_content(url, session)` returns `(content, og_image)`:
-  - Article text via trafilatura plus `og:image` scraped from the same HTML.
-  - YouTube URLs fetched via `yt-dlp` (subtitle VTTs downloaded with `writesubtitles` / `writeautomaticsub` flags, parsed and SponsorBlock-filtered) return the transcript with `og_image=None`.
-- `extract_og_image(html)` is the standalone helper used at end of trafilatura extraction.
-- `configure_youtube_cookies(browser, profile=None)` — set at startup from `youtube.cookies_from_browser` (+ optional `youtube.cookies_browser_profile`). When set, every `yt-dlp` call adds `cookiesfrombrowser=(browser, profile, None, None)`, which is required to bypass the "Sign in to confirm you're not a bot" wall. The profile slot pins a specific browser profile (e.g. `default-release` for Firefox, `Profile 1` for Chrome); omit to let yt-dlp pick. Module-level state so deep call sites don't need to thread it.
+- `summarize_transcript(title, transcript, adapter, ...)` summarizes a YouTube transcript.
+- `run_summarize(url, adapter, model, language)` — CLI `--summarize` entry point. Fetches via `_vasco`, routes YouTube vs article, prints summary.
+- `run_get_content(url)` — CLI `--get-content` entry point. Fetches via `_vasco`, prints extracted text.
