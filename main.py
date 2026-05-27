@@ -27,7 +27,8 @@ from config import (
 )
 from constants import USER_AGENT
 from evals.capture import RunCapture
-from process.summarize import configure_youtube_cookies, run_get_content, run_summarize
+from process._vasco import configure as configure_vasco
+from process.summarize import run_get_content, run_summarize
 from providers.llm import FallbackAdapter, get_adapter
 from pull.feed import RSSSource
 from state import _auto_clean, _remove_unknown, load_state, save_state
@@ -286,9 +287,7 @@ async def _async_main(args: argparse.Namespace) -> None:
     instructions = search_cfg_global.get("instructions") or None
     global_language = curate_cfg.get("language") or "EN-US"
     _yt_cfg = config.get("youtube") or {}
-    configure_youtube_cookies(
-        _yt_cfg.get("cookies_from_browser"), _yt_cfg.get("cookies_browser_profile")
-    )
+    configure_vasco(cookies_from_browser=_yt_cfg.get("cookies_from_browser"))
     discord_cfg = config.get("discord", {})
     global_color = parse_color(discord_cfg.get("color"))
     feeds_cfg = config.get("feeds") or {}

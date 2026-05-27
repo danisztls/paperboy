@@ -10,7 +10,6 @@ from datetime import UTC, datetime
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
-import aiohttp
 import yaml
 from rich import box
 from rich.console import Console
@@ -28,10 +27,8 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
+from process._vasco import fetch_content_with_title
 from process.summarize import (
-    _YOUTUBE_RE,
-    _fetch_article,
-    _fetch_youtube_data,
     summarize_entry,
     summarize_transcript,
 )
@@ -39,26 +36,16 @@ from providers.llm import get_adapter
 
 _CONFIG_PATH = pathlib.Path(__file__).parent / "config.yaml"
 
-_SESSION_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
-}
-
 console = Console()
 
 
-async def fetch_content(url: str, session: aiohttp.ClientSession) -> tuple[str, str, str]:
-    """Return (url, title, content) for a URL."""
-    if _YOUTUBE_RE.match(url):
-        result = await _fetch_youtube_data(url, session)
-        if not result:
-            return url, "", ""
-        title, transcript = result
-        return url, title, transcript
-    result = await _fetch_article(url, session, with_title=True)
+async def fetch_content(url: str) -> tuple[str, str, str, bool]:
+    """Return (url, title, content, is_youtube) for a URL."""
+    result = await fetch_content_with_title(url, refresh=True)
     if not result:
-        return url, "", ""
-    title, content, _og = result
-    return url, title, content
+        return url, "", "", False
+    content, title, _image, is_youtube = result
+    return url, title, content, is_youtube
 
 
 async def run_model(
@@ -94,10 +81,10 @@ async def process_url(
     url: str,
     title: str,
     content: str,
+    is_youtube: bool,
     models: list[tuple[str, str]],
 ) -> dict:
     """Run all models against one URL concurrently. Returns a complete entry dict."""
-    is_youtube = bool(_YOUTUBE_RE.match(url))
     entry: dict = {
         "url": url,
         "title": title,
@@ -221,26 +208,22 @@ async def main() -> None:
         "results": [],
     }
 
-    async with aiohttp.ClientSession(
-        timeout=aiohttp.ClientTimeout(total=60),
-        headers=_SESSION_HEADERS,
-    ) as session:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TimeElapsedColumn(),
-            console=console,
-        ) as progress:
-            fetch_task = progress.add_task("Fetching content…", total=len(urls))
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        fetch_task = progress.add_task("Fetching content…", total=len(urls))
 
-            async def _fetch_one(url: str) -> tuple[str, str, str]:
-                result = await fetch_content(url, session)
-                progress.advance(fetch_task)
-                return result
+        async def _fetch_one(url: str) -> tuple[str, str, str, bool]:
+            result = await fetch_content(url)
+            progress.advance(fetch_task)
+            return result
 
-            contents = await asyncio.gather(*[_fetch_one(url) for url in urls])
+        contents = await asyncio.gather(*[_fetch_one(url) for url in urls])
 
     with Progress(
         SpinnerColumn(),
@@ -254,13 +237,16 @@ async def main() -> None:
             f"Running {len(models)} model(s) on each URL…", total=len(contents)
         )
 
-        async def _process_one(url: str, title: str, content: str) -> dict:
-            entry = await process_url(url, title, content, models)
+        async def _process_one(url: str, title: str, content: str, is_youtube: bool) -> dict:
+            entry = await process_url(url, title, content, is_youtube, models)
             progress.advance(run_task)
             return entry
 
         all_entries = await asyncio.gather(
-            *[_process_one(url, title, content) for url, title, content in contents]
+            *[
+                _process_one(url, title, content, is_youtube)
+                for url, title, content, is_youtube in contents
+            ]
         )
 
     console.print()
