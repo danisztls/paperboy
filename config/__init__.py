@@ -286,12 +286,6 @@ class _GlobalSummarize(BaseModel):
     model: ModelSpecList = None
 
 
-class _Youtube(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    cookies_from_browser: str | None = None
-    cookies_browser_profile: str | None = None
-
-
 class _FilterOp(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
     remove_phrases_with_urls: Any = None
@@ -546,7 +540,6 @@ class _Config(BaseModel):
     curate: _GlobalCurate | None = None
     search: _GlobalSearch | None = None
     summarize: _GlobalSummarize | None = None
-    youtube: _Youtube | None = None
     image: _Image | None = None
     retention: _Retention | None = None
     tasks: list[_Task]

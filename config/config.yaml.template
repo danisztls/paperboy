@@ -44,16 +44,6 @@ summarize:                  # optional — global defaults for LLM summarization
   #   - provider: openai
   #     name: gpt-5.4-mini
 
-# youtube:                    # optional — global YouTube fetching options
-#   cookies_from_browser: firefox   # yt-dlp reads live cookies from this browser profile.
-#                                   # required to bypass "Sign in to confirm you're not a bot"
-#                                   # walls. Browser must be installed on the host.
-#                                   # Accepts: firefox, chrome, brave, librewolf, edge, etc.
-#   cookies_browser_profile: default-release  # optional — pin a specific profile.
-#                                             # omit to let yt-dlp pick the default.
-#                                             # Firefox profile names: see ~/.mozilla/firefox/.
-#                                             # Chromium-family: "Default", "Profile 1", ...
-
 tasks:
   # RSS task: fetches feeds and posts new entries as Discord embeds.
   - name: my-feeds
