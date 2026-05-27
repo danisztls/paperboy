@@ -2,7 +2,7 @@ import json
 import logging
 import re
 
-from playwright.async_api import Page
+from bs4 import BeautifulSoup
 
 from pipeline import Item
 
@@ -28,9 +28,6 @@ _JSONLD_TYPE_MAP = {
     "LandProperty": "Terreno",
 }
 
-# Curated whitelist for `offers.amenityFeature`. Drops table-stakes amenities
-# (Kitchen, Laundry, Garage, Service Area) and keeps the differentiators.
-# Keys are the English values VivaReal emits; values are the rendered labels.
 _AMENITY_LABELS = {
     "Pool": "Piscina",
     "Gated Community": "Condomínio Fechado",
@@ -75,8 +72,6 @@ def _as_int(value) -> int | None:
 
 
 def _passes_area_per_room(item: Item, min_ratio: float) -> bool:
-    """Drop listings whose area / bedrooms is below `min_ratio` (m²/quarto).
-    Listings missing either field pass — can't evaluate the ratio."""
     area = _as_int(item.meta.get("area"))
     bedrooms = _as_int(item.meta.get("bedrooms"))
     if not area or not bedrooms:
@@ -106,7 +101,6 @@ def _format_price(rent, condo, iptu) -> str:
 
 
 def _extract_condo_fee(pv) -> int | None:
-    """Pull the Condominium Fee value out of `offers.propertyValue` (dict or list)."""
     if isinstance(pv, dict):
         if pv.get("name") == "Condominium Fee":
             return _as_int(pv.get("value"))
@@ -119,7 +113,6 @@ def _extract_condo_fee(pv) -> int | None:
 
 
 def _extract_amenities(features) -> list[str]:
-    """Map `amenityFeature` entries through the whitelist; drop unknowns."""
     if not isinstance(features, list):
         return []
     out: list[str] = []
@@ -168,21 +161,12 @@ class VivaRealAdapter(SiteAdapter):
     def name(self) -> str:
         return "vivareal"
 
-    async def scrape(self, url: str, cfg: dict, seen: set[str], page: Page) -> list[Item]:
-        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        try:
-            await page.wait_for_load_state("networkidle", timeout=12000)
-        except Exception:
-            pass
+    async def scrape(self, url: str, cfg: dict, seen: set[str], html: str) -> list[Item]:
+        soup = BeautifulSoup(html, "html.parser")
+        jsonld_blocks = [
+            tag.string for tag in soup.find_all("script", type="application/ld+json") if tag.string
+        ]
 
-        # Primary: JSON-LD ItemList — carries everything we need per listing
-        # (rent via offers.price, condo fee via offers.propertyValue, first gallery
-        # image, address.streetAddress, curated amenityFeature values). Detail pages
-        # are gated by Cloudflare; we don't visit them.
-        jsonld_blocks = await page.evaluate(
-            "() => Array.from(document.querySelectorAll('script[type=\"application/ld+json\"]'))"
-            ".map(s => s.textContent)"
-        )
         items = self._from_jsonld(jsonld_blocks)
         if items is not None:
             min_area_per_room = cfg.get("min_area_per_room")
@@ -202,8 +186,6 @@ class VivaRealAdapter(SiteAdapter):
 
         log.warning("[vivareal] No JSON-LD ItemList found")
         return []
-
-    # --- JSON-LD path (primary) ---
 
     def _from_jsonld(self, blocks: list[str]) -> list[Item] | None:
         for raw in blocks:
@@ -233,7 +215,6 @@ class VivaRealAdapter(SiteAdapter):
             area = (item.get("floorSize") or {}).get("value")
 
             name = item.get("name") or ""
-            # Name format: "Tipo ... em Bairro, Cidade" — extract neighborhood
             nbh_match = re.search(r"\bem ([^,]+),", name)
             neighborhood = nbh_match.group(1).strip() if nbh_match else ""
 
@@ -242,7 +223,6 @@ class VivaRealAdapter(SiteAdapter):
             street = (addr.get("streetAddress") or "").strip() or None
             location = ", ".join(p for p in [neighborhood, city] if p)
 
-            # Parking not in JSON-LD schema; parse from name
             parking_match = re.search(r"(\d+)\s*vaga", name, re.IGNORECASE)
             parking = int(parking_match.group(1)) if parking_match else None
 
