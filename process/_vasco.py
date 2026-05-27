@@ -62,24 +62,9 @@ async def fetch_content_with_title(
     return env["markdown"], env.get("title") or "", env.get("image"), is_youtube
 
 
-async def fetch_raw_html(url: str) -> str | None:
-    env = await fetch_one(url, mode="auto", raw=True, cache=_cache, cfg=_cfg)
+async def fetch_raw_html(url: str, *, mode: str = "auto") -> str | None:
+    env = await fetch_one(url, mode=mode, raw=True, cache=_cache, cfg=_cfg)
     if not _envelope_ok(env):
         log.warning("vasco fetch failed for %s: %s", url, env.get("failure", {}).get("message", ""))
         return None
     return env["markdown"]
-
-
-async def fetch_raw_html_batch(urls: list[str]) -> dict[str, str]:
-    results: dict[str, str] = {}
-    async for env in fetch_many(urls, workers=4, mode="auto", raw=True, cache=_cache, cfg=_cfg):
-        key = env.get("url_requested", "")
-        if _envelope_ok(env):
-            results[key] = env["markdown"]
-        else:
-            log.warning(
-                "vasco fetch failed for %s: %s",
-                key,
-                env.get("failure", {}).get("message", ""),
-            )
-    return results
