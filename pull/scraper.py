@@ -1,21 +1,14 @@
-"""Web scraping source: browser-based extraction via site adapters.
+"""Web scraping source: fetches pages via vasco and parses with site adapters.
 
-Uses Camoufox (hardened Firefox) as the engine so adapters get past anti-bot
-protections like Cloudflare without per-adapter stealth plumbing. Camoufox
-manages the fingerprint itself — don't set a custom User-Agent. Requires the
-binary downloaded once via `uv run camoufox fetch`.
-
-Scraper tasks may have multiple `scraper:` items in their `pull:` list — one
-per adapter, each with its own URL. `pull_scrapers` runs them all under one
-Camoufox browser (serial pages), with per-adapter exception isolation so a
-broken selector on one site doesn't kill the others.
+Vasco handles the transport layer (HTTP with auto-escalation to browser on
+bot-blocked sites, SQLite caching, domain strategy). Adapters parse the
+returned raw HTML with BeautifulSoup to extract structured listing data.
 """
 
 import logging
 
-from camoufox.async_api import AsyncCamoufox
-
 from pipeline import PullResult
+from process._vasco import fetch_raw_html_batch
 from pull.scrapers import (  # noqa: F401 — registers via @register_adapter
     imoveis_barreto,
     imoveis_romildo,
@@ -34,10 +27,10 @@ async def pull_scrapers(
     scraper_cfgs: list[dict],
     seen_per_adapter: dict[str, set[str]],
 ) -> dict[str, PullResult | None]:
-    """Run all configured scrapers under one Camoufox browser.
+    """Run all configured scrapers via vasco-fetched HTML.
 
     Returns `{adapter_name: PullResult | None}`. A `None` value means that
-    adapter failed (unknown adapter, missing url, navigation/extraction error)
+    adapter failed (unknown adapter, missing url, fetch/extraction error)
     and the caller must preserve its prior state. Adapters without a `seen`
     entry get an empty set.
     """
@@ -62,38 +55,39 @@ async def pull_scrapers(
     if not valid:
         return results
 
-    try:
-        async with AsyncCamoufox(headless=True, locale="pt-BR", os="linux") as browser:
-            for adapter_name, sc in valid:
-                url = sc["url"]
-                max_items = sc.get("max_items")
-                seen = seen_per_adapter.get(adapter_name, set())
-                log.info("[scraper] %s → %s", adapter_name, url)
-                page = await browser.new_page()
-                try:
-                    all_items = await get_adapter(adapter_name)().scrape(url, sc, seen, page)
-                except Exception as exc:
-                    log.error("[scraper] %s failed: %s", adapter_name, exc)
-                    results[adapter_name] = None
-                    continue
-                finally:
-                    await page.close()
+    urls_to_fetch = [sc["url"] for _, sc in valid]
+    html_map = await fetch_raw_html_batch(urls_to_fetch)
 
-                current = [{"url": it.id, "title": it.title} for it in all_items]
-                new_items = [it for it in all_items if it.id not in seen]
-                if max_items is not None:
-                    new_items = new_items[:max_items]
-                log.info(
-                    "[scraper] %s: %d total, %d new (capped: %s)",
-                    adapter_name,
-                    len(all_items),
-                    len(new_items),
-                    max_items,
-                )
-                results[adapter_name] = PullResult(new_items=new_items, current_items=current)
-    except Exception as exc:
-        log.error("[scraper] Browser launch failed: %s", exc)
-        for adapter_name, _ in valid:
-            results.setdefault(adapter_name, None)
+    for adapter_name, sc in valid:
+        url = sc["url"]
+        max_items = sc.get("max_items")
+        seen = seen_per_adapter.get(adapter_name, set())
+        log.info("[scraper] %s → %s", adapter_name, url)
+
+        html = html_map.get(url)
+        if not html:
+            log.error("[scraper] %s: failed to fetch %s", adapter_name, url)
+            results[adapter_name] = None
+            continue
+
+        try:
+            all_items = await get_adapter(adapter_name)().scrape(url, sc, seen, html)
+        except Exception as exc:
+            log.error("[scraper] %s failed: %s", adapter_name, exc)
+            results[adapter_name] = None
+            continue
+
+        current = [{"url": it.id, "title": it.title} for it in all_items]
+        new_items = [it for it in all_items if it.id not in seen]
+        if max_items is not None:
+            new_items = new_items[:max_items]
+        log.info(
+            "[scraper] %s: %d total, %d new (capped: %s)",
+            adapter_name,
+            len(all_items),
+            len(new_items),
+            max_items,
+        )
+        results[adapter_name] = PullResult(new_items=new_items, current_items=current)
 
     return results

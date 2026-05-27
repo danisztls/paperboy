@@ -1,7 +1,5 @@
 from abc import ABC, abstractmethod
 
-from playwright.async_api import Page
-
 from pipeline import Item
 
 _REGISTRY: dict[str, type[SiteAdapter]] = {}
@@ -36,9 +34,9 @@ class SiteAdapter(ABC):
         url: str,
         cfg: dict,
         seen: set[str],
-        page: Page,
+        html: str,
     ) -> list[Item]:
-        """Navigate to url and return all currently visible listings.
+        """Parse raw HTML and return all currently visible listings.
 
         Returns ALL items on the page — the caller filters against seen.
         Return [] on failure rather than raising.

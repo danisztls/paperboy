@@ -8,7 +8,7 @@ A personal notifier that posts to Discord webhooks on a cron schedule. Supported
 
 - **RSS** — polls feeds, posts new entries as Discord embeds, tracks seen entries.
 - **Digest** — like RSS but all passing entries are collected and posted as a single text message (splits on 2000-char limit). No OG image fetching. Uses `[Title](<url>)` to suppress Discord link previews.
-- **Scraper** — browser-based extraction from JavaScript-heavy sites via Camoufox (hardened Firefox, drop-in Playwright API). One-time setup: `uv run camoufox fetch` to download the ~700MB browser binary.
+- **Scraper** — structured extraction from listing sites. Pages are fetched via vasco (HTTP-first with auto-escalation to Camoufox browser on bot-blocked sites), then parsed with BeautifulSoup. Site-specific adapters extract fields like price, bedrooms, images.
 - **Search** — calls a configurable LLM (OpenAI, Gemini, Anthropic, or DeepSeek) with a prompt + web search, posts the plain-text response.
 - **Weather** — fetches the daily forecast from Open-Meteo (no API key) and posts a `wttr.in`-style text report. `kind: smart` switches to a signal-only variant gated by σ-based anomaly thresholds against climate normals + past 7 days.
 - **Finance** — pulls quotes from yfinance (sync lib wrapped in `asyncio.to_thread`). Detected by `pull` containing a `finance` item with exactly one of two sub-keys: `report` (periodic snapshot) or `monitor` (intraday alerts on deltas + price-band crossings). User writes yfinance symbols verbatim (no alias map).
