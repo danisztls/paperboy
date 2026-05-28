@@ -7,8 +7,8 @@
 <body>
   <article>
     <h1>Test Article Headline</h1>
-    <p>This article exists solely so that trafilatura has substantial body content to extract during the digest pipeline test. The text needs to be long enough to satisfy the extractor's heuristics about whether a page contains a real article or just navigation.</p>
-    <p>The second paragraph adds more context. Trafilatura prefers pages that look like editorial content, with multiple paragraphs of prose, a heading, and minimal boilerplate. This fixture provides exactly that — a small, predictable article body that the summarize stage can feed to the fake LLM adapter.</p>
+    <p>This article exists solely so that the content extractor has substantial body content to work with during the digest pipeline test. The text needs to be long enough to look like a real article rather than just navigation or boilerplate.</p>
+    <p>The second paragraph adds more context. Extractors prefer pages that look like editorial content, with multiple paragraphs of prose, a heading, and minimal boilerplate. This fixture provides exactly that — a small, predictable article body that the summarize stage can feed to the fake LLM adapter.</p>
     <p>A third paragraph reinforces the article-like structure and ensures the extractor does not fall back to None. The test does not actually depend on the summary content, only on the pipeline reaching the summarize stage with non-empty input.</p>
   </article>
 </body>

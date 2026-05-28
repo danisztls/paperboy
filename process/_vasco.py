@@ -7,7 +7,7 @@ from typing import Any
 
 from vasco.cache import Cache
 from vasco.config import Config, load_config
-from vasco.fetch import fetch_many, fetch_one
+from vasco.fetch import fetch_one
 
 log = logging.getLogger(__name__)
 
@@ -31,23 +31,6 @@ async def fetch_content(url: str, *, refresh: bool = False) -> tuple[str, str | 
         log.warning("vasco fetch failed for %s: %s", url, env.get("failure", {}).get("message", ""))
         return None
     return env["markdown"], env.get("image")
-
-
-async def fetch_content_batch(
-    urls: list[str],
-) -> dict[str, tuple[str, str | None]]:
-    results: dict[str, tuple[str, str | None]] = {}
-    async for env in fetch_many(urls, workers=4, mode="auto", cache=_cache, cfg=_cfg):
-        key = env.get("url_requested", "")
-        if _envelope_ok(env):
-            results[key] = (env["markdown"], env.get("image"))
-        else:
-            log.warning(
-                "vasco fetch failed for %s: %s",
-                key,
-                env.get("failure", {}).get("message", ""),
-            )
-    return results
 
 
 async def fetch_content_with_title(
