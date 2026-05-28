@@ -19,17 +19,15 @@ Source implementations. Each implements `pipeline.Source` and returns `PullResul
 
 `SearchSource(Source)` calls `run_search_task(task_cfg, instructions, model, adapter)`, which invokes the configured LLM with web search enabled and wraps the response as a single `Item`. Returns `None` on LLM error.
 
-## `scraper.py` + `scrapers/` — browser-based extraction (Camoufox)
+## `scraper.py` + `scrapers/` — structured extraction via vasco
 
-Camoufox is a hardened Firefox build with C++-level anti-detection patches. Drop-in Playwright API; the `SiteAdapter.scrape()` contract is unchanged.
-
-- `pull_scrapers(scraper_cfgs, seen_per_adapter)` fetches all adapter URLs concurrently via `vasco.fetch.fetch_many(raw=True)`, then passes the raw HTML to each adapter's `scrape()`. Returns `dict[adapter_name, PullResult | None]`. `None` means that adapter failed (unknown name, missing url, fetch/extraction error) — caller must preserve its prior state.
-- Vasco handles transport: HTTP-first with auto-escalation to browser (Camoufox) on bot-blocked sites, SQLite caching, per-domain strategy learning. Adapters parse the returned HTML with BeautifulSoup.
+- `pull_scrapers(scraper_cfgs, seen_per_adapter)` fetches all adapter URLs concurrently via vasco (`fetch_raw_html`), then passes the raw HTML to each adapter's `scrape()`. Returns `dict[adapter_name, PullResult | None]`. `None` means that adapter failed (unknown name, missing url, fetch/extraction error) — caller must preserve its prior state.
+- Vasco handles transport: HTTP-first with auto-escalation to browser on bot-blocked sites, SQLite caching, per-domain strategy learning. Adapters parse the returned HTML with BeautifulSoup.
 - `_get_scraper_cfgs(task_cfg)` returns the list of `scraper:` items from `pull:`.
 
 ### Adapters
 
-- `scrapers/base.py` — `SiteAdapter` ABC + `@register_adapter` decorator registry (`get_adapter`, `available_adapters`). `scrape(url, cfg, seen, html)` receives raw HTML (not a Playwright Page).
+- `scrapers/base.py` — `SiteAdapter` ABC + `@register_adapter` decorator registry (`get_adapter`, `available_adapters`). `scrape(url, cfg, seen, html)` receives raw HTML.
 - `scrapers/vivareal.py` — `VivaRealAdapter`: parses VivaReal search pages via JSON-LD `ItemList` in `<script>` tags (BeautifulSoup). Multi-image from JSON-LD `image` field; capped at 4 for Discord's embed-merge limit. Supports an optional `min_area_per_room: N` cfg key (m²/quarto) that drops cramped layouts; listings missing area or bedroom count pass through.
 - `scrapers/portal_a.py` — server-rendered PHP (no JS gating, no JSON-LD); reads `.pgl-property` cards via BeautifulSoup. Price IS on the card. Multi-image: card only carries one `_360.jpeg` thumbnail; the adapter fetches each unseen listing's detail page via `fetch_raw_html()` and pulls up to 4 `_848.jpeg` gallery photos. Falls back to the card thumbnail on detail-page failure.
 - `scrapers/portal_b.py` — WordPress + Elementor "Loop Grid". Reads `.imovel.type-imovel` cards via BeautifulSoup. Specs from the first icon-list widget (positional: beds/baths/parking/area); location from the second. Type derived from `tipo_de_imovel-*` CSS classes (more stable than parsing labels). No price on the listing card. Single-image only.
