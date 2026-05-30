@@ -94,8 +94,6 @@ _LOG_FORMAT = logging.Formatter(
 
 
 def _setup_log_file(logs_dir: pathlib.Path, ts: datetime) -> None:
-    if _under_systemd():
-        return
     logs_dir.mkdir(parents=True, exist_ok=True)
     stamp = ts.strftime("%Y-%m-%dT%H-%M-%S")
     handler = logging.FileHandler(logs_dir / f"{stamp}.log", encoding="utf-8")
