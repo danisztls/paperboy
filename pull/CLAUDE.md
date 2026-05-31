@@ -9,7 +9,8 @@ Source implementations. Each implements `pipeline.Source` and returns `PullResul
 - `feed_title` resolves `cfg.name → parsed.feed.title → url` and propagates through `PullResult.name` onto the feed dict in state.
 - `current_items` dicts include `source_date` (ISO8601) when the entry has a pubDate/updated date.
 - Entry ID is `entry.link`; entries with no link or older than 7 days are skipped.
-- Bodies are HTML-stripped, truncated to 512 chars, Markdown-escaped.
+- Bodies are HTML-stripped (BeautifulSoup `get_text`), truncated to 512 chars, Markdown-escaped.
+- `_entry_image` resolves a single image URL from feed metadata only, via fallback chain: `media_thumbnail` → `media_content` (medium `image` or `image/*` type) → `enclosures` (`image/*`) → `links` (`rel=enclosure`, `image/*`). It does not scrape `<img>` tags out of body HTML.
 - Heuristic filters (`filter.title`, `filter.description`, `filter.url`) applied via `process.filter_heuristic.apply_regex` and `url_filtered`.
 - Supported ops: `extract`, `replace`/`with`, `remove_phrases_with_urls`, `remove_phrases_containing`, `clear`, `skip_containing`.
 

@@ -16,10 +16,6 @@ DEFAULT_ENTRY_MAX_AGE_SECONDS = 7 * 86400
 log = logging.getLogger(__name__)
 
 
-def _strip_html(text: str) -> str:
-    return BeautifulSoup(text, "html.parser").get_text()
-
-
 _MD_ESCAPE_RE = re.compile(r"(?m)(^[>#]+|[*_`~])")
 _CDATA_RE = re.compile(r"<!\[CDATA\[(.*?)\]\]>", re.DOTALL)
 
@@ -39,18 +35,21 @@ def _entry_image(entry) -> str | None:
         url = thumb.get("url", "")
         if url:
             return url
+    for media in entry.get("media_content", []):
+        if media.get("medium") == "image" or media.get("type", "").startswith("image/"):
+            url = media.get("url", "")
+            if url:
+                return url
     for enc in entry.get("enclosures", []):
         if enc.get("type", "").startswith("image/"):
             url = enc.get("url", "")
             if url:
                 return url
-    raw = entry.get("summary") or entry.get("description", "")
-    if raw:
-        img = BeautifulSoup(raw, "html.parser").find("img")
-        if img:
-            src = img.get("src", "")
-            if src and src.startswith("http"):
-                return src
+    for link in entry.get("links", []):
+        if link.get("rel") == "enclosure" and link.get("type", "").startswith("image/"):
+            href = link.get("href", "")
+            if href:
+                return href
     return None
 
 
@@ -141,7 +140,8 @@ async def get_new_entries(
             or next((c.get("value", "") for c in entry.get("content", [])), "")
             or ""
         )
-        body = _strip_html(raw_desc).strip()
+        body_soup = BeautifulSoup(raw_desc, "html.parser")
+        body = body_soup.get_text().strip()
         if filter_description:
             _orig_body = body
             body = apply_regex(filter_description, body)
