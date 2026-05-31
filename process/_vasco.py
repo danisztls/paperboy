@@ -64,11 +64,6 @@ async def fetch_listings(url: str, *, refresh: bool = False) -> dict | None:
         log.warning("vasco fetch failed for %s: %s", url, env.get("failure", {}).get("message", ""))
         return None
     if env.get("mode_used") != "realestate":
-        # Adapter routing only runs on a cache miss, so a browser-mode entry
-        # cached before the realestate adapter existed can shadow it. Force one
-        # refresh to re-route through the adapter, then give up.
-        if not refresh:
-            return await fetch_listings(url, refresh=True)
         log.warning(
             "vasco did not route %s to realestate adapter (mode=%s)", url, env.get("mode_used")
         )
