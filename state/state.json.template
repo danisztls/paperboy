@@ -27,9 +27,9 @@
     "world-news": {
       "last_run": "2026-05-04T12:00:00+00:00"
     },
-    "my-scrapers": {
+    "my-realestate": {
       "last_run": "2026-05-04T12:00:00+00:00",
-      "scrapers": {
+      "realestate": {
         "vivareal": {
           "last_run": "2026-05-04T12:00:00+00:00",
           "items": [

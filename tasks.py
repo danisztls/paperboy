@@ -23,7 +23,7 @@ from process.summarize import summarize_entry
 from providers.llm.base import LLMAdapter
 from pull.feed import RSSSource
 from pull.finance import FinanceSource
-from pull.scraper import _get_scraper_cfgs, pull_scrapers
+from pull.realestate import _get_realestate_cfgs, pull_realestate
 from pull.search import run_search_task
 from pull.weather import WeatherSource, _climate_cache_fresh, fetch_climate_normals
 from push.discord import (
@@ -972,7 +972,7 @@ async def _process_feed_task(
             collector.finish_task()
 
 
-async def _process_scraper_task(
+async def _process_realestate_task(
     task_cfg: dict,
     state: dict,
     session: aiohttp.ClientSession,
@@ -981,30 +981,32 @@ async def _process_scraper_task(
 ) -> dict:
     """Scrape one or more sites, post new listings as one batched Discord stream.
 
-    State is per-adapter (`scrapers[<adapter>]: {items, last_run}`). A failed
-    adapter preserves its prior state; task-level `last_run` advances if at
-    least one adapter succeeded. The `__legacy__` bucket (from the v3→v4
-    migration) contributes URLs to every adapter's `seen` set for dedup but is
-    never written to.
+    State is per-url (`realestate[<url>]: {items, last_run}`). A failed source
+    preserves its prior state; task-level `last_run` advances if at least one
+    source succeeded. The `__legacy__` bucket (from the v3→v4 migration)
+    contributes URLs to every source's `seen` set for dedup but is never
+    written to.
     """
     task_name = task_cfg["name"]
     task_discord = get_discord_cfg(task_cfg)
     task_color = parse_color(task_discord.get("color")) or global_color
 
     task_state = state.get("tasks", {}).get(task_name, {})
-    scrapers_state = task_state.get("scrapers", {})
+    realestate_state = task_state.get("realestate", {})
     legacy_seen = {
-        it["url"] for it in scrapers_state.get("__legacy__", {}).get("items", []) if "url" in it
+        it["url"] for it in realestate_state.get("__legacy__", {}).get("items", []) if "url" in it
     }
 
-    scraper_cfgs = _get_scraper_cfgs(task_cfg)
-    seen_per_adapter: dict[str, set[str]] = {}
-    for sc in scraper_cfgs:
-        adapter = sc.get("adapter", "")
-        prev = scrapers_state.get(adapter, {}).get("items", [])
-        seen_per_adapter[adapter] = {it["url"] for it in prev} | legacy_seen
+    realestate_cfgs = _get_realestate_cfgs(task_cfg)
+    seen_per_url: dict[str, set[str]] = {}
+    for sc in realestate_cfgs:
+        url = sc.get("url")
+        if not url:
+            continue
+        prev = realestate_state.get(url, {}).get("items", [])
+        seen_per_url[url] = {it["url"] for it in prev} | legacy_seen
 
-    results = await pull_scrapers(scraper_cfgs, seen_per_adapter)
+    results = await pull_realestate(realestate_cfgs, seen_per_url)
     if not results or all(r is None for r in results.values()):
         return {}
 
@@ -1028,11 +1030,11 @@ async def _process_scraper_task(
         if get_file_path(task_cfg):
             await FileItemTarget().push(ctx, task_cfg, session)
 
-    new_scrapers_state = dict(scrapers_state)
-    for adapter, result in results.items():
+    new_realestate_state = dict(realestate_state)
+    for url, result in results.items():
         if result is None:
             continue
-        prev_items = scrapers_state.get(adapter, {}).get("items", [])
+        prev_items = realestate_state.get(url, {}).get("items", [])
         prev_by_url = {it["url"]: it for it in prev_items}
         merged = list(prev_items)
         for ci in result.current_items:
@@ -1040,6 +1042,6 @@ async def _process_scraper_task(
                 merged.append({**ci, "first_seen": now_iso})
         if failed_ids:
             merged = [it for it in merged if it["url"] not in failed_ids]
-        new_scrapers_state[adapter] = {"items": merged, "last_run": now_iso}
+        new_realestate_state[url] = {"items": merged, "last_run": now_iso}
 
-    return {task_name: {**task_state, "scrapers": new_scrapers_state, "last_run": now_iso}}
+    return {task_name: {**task_state, "realestate": new_realestate_state, "last_run": now_iso}}

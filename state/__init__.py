@@ -89,11 +89,11 @@ def _remove_unknown(
     state: dict,
     known_tasks: set,
     known_feeds: dict,
-    known_adapters: dict | None = None,
+    known_realestate_urls: dict | None = None,
 ) -> None:
-    """Remove state for tasks/feeds/scraper-adapters no longer present in config.
+    """Remove state for tasks/feeds/real-estate sources no longer present in config.
 
-    `known_adapters` maps task_name → set of adapter names; the `__legacy__`
+    `known_realestate_urls` maps task_name → set of real-estate urls; the `__legacy__`
     bucket is always preserved (it has no config representation by design).
     """
     tasks_state = state.get("tasks", {})
@@ -110,13 +110,13 @@ def _remove_unknown(
             log.warning("Clean: removing state for unknown feed %s in task %r", url[:80], task_name)
             del feeds_state[url]
 
-    for task_name, adapters in (known_adapters or {}).items():
-        scrapers_state = tasks_state.get(task_name, {}).get("scrapers", {})
-        stale = [a for a in list(scrapers_state) if a != "__legacy__" and a not in adapters]
-        for adapter in stale:
+    for task_name, urls in (known_realestate_urls or {}).items():
+        realestate_state = tasks_state.get(task_name, {}).get("realestate", {})
+        stale = [u for u in list(realestate_state) if u != "__legacy__" and u not in urls]
+        for url in stale:
             log.warning(
-                "Clean: removing state for unknown scraper adapter %r in task %r",
-                adapter,
+                "Clean: removing state for unknown real-estate url %s in task %r",
+                url[:80],
                 task_name,
             )
-            del scrapers_state[adapter]
+            del realestate_state[url]

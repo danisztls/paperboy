@@ -70,8 +70,8 @@ def task_kind(task_cfg: dict) -> str:
     if explicit:
         return explicit
     pull = task_cfg.get("pull", [])
-    if any("scraper" in item for item in pull):
-        return "scraper"
+    if any("realestate" in item for item in pull):
+        return "realestate"
     if any("search" in item for item in pull):
         return "search"
     if any("weather" in item for item in pull):
@@ -377,9 +377,8 @@ class _PullSearchItem(BaseModel):
     instructions: str | None = None
 
 
-class _PullScraperItem(BaseModel):
-    model_config = ConfigDict(extra="allow")  # adapter-specific keys are allowed
-    adapter: str
+class _PullRealestateItem(BaseModel):
+    model_config = ConfigDict(extra="allow")  # provider-specific keys are allowed
     url: str
     max_items: int | None = None
 
@@ -425,7 +424,7 @@ class _PullItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     feed: _PullFeedItem | None = None
     search: _PullSearchItem | None = None
-    scraper: _PullScraperItem | None = None
+    realestate: _PullRealestateItem | None = None
     weather: _PullWeatherItem | None = None
     finance: _PullFinanceItem | None = None
 
@@ -433,12 +432,12 @@ class _PullItem(BaseModel):
     def _exactly_one(self):
         present = [
             k
-            for k in ("feed", "search", "scraper", "weather", "finance")
+            for k in ("feed", "search", "realestate", "weather", "finance")
             if k in self.model_fields_set
         ]
         if len(present) != 1:
             raise ValueError(
-                "each pull item must have exactly one key: 'feed', 'search', 'scraper', 'weather', or 'finance'"
+                "each pull item must have exactly one key: 'feed', 'search', 'realestate', 'weather', or 'finance'"
             )
         return self
 
@@ -486,7 +485,7 @@ class _TaskCurate(BaseModel):
 class _Task(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str
-    kind: Literal["digest", "scraper", "weather", "finance"] | None = None
+    kind: Literal["digest", "realestate", "weather", "finance"] | None = None
     period: _Period = None
     pull: list[_PullItem]
     push: list[_PushItem]
@@ -499,32 +498,32 @@ class _Task(BaseModel):
     def _check_task(self):
         has_search_pull = any(item.search is not None for item in self.pull)
         has_feed_pull = any(item.feed is not None for item in self.pull)
-        has_scraper_pull = any(item.scraper is not None for item in self.pull)
+        has_realestate_pull = any(item.realestate is not None for item in self.pull)
         has_weather_pull = any(item.weather is not None for item in self.pull)
         has_finance_pull = any(item.finance is not None for item in self.pull)
         has_discord_push = any(item.discord is not None for item in self.push)
         has_file_push = any(item.file is not None for item in self.push)
         if not (has_discord_push or has_file_push):
             raise ValueError("push must contain at least one target (discord or file)")
-        if has_scraper_pull and (has_search_pull or has_feed_pull):
-            raise ValueError("pull cannot mix scraper with feed or search items")
-        if has_scraper_pull:
-            seen_adapters: set[str] = set()
+        if has_realestate_pull and (has_search_pull or has_feed_pull):
+            raise ValueError("pull cannot mix realestate with feed or search items")
+        if has_realestate_pull:
+            seen_urls: set[str] = set()
             for item in self.pull:
-                if item.scraper is None:
+                if item.realestate is None:
                     continue
-                adapter = item.scraper.adapter
-                if adapter in seen_adapters:
-                    raise ValueError(f"pull has duplicate scraper adapter: {adapter}")
-                seen_adapters.add(adapter)
+                url = item.realestate.url
+                if url in seen_urls:
+                    raise ValueError(f"pull has duplicate realestate url: {url}")
+                seen_urls.add(url)
         if has_search_pull and has_feed_pull:
             raise ValueError("pull cannot mix feed and search items")
-        if has_weather_pull and (has_feed_pull or has_search_pull or has_scraper_pull):
+        if has_weather_pull and (has_feed_pull or has_search_pull or has_realestate_pull):
             raise ValueError("pull cannot mix weather with other pull types")
         if has_weather_pull and sum(1 for item in self.pull if item.weather is not None) > 1:
             raise ValueError("pull can have at most one weather item")
         if has_finance_pull and (
-            has_feed_pull or has_search_pull or has_scraper_pull or has_weather_pull
+            has_feed_pull or has_search_pull or has_realestate_pull or has_weather_pull
         ):
             raise ValueError("pull cannot mix finance with other pull types")
         if has_finance_pull and sum(1 for item in self.pull if item.finance is not None) > 1:

@@ -8,7 +8,7 @@ A personal notifier that posts to Discord webhooks on a cron schedule. Supported
 
 - **RSS** — polls feeds, posts new entries as Discord embeds, tracks seen entries.
 - **Digest** — like RSS but all passing entries are collected and posted as a single text message (splits on 2000-char limit). No OG image fetching. Uses `[Title](<url>)` to suppress Discord link previews.
-- **Scraper** — structured extraction from listing sites. Pages are fetched via vasco (HTTP-first with auto-escalation to Camoufox browser on bot-blocked sites), then parsed with BeautifulSoup. Site-specific adapters extract fields like price, bedrooms, images.
+- **Real-estate** — structured listings from real-estate portals. vasco's `realestate` adapter fetches (HTTP-first, auto-escalating to Camoufox browser on bot-blocked sites) and parses each portal (vivareal/binda/barreto) into normalized listing dicts; claudinho maps those to `Item`s and applies its own policy (`min_area_per_room`, `max_items`, dedup).
 - **Search** — calls a configurable LLM (OpenAI, Gemini, Anthropic, or DeepSeek) with a prompt + web search, posts the plain-text response.
 - **Weather** — fetches the daily forecast from Open-Meteo (no API key) and posts a `wttr.in`-style text report. `kind: smart` switches to a signal-only variant gated by σ-based anomaly thresholds against climate normals + past 7 days.
 - **Finance** — pulls quotes from yfinance (sync lib wrapped in `asyncio.to_thread`). Detected by `pull` containing a `finance` item with exactly one of two sub-keys: `report` (periodic snapshot) or `monitor` (intraday alerts on deltas + price-band crossings). User writes yfinance symbols verbatim (no alias map).
@@ -61,7 +61,7 @@ Source.pull()  →  _summarize_items() + _apply_curate()  →  Target.push()
 ### Root modules
 
 - `main.py` — CLI entry point and orchestration. Resolves config/state paths, manages a lock file, loads config + state, opens a single shared `aiohttp.ClientSession`, then dispatches to one of these short-circuit modes (`--regenerate-state`, `--clean`/`--migrate`, `--validate`, `--summarize`, `--replay`) or the normal run-due-tasks-in-parallel path. A `RunCapture` is constructed unconditionally; after tasks finish, captured LLM calls are flushed to `<state_dir>/evals/<task>/<run_iso>.jsonl`. `--analysis` reshapes the run into "expensive inspection mode" (reasoning on, ELI5 filter reasons, item/feed truncation, dry-run, render to stdout).
-- `tasks.py` — task orchestration. `_process_feed_task`, `_process_search_task`, `_process_scraper_task`, `_process_weather_task`, `_process_finance_task`. Helpers: `_pull_feeds`, `_summarize_items`, `_apply_curate`, `_is_due`, `_merge_filter`, `_effective_reasoning`. Every LLM-touching stage takes a `collector=` (always-on `RunCapture`) and an `analysis: bool = False`. `analysis` controls dry-run, item/feed truncation, `reasoning=True` on adapter calls, and forcing `explain=True` on the filter prompt; the collector controls only what gets recorded.
+- `tasks.py` — task orchestration. `_process_feed_task`, `_process_search_task`, `_process_realestate_task`, `_process_weather_task`, `_process_finance_task`. Helpers: `_pull_feeds`, `_summarize_items`, `_apply_curate`, `_is_due`, `_merge_filter`, `_effective_reasoning`. Every LLM-touching stage takes a `collector=` (always-on `RunCapture`) and an `analysis: bool = False`. `analysis` controls dry-run, item/feed truncation, `reasoning=True` on adapter calls, and forcing `explain=True` on the filter prompt; the collector controls only what gets recorded.
 - `pipeline.py` — `Source` / `Target` ABCs and data types: `Item`, `PullResult` (with optional `name`), `FilterResult`, `MemoryParagraph` (`text` + `citations: list[int]`), `PushContext`. To add a source (e.g. Reddit, YouTube), implement `Source`. To add a target (Telegram, email), implement `Target` — no changes to task orchestration needed.
 - `stats.py` — `print_stats(config, state)` builds a Rich table of per-task and per-source state (kind, period, last_run, estimated next_run, item counts) for `--stats` mode. Pure read-only: no network, no LLM, no state writes. `_humanize_minutes` and `_humanize_delta` live here; `main.py`'s `_check_due_or_skip` imports `_humanize_minutes` from this module.
 
@@ -69,7 +69,7 @@ Source.pull()  →  _summarize_items() + _apply_curate()  →  Target.push()
 
 Each has its own `CLAUDE.md` with details:
 
-- [`pull/CLAUDE.md`](pull/CLAUDE.md) — source implementations (RSS, search, scraper, weather, finance)
+- [`pull/CLAUDE.md`](pull/CLAUDE.md) — source implementations (RSS, search, realestate, weather, finance)
 - [`push/CLAUDE.md`](push/CLAUDE.md) — Discord + file target implementations
 - [`process/CLAUDE.md`](process/CLAUDE.md) — curate (LLM), filter_heuristic (regex), summarize
 - [`providers/llm/CLAUDE.md`](providers/llm/CLAUDE.md) — provider adapters and `ModelSpec` capability registry
@@ -123,8 +123,8 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
     },
     "imoveis": {
       "last_run": "<iso8601 utc>",
-      "scrapers": {
-        "vivareal": {"last_run": "<iso8601 utc>", "items": [...]},
+      "realestate": {
+        "https://www.vivareal.com.br/aluguel/...": {"last_run": "<iso8601 utc>", "items": [...]},
         "__legacy__": {"items": [...]}
       }
     }
@@ -136,7 +136,7 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
 - `memory` — only on curated RSS/digest tasks. Each run appends one entry keyed by ISO8601 timestamp; history capped at 20 entries (oldest evicted). The LLM receives the last 5 entries as context on each run.
 - `climate` — only on `kind: smart` weather tasks. Monthly cache (μ + σ for apparent max/min and daily-mean humidity over the current calendar month across the last `CLIMATE_NORMAL_YEARS` years). Refreshed on month rollover. Pre-σ caches (written before the σ rollout) are silently treated as stale (`apparent_max_std` absent) and force a single refetch.
 - `tickers` — only on finance `monitor` tasks. Per-ticker `last_price` is the baseline for the next tick's delta check; `band_side` (`"in" | "above" | "below"`) is present only when the rule sets a `price:` band and gates band-crossing dedup. First-ever run for a ticker only records the baseline — no alert fires until the next tick. Report-mode finance tasks store only `last_run`.
-- `scrapers` — only on scraper tasks (v4+). Adapter → `{items, last_run}`. Each successful adapter pull replaces its own `items` (bounded by listings on the page) and stamps its own `last_run`. Task-level `last_run` is the latest among adapters. The `__legacy__` bucket (from v3→v4 migration) contributes URLs to every adapter's `seen` set for dedup but is never written to; preserved by `--clean` so it can shrink only as URLs cycle out of other adapters' coverage.
+- `realestate` — only on real-estate tasks (named `scrapers` in v4/v5; renamed in v6). Keyed by source `url` → `{items, last_run}`. Each successful source pull replaces its own `items` (bounded by listings on the page) and stamps its own `last_run`. Task-level `last_run` is the latest among sources. The `__legacy__` bucket (from the v3→v4 migration) contributes URLs to every source's `seen` set for dedup but is never written to; preserved by `--clean` so it can shrink only as URLs cycle out of other sources' coverage.
 - Search tasks store only `last_run` directly under the task name key.
 - `load_state` returns the parsed JSON as-is; absent or `null` `last_run` always means "due now".
 - `_last_clean` (top-level) is reserved as a meta key (recognized by `state/migrate.py`) and appears in the template, but no code path currently writes it.
@@ -157,7 +157,7 @@ Any change that adds, removes, or renames a config key must also update the corr
 - LLM curate failures retry once after 10s; on second failure all items are treated as passing (fail-open).
 - All feeds in a given RSS/digest task share one LLM curate call; items are sent grouped by source with monotonically increasing integer IDs across all feeds.
 - `Item.meta` carries per-item display hints (e.g. `color`) set during the pull stage so the target doesn't need to re-resolve them from config.
-- `Item.image` is the single-image path (RSS, og:image, search); `Item.images` is the multi-image path (real-estate scrapers). When both are set, `image` should be `images[0]`. `DiscordEmbedTarget` prefers `images`, capping at 4 (Discord's embed-merge limit) and degrading to a single embed when `Item.url` is missing.
+- `Item.image` is the single-image path (RSS, og:image, search); `Item.images` is the multi-image path (real-estate sources). When both are set, `image` should be `images[0]`. `DiscordEmbedTarget` prefers `images`, capping at 4 (Discord's embed-merge limit) and degrading to a single embed when `Item.url` is missing.
 - `web_search` is plumbed through the curate call but intentionally not through `summarize_entry`: summaries run on already-fetched article content, so extra web search is wasted tokens.
 - Feed-level `curate.skip: true` short-circuits the LLM curate call for that feed only — items always pass. Useful for trusted, low-volume feeds where the curate cost isn't justified. Other feeds in the same task still get curated normally.
 - `--analysis` forces reasoning on (passes `reasoning=True` to every adapter), overriding any per-spec `ModelSpec.reasoning` value. Normal cron runs honor the per-spec value. The `_effective_reasoning(default, analysis)` helper in `tasks.py` encodes this precedence.

@@ -22,7 +22,7 @@ Fixtures live in `tests/fixtures/` (`feed_basic.xml`, `feed_b.xml`, `article_bas
 
 ## Not covered
 
-- Scraper task (vasco + adapters).
+- Real-estate task (vasco realestate adapter).
 - `asyncio.gather(..., return_exceptions=True)` isolation at the `_async_main` level.
 
 The only `monkeypatch` in the suite is `asyncio.sleep` in the fail-open test (to skip the 10s curate retry delay) — stdlib, not a production class.

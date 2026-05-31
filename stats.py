@@ -8,7 +8,7 @@ from tasks import DEFAULT_PERIOD
 _KIND_STYLES = {
     "feeds": "cyan",
     "digest": "bright_magenta",
-    "scraper": "blue",
+    "realestate": "blue",
     "search": "yellow",
     "weather": "bright_green",
 }
@@ -127,7 +127,7 @@ def print_stats(config: dict, state: dict) -> None:
 
     known_task_names: set[str] = set()
     known_feeds_by_task: dict[str, set[str]] = {}
-    known_adapters_by_task: dict[str, set[str]] = {}
+    known_realestate_urls_by_task: dict[str, set[str]] = {}
 
     for task_cfg in tasks_cfg:
         name = task_cfg.get("name")
@@ -213,20 +213,19 @@ def print_stats(config: dict, state: dict) -> None:
                     "",
                     _format_count(items, curated),
                 )
-        elif kind == "scraper":
-            scrapers_state = ts.get("scrapers", {}) or {}
-            scraper_cfgs = [
-                item["scraper"] for item in task_cfg.get("pull", []) if "scraper" in item
+        elif kind == "realestate":
+            realestate_state = ts.get("realestate", {}) or {}
+            realestate_cfgs = [
+                item["realestate"] for item in task_cfg.get("pull", []) if "realestate" in item
             ]
-            known_adapters_by_task[name] = {sc.get("adapter") for sc in scraper_cfgs}
+            known_realestate_urls_by_task[name] = {sc.get("url") for sc in realestate_cfgs}
 
             last_runs: list[str] = []
             next_runs: list[datetime] = []
             total = 0
             any_no_last = False
-            for sc in scraper_cfgs:
-                adapter = sc.get("adapter")
-                ss = scrapers_state.get(adapter, {}) or {}
+            for sc in realestate_cfgs:
+                ss = realestate_state.get(sc.get("url"), {}) or {}
                 lr = ss.get("last_run")
                 if lr:
                     last_runs.append(lr)
@@ -253,12 +252,13 @@ def print_stats(config: dict, state: dict) -> None:
                 task_next_str,
                 _format_scalar(total),
             )
-            for sc in sorted(scraper_cfgs, key=lambda s: s.get("adapter", "")):
-                adapter = sc.get("adapter") or "?"
-                ss = scrapers_state.get(adapter, {}) or {}
+            for sc in sorted(realestate_cfgs, key=lambda s: s.get("url", "")):
+                url = sc.get("url") or "?"
+                label = sc.get("name") or url
+                ss = realestate_state.get(url, {}) or {}
                 items = ss.get("items", []) or []
                 table.add_row(
-                    f"  [dim]↳[/dim] [dim]{escape(adapter)}[/dim]",
+                    f"  [dim]↳[/dim] [dim]{escape(label)}[/dim]",
                     "",
                     "",
                     "",
@@ -289,13 +289,13 @@ def print_stats(config: dict, state: dict) -> None:
                     stale_lines.append(
                         f"  [yellow]\\[{escape(tname)}][/yellow] [dim]{escape(fname)}[/dim]"
                     )
-            scrapers_state = (ts or {}).get("scrapers", {}) or {}
-            known_adapters = known_adapters_by_task.get(tname, set())
-            for adapter in scrapers_state:
-                if adapter == "__legacy__" or adapter in known_adapters:
+            realestate_state = (ts or {}).get("realestate", {}) or {}
+            known_urls = known_realestate_urls_by_task.get(tname, set())
+            for url in realestate_state:
+                if url == "__legacy__" or url in known_urls:
                     continue
                 stale_lines.append(
-                    f"  [yellow]\\[{escape(tname)}][/yellow] [dim]{escape(adapter)}[/dim]"
+                    f"  [yellow]\\[{escape(tname)}][/yellow] [dim]{escape(url)}[/dim]"
                 )
         else:
             stale_lines.append(f"  [yellow]{escape(tname)}[/yellow]")

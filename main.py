@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Feed aggregator and notifier: RSS feeds, scrapers, and LLM tasks posted to Discord"""
+"""Feed aggregator and notifier: RSS feeds, real-estate listings, and LLM tasks posted to Discord"""
 
 import argparse
 import asyncio
@@ -39,7 +39,7 @@ from tasks import (
     _is_due,
     _process_feed_task,
     _process_finance_task,
-    _process_scraper_task,
+    _process_realestate_task,
     _process_search_task,
     _process_weather_task,
 )
@@ -223,7 +223,7 @@ async def _async_main(args: argparse.Namespace) -> None:
 
     if state and needs_migration(state):
         old_version = state.get("_version", 0)
-        state = migrate(state)
+        state = migrate(state, config)
         save_state(state_path, state)
         log.info("Auto-migrated state v%d → v%d", old_version, CURRENT_VERSION)
 
@@ -239,7 +239,7 @@ async def _async_main(args: argparse.Namespace) -> None:
         if not needs_migration(state):
             log.info("State is already at version %d, nothing to do.", CURRENT_VERSION)
             return
-        state = migrate(state)
+        state = migrate(state, config)
         save_state(state_path, state)
         log.info("Migrated to v%d, saved to %s", CURRENT_VERSION, state_path)
         return
@@ -252,16 +252,16 @@ async def _async_main(args: argparse.Namespace) -> None:
             for t in config.get("tasks", [])
             if t.get("name") and t.get("pull")
         }
-        known_adapters = {
+        known_realestate_urls = {
             t["name"]: {
-                item["scraper"]["adapter"]
+                item["realestate"]["url"]
                 for item in t.get("pull", [])
-                if "scraper" in item and item["scraper"].get("adapter")
+                if "realestate" in item and item["realestate"].get("url")
             }
             for t in config.get("tasks", [])
             if t.get("name") and t.get("pull")
         }
-        _remove_unknown(state, known_tasks, known_feeds, known_adapters)
+        _remove_unknown(state, known_tasks, known_feeds, known_realestate_urls)
         save_state(state_path, state)
         log.info("Done. State saved to %s", state_path)
         return
@@ -382,16 +382,18 @@ async def _async_main(args: argparse.Namespace) -> None:
                             analysis=analysis,
                         )
                     )
-                elif kind == "scraper":
+                elif kind == "realestate":
                     if analysis:
-                        log.info("[%s] Skipping scraper task in analysis mode", name)
+                        log.info("[%s] Skipping real-estate task in analysis mode", name)
                         continue
                     if not force_task and not _check_due_or_skip(
                         name, task_state.get("last_run"), period, now
                     ):
                         continue
                     feed_tasks.append(
-                        _process_scraper_task(task_cfg, state, session, global_color=global_color)
+                        _process_realestate_task(
+                            task_cfg, state, session, global_color=global_color
+                        )
                     )
                 elif kind == "weather":
                     if (
@@ -476,7 +478,7 @@ async def _async_main(args: argparse.Namespace) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Feed aggregator and notifier: RSS feeds, scrapers, and LLM tasks posted to Discord"
+        description="Feed aggregator and notifier: RSS feeds, real-estate listings, and LLM tasks posted to Discord"
     )
     parser.add_argument(
         "--config",
@@ -584,7 +586,7 @@ def main():
             "pull.feed",
             "pull.llm",
             "push.discord",
-            "pull.scraper",
+            "pull.realestate",
         ):
             logging.getLogger(name).setLevel(logging.DEBUG)
 

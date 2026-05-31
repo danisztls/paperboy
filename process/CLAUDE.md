@@ -28,7 +28,7 @@ Thin wrapper around the `vasco` library (sibling project) for content fetching a
 - `configure()` — loads `vasco.config.Config` (from `~/.config/vasco/config.yaml`) + `vasco.cache.Cache` singletons. Called once at startup from `main.py`.
 - `fetch_content(url, refresh=False)` → `(markdown, og_image) | None` — single-URL fetch via `vasco.fetch.fetch_one(mode="auto")`. Used by `tasks.py` during batch summarization.
 - `fetch_content_with_title(url, refresh=False)` → `(markdown, title, og_image, is_youtube) | None` — single-URL fetch returning metadata. Used by CLI `--summarize`, `--get-content`, and benchmark.
-- `fetch_raw_html(url)` → `str | None` — single-URL fetch with `raw=True`, returns the original HTML. Used by scraper adapters for detail page gallery fetching.
+- `fetch_raw_html(url)` → `str | None` — single-URL fetch with `raw=True`, returns the original HTML. Used for fetching original page HTML when a raw fetch is needed.
 
 Vasco's `mode="auto"` tries plain HTTP first, escalating to browser (Camoufox) only on bot-blocked pages. Per-domain strategy learning means subsequent fetches to the same domain skip tiers that previously failed. Shares vasco's global SQLite cache (`~/.cache/vasco/cache.db`). CLI one-shots use `refresh=True` to bypass cache reads.
 

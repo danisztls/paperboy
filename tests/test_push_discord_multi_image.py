@@ -6,7 +6,7 @@ import aiohttp
 from yarl import URL
 
 from pipeline import Item
-from pull.scraper import _passes_area_per_room
+from pull.realestate import _passes_area_per_room
 from push.discord import post_to_discord
 from tests.conftest import WEBHOOK_URL
 
