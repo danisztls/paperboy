@@ -6,7 +6,7 @@ import aiohttp
 from yarl import URL
 
 from pipeline import Item
-from pull.scrapers.vivareal import VivaRealAdapter, _passes_area_per_room
+from pull.scraper import _passes_area_per_room
 from push.discord import post_to_discord
 from tests.conftest import WEBHOOK_URL
 
@@ -105,65 +105,24 @@ async def test_images_dedup(mock_http):
     ]
 
 
-# ----- VivaReal adapter unit tests (multi-image extraction) -----
+# ----- min_area_per_room filter (claudinho-side policy) -----
+# Listing parsing now lives in vasco's realestate adapter; claudinho only keeps
+# the min-area-per-bedroom policy filter, which reads Item.meta.
 
 
-def test_vivareal_jsonld_extracts_up_to_four_images():
-    adapter = VivaRealAdapter()
-    item = adapter._parse_jsonld_entry(
-        {
-            "@type": "Apartment",
-            "url": "https://www.vivareal.com.br/imovel/foo/",
-            "name": "Apartamento em Centro, Cidade",
-            "numberOfBedrooms": 2,
-            "numberOfBathroomsTotal": 1,
-            "floorSize": {"value": 65},
-            "address": {"addressLocality": "Cidade", "streetAddress": "Rua X"},
-            "offers": {"price": 1500},
-            "image": [f"https://img/v/{i}.jpg" for i in range(6)],
-        }
-    )
-    assert item is not None
-    assert item.images == [f"https://img/v/{i}.jpg" for i in range(4)]
-    assert item.image == "https://img/v/0.jpg"
+def _listing_item(*, bedrooms, area) -> Item:
+    return _item(meta={"bedrooms": bedrooms, "area": area})
 
 
-def test_vivareal_jsonld_string_image_becomes_singleton():
-    adapter = VivaRealAdapter()
-    item = adapter._parse_jsonld_entry(
-        {
-            "@type": "Apartment",
-            "url": "https://www.vivareal.com.br/imovel/bar/",
-            "name": "Apartamento em Centro, Cidade",
-            "address": {"addressLocality": "Cidade"},
-            "image": "https://img/v/solo.jpg",
-        }
-    )
-    assert item is not None
-    assert item.images == ["https://img/v/solo.jpg"]
-    assert item.image == "https://img/v/solo.jpg"
+def test_min_area_per_room_filters_cramped() -> None:
+    assert not _passes_area_per_room(_listing_item(bedrooms=3, area=60), 25)
 
 
-def test_vivareal_min_area_per_room_filter():
-    adapter = VivaRealAdapter()
+def test_min_area_per_room_keeps_spacious() -> None:
+    assert _passes_area_per_room(_listing_item(bedrooms=3, area=90), 25)
 
-    def _entry(*, url: str, bedrooms, area):
-        d = {
-            "@type": "Apartment",
-            "url": url,
-            "name": "Apartamento em Centro, Cidade",
-            "address": {"addressLocality": "Cidade"},
-            "numberOfBedrooms": bedrooms,
-            "offers": {"price": 1500},
-        }
-        if area is not None:
-            d["floorSize"] = {"value": area}
-        return d
 
-    cramped = adapter._parse_jsonld_entry(_entry(url="https://v/cramped", bedrooms=3, area=60))
-    spacious = adapter._parse_jsonld_entry(_entry(url="https://v/spacious", bedrooms=3, area=90))
-    unknown = adapter._parse_jsonld_entry(_entry(url="https://v/unknown", bedrooms=3, area=None))
-
-    assert not _passes_area_per_room(cramped, 25)
-    assert _passes_area_per_room(spacious, 25)
-    assert _passes_area_per_room(unknown, 25)
+def test_min_area_per_room_passes_unknown() -> None:
+    # Missing area or bedrooms → keep (can't judge).
+    assert _passes_area_per_room(_listing_item(bedrooms=3, area=None), 25)
+    assert _passes_area_per_room(_listing_item(bedrooms=None, area=90), 25)
