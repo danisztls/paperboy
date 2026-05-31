@@ -143,6 +143,8 @@ tasks:
   #         max_items: 10              # optional — cap new items per run (avoids Discord spam on first run)
   #         min_area_per_room: 25      # optional, vivareal only — drop cramped layouts (area / quartos < N m²)
   #                                    # 25 = framework floor (~/Docs/move/framework/imovel.md §3)
+  #         exclude_neighborhoods: ["Cidade Tiradentes", "Grajaú"]  # optional — block-list, case/accent-insensitive.
+  #                                    # drops listings in these; only acts where the source exposes a neighborhood.
   #     - realestate:                     # additional source for the same task — different state bucket
   #         url: "https://corretorromildobinda.com.br/pt/pesq_imovel.php?pja=true&pcid=1&pcat=0&ptip=A"
   #   push:

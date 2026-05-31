@@ -11,6 +11,7 @@ which also serves as the per-source identity used to key state.
 
 import asyncio
 import logging
+import unicodedata
 
 from pipeline import Item, PullResult
 from process._vasco import fetch_listings
@@ -57,6 +58,21 @@ def _passes_area_per_room(item: Item, min_ratio: float) -> bool:
     if not area or not bedrooms:
         return True
     return (area / bedrooms) >= min_ratio
+
+
+def _normalize(s: str) -> str:
+    """Casefold + strip accents for tolerant neighborhood matching."""
+    nfkd = unicodedata.normalize("NFKD", s)
+    return "".join(c for c in nfkd if not unicodedata.combining(c)).casefold().strip()
+
+
+def _passes_neighborhood(item: Item, excluded: list[str]) -> bool:
+    """Drop listings whose neighborhood matches an excluded entry; pass through if unknown."""
+    raw = item.meta.get("neighborhood")
+    if not raw:
+        return True  # field absent for this source → don't filter
+    n = _normalize(str(raw))
+    return not any(_normalize(e) in n or n in _normalize(e) for e in excluded)
 
 
 def _title(listing: dict) -> str:
@@ -141,6 +157,7 @@ async def pull_realestate(
         label = sc.get("name") or url
         max_items = sc.get("max_items")
         min_ratio = sc.get("min_area_per_room")
+        exclude_neighborhoods = sc.get("exclude_neighborhoods")
         seen = seen_per_url.get(url, set())
         log.info("[realestate] %s → %s", label, url)
 
@@ -162,6 +179,17 @@ async def pull_realestate(
                 before,
                 len(items),
                 min_ratio,
+            )
+
+        if exclude_neighborhoods:
+            before = len(items)
+            items = [it for it in items if _passes_neighborhood(it, exclude_neighborhoods)]
+            log.info(
+                "[realestate] %s: %d → %d after exclude_neighborhoods=%s",
+                label,
+                before,
+                len(items),
+                exclude_neighborhoods,
             )
 
         current = [{"url": it.id, "title": it.title} for it in items]

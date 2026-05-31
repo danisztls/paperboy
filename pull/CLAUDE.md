@@ -25,7 +25,7 @@ Source implementations. Each implements `pipeline.Source` and returns `PullResul
 - `pull_realestate(realestate_cfgs, seen_per_url)` fetches each configured `url` concurrently via vasco's `realestate` adapter (`fetch_listings` in `process/_vasco.py`), which returns an envelope with normalized listing dicts in `quality.listings`. Returns `dict[url, PullResult | None]`; `None` means that source failed (missing url, fetch error, or vasco didn't route it to the realestate adapter) — caller must preserve its prior state.
 - All parsing lives in vasco now: it picks the per-portal parser by domain (vivareal / corretorromildobinda / barretoimobiliaria), handles transport (HTTP-first, browser escalation, SQLite cache, per-domain strategy), and emits normalized fields (`price`, `area`, `bedrooms`, `images`, …). claudinho only maps listings → `Item` (`_to_item`) and applies policy.
 - `_get_realestate_cfgs(task_cfg)` returns the list of `realestate:` items from `pull:`.
-- Policy helpers: `_passes_area_per_room` (drops cramped layouts when `min_area_per_room` is set; unknown area/bedrooms pass through), `_format_body`/`_title` (Discord rendering), `max_items` cap on new items per run.
+- Policy helpers: `_passes_area_per_room` (drops cramped layouts when `min_area_per_room` is set; unknown area/bedrooms pass through), `_passes_neighborhood` (block-list when `exclude_neighborhoods` is set; drops listings matching an excluded entry via case/accent-insensitive substring match (`_normalize`); listings with no `neighborhood` field pass through), `_format_body`/`_title` (Discord rendering), `max_items` cap on new items per run.
 
 ## `weather.py` — Open-Meteo forecast
 

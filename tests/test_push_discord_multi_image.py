@@ -6,7 +6,7 @@ import aiohttp
 from yarl import URL
 
 from pipeline import Item
-from pull.realestate import _passes_area_per_room
+from pull.realestate import _passes_area_per_room, _passes_neighborhood
 from push.discord import post_to_discord
 from tests.conftest import WEBHOOK_URL
 
@@ -126,3 +126,24 @@ def test_min_area_per_room_passes_unknown() -> None:
     # Missing area or bedrooms → keep (can't judge).
     assert _passes_area_per_room(_listing_item(bedrooms=3, area=None), 25)
     assert _passes_area_per_room(_listing_item(bedrooms=None, area=90), 25)
+
+
+# ----- neighborhood block-list filter (claudinho-side policy) -----
+
+
+def _neighborhood_item(neighborhood) -> Item:
+    return _item(meta={"neighborhood": neighborhood})
+
+
+def test_neighborhood_drops_excluded_case_and_accent_insensitive() -> None:
+    assert not _passes_neighborhood(_neighborhood_item("Cidade Tiradentes"), ["cidade tiradentes"])
+    assert not _passes_neighborhood(_neighborhood_item("Grajaú"), ["grajau"])
+
+
+def test_neighborhood_keeps_non_excluded() -> None:
+    assert _passes_neighborhood(_neighborhood_item("Vila Mariana"), ["Cidade Tiradentes", "Grajaú"])
+
+
+def test_neighborhood_passes_unknown() -> None:
+    # Field absent for this source → don't filter.
+    assert _passes_neighborhood(_neighborhood_item(None), ["Cidade Tiradentes"])
