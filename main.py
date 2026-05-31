@@ -585,7 +585,6 @@ def main():
             "pull.llm",
             "push.discord",
             "pull.scraper",
-            "pull.scrapers.vivareal",
         ):
             logging.getLogger(name).setLevel(logging.DEBUG)
 

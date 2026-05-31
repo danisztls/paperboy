@@ -50,3 +50,22 @@ async def fetch_raw_html(url: str, *, mode: str = "auto") -> str | None:
         log.warning("vasco fetch failed for %s: %s", url, env.get("failure", {}).get("message", ""))
         return None
     return env["markdown"]
+
+
+async def fetch_listings(url: str, *, refresh: bool = False) -> dict | None:
+    """Fetch structured real-estate listings via vasco's realestate adapter.
+
+    Returns the full envelope (listings in ``env["quality"]["listings"]``,
+    provider display name in ``env["site_name"]``) or ``None`` on failure / when
+    the URL wasn't routed to the realestate adapter.
+    """
+    env = await fetch_one(url, mode="auto", refresh=refresh, cache=_cache, cfg=_cfg)
+    if "failure" in env:
+        log.warning("vasco fetch failed for %s: %s", url, env.get("failure", {}).get("message", ""))
+        return None
+    if env.get("mode_used") != "realestate":
+        log.warning(
+            "vasco did not route %s to realestate adapter (mode=%s)", url, env.get("mode_used")
+        )
+        return None
+    return env
