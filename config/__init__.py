@@ -381,6 +381,7 @@ class _PullRealestateItem(BaseModel):
     model_config = ConfigDict(extra="allow")  # provider-specific keys are allowed
     url: str
     max_items: int | None = None
+    exclude_neighborhoods: list[str] | None = None
 
 
 class _PullWeatherItem(BaseModel):
