@@ -13,7 +13,7 @@ Config loading and validation.
 - Model specs are verbose dicts: `{provider, name, reasoning?}` where provider ∈ `{openai, gemini, anthropic, deepseek}` and reasoning ∈ `{off, low, medium, high}` (absent = off).
 - The Pydantic `ModelSpec` model validates each entry against `providers/llm/models.json` — unknown model names log a warning; setting `reasoning: low|medium|high` on a model whose registry entry has `thinking: false` is a hard error.
 - `resolve_model_specs(spec)` returns `list[ModelSpec]` from either a single dict or a list (list = fallback chain, tried in order).
-- Other helpers: `parse_color`, `parse_period`, `task_kind` (returns explicit `kind:` key if present; otherwise infers from `pull` list: `scraper` item → scraper, `search` item → search, else feeds), `get_api_key_for_provider`, `get_feeds`, `get_discord_cfg`, `get_search_cfg`, `_get_scraper_cfg`, `get_file_path`.
+- Other helpers: `parse_color`, `parse_period`, `task_kind` (returns explicit `kind:` key if present; otherwise infers from `pull` list: `realestate` item → realestate, `search` item → search, else feeds), `get_api_key_for_provider`, `get_feeds`, `get_discord_cfg`, `get_search_cfg`, `_get_realestate_cfgs`, `get_file_path`.
 
 ## `config.yaml.template`
 

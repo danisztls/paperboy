@@ -5,8 +5,8 @@ vasco's realestate adapter (``mode_used="realestate"``) parses each portal
 them to pipeline ``Item``s and applies claudinho-side policy
 (``min_area_per_room`` filter, ``max_items`` cap, ``seen`` dedup).
 
-vasco picks the parser by domain, so a scraper config just needs a ``url``.
-The ``adapter`` field is now only a stable per-source id used to key state.
+vasco picks the parser by domain, so a config item just needs a ``url`` —
+which also serves as the per-source identity used to key state.
 """
 
 import asyncio
@@ -34,8 +34,8 @@ _META_FIELDS = (
 )
 
 
-def _get_scraper_cfgs(task_cfg: dict) -> list[dict]:
-    return [item["scraper"] for item in task_cfg.get("pull", []) if "scraper" in item]
+def _get_realestate_cfgs(task_cfg: dict) -> list[dict]:
+    return [item["realestate"] for item in task_cfg.get("pull", []) if "realestate" in item]
 
 
 def _as_int(value) -> int | None:
@@ -112,48 +112,44 @@ def _to_item(listing: dict, source: str) -> Item:
     )
 
 
-async def pull_scrapers(
-    scraper_cfgs: list[dict],
-    seen_per_adapter: dict[str, set[str]],
+async def pull_realestate(
+    realestate_cfgs: list[dict],
+    seen_per_url: dict[str, set[str]],
 ) -> dict[str, PullResult | None]:
-    """Fetch all configured scrapers via vasco's realestate adapter.
+    """Fetch all configured real-estate sources via vasco's realestate adapter.
 
-    Returns `{adapter_id: PullResult | None}`. A `None` value means that source
-    failed (missing url/adapter id, or fetch error) and the caller must
-    preserve its prior state. Sources without a `seen` entry get an empty set.
+    Returns `{url: PullResult | None}`. A `None` value means that source failed
+    (fetch error) and the caller must preserve its prior state. Sources without
+    a `seen` entry get an empty set.
     """
     results: dict[str, PullResult | None] = {}
 
-    valid: list[tuple[str, dict]] = []
-    for sc in scraper_cfgs:
-        adapter = sc.get("adapter", "")
-        if not adapter:
-            log.error("[scraper] scraper config missing `adapter` id: %s", sc.get("url"))
-            continue
+    valid: list[dict] = []
+    for sc in realestate_cfgs:
         if not sc.get("url"):
-            log.error("[scraper] No url configured for %r", adapter)
-            results[adapter] = None
+            log.error("[realestate] config missing `url`: %r", sc.get("name"))
             continue
-        valid.append((adapter, sc))
+        valid.append(sc)
 
     if not valid:
         return results
 
-    envelopes = await asyncio.gather(*[fetch_listings(sc["url"]) for _, sc in valid])
+    envelopes = await asyncio.gather(*[fetch_listings(sc["url"]) for sc in valid])
 
-    for (adapter, sc), env in zip(valid, envelopes):
+    for sc, env in zip(valid, envelopes):
         url = sc["url"]
+        label = sc.get("name") or url
         max_items = sc.get("max_items")
         min_ratio = sc.get("min_area_per_room")
-        seen = seen_per_adapter.get(adapter, set())
-        log.info("[scraper] %s → %s", adapter, url)
+        seen = seen_per_url.get(url, set())
+        log.info("[realestate] %s → %s", label, url)
 
         if env is None:
-            log.error("[scraper] %s: failed to fetch %s", adapter, url)
-            results[adapter] = None
+            log.error("[realestate] %s: failed to fetch %s", label, url)
+            results[url] = None
             continue
 
-        source = env.get("site_name") or sc.get("name") or adapter
+        source = env.get("site_name") or sc.get("name") or url
         listings = (env.get("quality") or {}).get("listings") or []
         items = [_to_item(ln, source) for ln in listings if ln.get("url")]
 
@@ -161,8 +157,8 @@ async def pull_scrapers(
             before = len(items)
             items = [it for it in items if _passes_area_per_room(it, min_ratio)]
             log.info(
-                "[scraper] %s: %d → %d after min_area_per_room=%s m²/quarto",
-                adapter,
+                "[realestate] %s: %d → %d after min_area_per_room=%s m²/quarto",
+                label,
                 before,
                 len(items),
                 min_ratio,
@@ -173,12 +169,12 @@ async def pull_scrapers(
         if max_items is not None:
             new_items = new_items[:max_items]
         log.info(
-            "[scraper] %s: %d total, %d new (capped: %s)",
-            adapter,
+            "[realestate] %s: %d total, %d new (capped: %s)",
+            label,
             len(items),
             len(new_items),
             max_items,
         )
-        results[adapter] = PullResult(new_items=new_items, current_items=current)
+        results[url] = PullResult(new_items=new_items, current_items=current)
 
     return results

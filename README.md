@@ -6,7 +6,7 @@ A personal notifier that polls feeds and posts to Discord webhooks (or local mar
 
 - **RSS** — fetches feeds, posts new entries as Discord embeds with OG images.
 - **Digest** — like RSS but collects all passing entries into a single text message (splits at 2000 chars). No OG images. Uses `[Title](<url>)` to suppress Discord link previews.
-- **Scraper** — structured extraction from listing sites via vasco (HTTP-first with auto-escalation to browser on bot-blocked pages); posts new listings as Discord embeds.
+- **Real-estate** — structured listings from real-estate portals (vivareal / portal-a / portal-b) via vasco's `realestate` adapter (HTTP-first with auto-escalation to browser on bot-blocked pages); posts new listings as Discord embeds.
 - **Search** — calls an LLM with web search enabled and posts the plain-text response.
 - **Weather** — pulls the daily forecast from Open-Meteo (no API key) and posts a `wttr.in`-style plain-text report. `kind: smart` switches to a signal-only variant that only surfaces dangerous UV windows, significant rain, and σ-based apparent-temp / humidity anomalies vs the location's monthly climate normal.
 - **Finance** — yfinance quotes. `report` posts a periodic snapshot (current price, weekly change, 52w range); `monitor` posts intraday alerts when prices move past a `delta` threshold or cross a `price: [low, high]` band. Monitor rules are gated by exchange hours.
@@ -106,15 +106,14 @@ tasks:
           webhook: !secret discord_webhook_my_digest
 ```
 
-### Scraper task
+### Real-estate task
 
 ```yaml
 tasks:
   - name: listings
     period: 4h
     pull:
-      - scraper:
-          adapter: vivareal
+      - realestate:
           url: "https://www.vivareal.com.br/venda/..."
           max_items: 10
     push:

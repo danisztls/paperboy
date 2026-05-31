@@ -20,18 +20,12 @@ Source implementations. Each implements `pipeline.Source` and returns `PullResul
 
 `SearchSource(Source)` calls `run_search_task(task_cfg, instructions, model, adapter)`, which invokes the configured LLM with web search enabled and wraps the response as a single `Item`. Returns `None` on LLM error.
 
-## `scraper.py` + `scrapers/` — structured extraction via vasco
+## `realestate.py` — structured real-estate listings via vasco
 
-- `pull_scrapers(scraper_cfgs, seen_per_adapter)` fetches all adapter URLs concurrently via vasco (`fetch_raw_html`), then passes the raw HTML to each adapter's `scrape()`. Returns `dict[adapter_name, PullResult | None]`. `None` means that adapter failed (unknown name, missing url, fetch/extraction error) — caller must preserve its prior state.
-- Vasco handles transport: HTTP-first with auto-escalation to browser on bot-blocked sites, SQLite caching, per-domain strategy learning. Adapters parse the returned HTML with BeautifulSoup.
-- `_get_scraper_cfgs(task_cfg)` returns the list of `scraper:` items from `pull:`.
-
-### Adapters
-
-- `scrapers/base.py` — `SiteAdapter` ABC + `@register_adapter` decorator registry (`get_adapter`, `available_adapters`). `scrape(url, cfg, seen, html)` receives raw HTML.
-- `scrapers/vivareal.py` — `VivaRealAdapter`: parses VivaReal search pages via JSON-LD `ItemList` in `<script>` tags (BeautifulSoup). Multi-image from JSON-LD `image` field; capped at 4 for Discord's embed-merge limit. Supports an optional `min_area_per_room: N` cfg key (m²/quarto) that drops cramped layouts; listings missing area or bedroom count pass through.
-- `scrapers/portal_a.py` — server-rendered PHP (no JS gating, no JSON-LD); reads `.pgl-property` cards via BeautifulSoup. Price IS on the card. Multi-image: card only carries one `_360.jpeg` thumbnail; the adapter fetches each unseen listing's detail page via `fetch_raw_html()` and pulls up to 4 `_848.jpeg` gallery photos. Falls back to the card thumbnail on detail-page failure.
-- `scrapers/portal_b.py` — WordPress + Elementor "Loop Grid". Reads `.imovel.type-imovel` cards via BeautifulSoup. Specs from the first icon-list widget (positional: beds/baths/parking/area); location from the second. Type derived from `tipo_de_imovel-*` CSS classes (more stable than parsing labels). No price on the listing card. Single-image only.
+- `pull_realestate(realestate_cfgs, seen_per_url)` fetches each configured `url` concurrently via vasco's `realestate` adapter (`fetch_listings` in `process/_vasco.py`), which returns an envelope with normalized listing dicts in `quality.listings`. Returns `dict[url, PullResult | None]`; `None` means that source failed (missing url, fetch error, or vasco didn't route it to the realestate adapter) — caller must preserve its prior state.
+- All parsing lives in vasco now: it picks the per-portal parser by domain (vivareal / portal-a / portal-b), handles transport (HTTP-first, browser escalation, SQLite cache, per-domain strategy), and emits normalized fields (`price`, `area`, `bedrooms`, `images`, …). claudinho only maps listings → `Item` (`_to_item`) and applies policy.
+- `_get_realestate_cfgs(task_cfg)` returns the list of `realestate:` items from `pull:`.
+- Policy helpers: `_passes_area_per_room` (drops cramped layouts when `min_area_per_room` is set; unknown area/bedrooms pass through), `_format_body`/`_title` (Discord rendering), `max_items` cap on new items per run.
 
 ## `weather.py` — Open-Meteo forecast
 
