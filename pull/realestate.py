@@ -159,7 +159,7 @@ async def pull_realestate(
         min_ratio = sc.get("min_area_per_room")
         exclude_neighborhoods = sc.get("exclude_neighborhoods")
         seen = seen_per_url.get(url, set())
-        log.info("[realestate] %s → %s", label, url)
+        log.debug("[realestate] %s → %s", label, url)
 
         if env is None:
             log.error("[realestate] %s: failed to fetch %s", label, url)
@@ -173,7 +173,7 @@ async def pull_realestate(
         if min_ratio is not None:
             before = len(items)
             items = [it for it in items if _passes_area_per_room(it, min_ratio)]
-            log.info(
+            log.debug(
                 "[realestate] %s: %d → %d after min_area_per_room=%s m²/quarto",
                 label,
                 before,
@@ -184,7 +184,7 @@ async def pull_realestate(
         if exclude_neighborhoods:
             before = len(items)
             items = [it for it in items if _passes_neighborhood(it, exclude_neighborhoods)]
-            log.info(
+            log.debug(
                 "[realestate] %s: %d → %d after exclude_neighborhoods=%s",
                 label,
                 before,
@@ -196,7 +196,7 @@ async def pull_realestate(
         new_items = [it for it in items if it.id not in seen]
         if max_items is not None:
             new_items = new_items[:max_items]
-        log.info(
+        log.debug(
             "[realestate] %s: %d total, %d new (capped: %s)",
             label,
             len(items),

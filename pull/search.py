@@ -61,7 +61,7 @@ async def run_search_task(
         trace["instructions"] = combined_instructions
         trace["prompt"] = prompt
         trace["web_search"] = bool(web_search)
-    log.info("[%s] Calling LLM (model=%s): %s", name, model, prompt[:120])
+    log.debug("[%s] Calling LLM (model=%s): %s", name, model, prompt[:120])
     log.debug("[%s] Full prompt: %s", name, prompt)
     if combined_instructions:
         log.debug("[%s] Instructions: %s", name, combined_instructions[:200])
@@ -82,7 +82,7 @@ async def run_search_task(
         if resp.reasoning:
             trace["reasoning"] = resp.reasoning
     if text:
-        log.info("[%s] LLM response received (%d chars): %s", name, len(text), text[:120])
+        log.debug("[%s] LLM response received (%d chars): %s", name, len(text), text[:120])
         log.debug("[%s] Full response:\n%s", name, text)
     else:
         log.warning("[%s] LLM returned empty response", name)

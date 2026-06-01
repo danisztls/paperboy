@@ -69,7 +69,7 @@ async def get_new_entries(
     Returns None if the feed could not be parsed so callers skip the state write.
     """
     url = feed_cfg["url"]
-    log.info("Fetching feed: %s", url)
+    log.debug("Fetching feed: %s", url)
     try:
         async with session.get(url) as resp:
             if resp.status >= 400:
@@ -127,7 +127,7 @@ async def get_new_entries(
         filter_log["total_in_feed"] = len(current_items)
         filter_log["new_eligible"] = _new_eligible
 
-    log.info("[%s] New entries to post: %d", feed_title, len(unseen_raw))
+    log.debug("[%s] New entries to post: %d", feed_title, len(unseen_raw))
 
     ordered = list(reversed(unseen_raw))
 

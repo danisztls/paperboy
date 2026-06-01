@@ -121,7 +121,7 @@ async def curate_entries(
         trace["web_search"] = bool(filter_cfg.get("web_search"))
 
     total = sum(len(g.get("items", [])) for g in items)
-    log.info("Filtering %d entries with LLM (model=%s)", total, model)
+    log.debug("Filtering %d entries with LLM (model=%s)", total, model)
     log.debug("Filter criteria: %s", criteria)
 
     decisions = await adapter.complete_structured(

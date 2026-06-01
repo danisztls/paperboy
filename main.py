@@ -64,10 +64,33 @@ class _JournaldFormatter(logging.Formatter):
         return _SYSLOG_PREFIX.get(record.levelno, "<6>") + super().format(record)
 
 
+# Our own package loggers. Setting a parent (e.g. "pull") to DEBUG propagates to
+# its children ("pull.feed", …); third-party libraries are left alone.
+_APP_LOGGERS = (
+    "__main__",
+    "tasks",
+    "stats",
+    "pull",
+    "push",
+    "process",
+    "state",
+    "config",
+    "providers",
+    "evals",
+)
+
+
 if _under_systemd():
     _handler = logging.StreamHandler()
     _handler.setFormatter(_JournaldFormatter("[%(name)s] %(message)s"))
+    # Journal shows the INFO heartbeat only; full DEBUG detail goes to the
+    # per-run file log (added later in _setup_log_file). Root stays at INFO so
+    # noisy third-party loggers are unaffected; our loggers go to DEBUG so their
+    # records reach the file handler while the journald handler filters them out.
+    _handler.setLevel(logging.INFO)
     logging.basicConfig(handlers=[_handler], level=logging.INFO)
+    for _name in _APP_LOGGERS:
+        logging.getLogger(_name).setLevel(logging.DEBUG)
 elif sys.stderr.isatty():
     from rich.logging import RichHandler
 
@@ -134,7 +157,7 @@ def _check_due_or_skip(name: str, last_run: str | None, period: Period, now: dat
     if last_run:
         last = datetime.fromisoformat(last_run)
         mins = int((now - last).total_seconds() // 60)
-        log.info(
+        log.debug(
             "[%s] Skipping — last run %s ago, period is %s",
             name,
             _humanize_minutes(mins),
@@ -435,7 +458,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                         and not analysis
                         and not any(_is_due(feeds_state.get(u, {}), period, now) for u in feed_urls)
                     ):
-                        log.info("[%s] Skipping — no feeds are due", name)
+                        log.debug("[%s] Skipping — no feeds are due", name)
                         continue
                     feed_tasks.append(
                         _process_feed_task(
@@ -581,13 +604,7 @@ def main():
     args = parser.parse_args()
 
     if args.verbose:
-        for name in (
-            "__main__",
-            "pull.feed",
-            "pull.llm",
-            "push.discord",
-            "pull.realestate",
-        ):
+        for name in _APP_LOGGERS:
             logging.getLogger(name).setLevel(logging.DEBUG)
 
     if args.validate:
