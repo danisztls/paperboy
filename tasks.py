@@ -485,6 +485,7 @@ async def _process_search_task(
         except Exception:
             log.error("Skipping search task %s due to post failure", name)
             return {}
+        log.info("[%s] Posted response (%d chars)", name, len(text))
 
         if get_file_path(task_cfg):
             await FileItemTarget().push(ctx, task_cfg, session)
@@ -538,6 +539,7 @@ async def _process_weather_task(
         except Exception:
             log.error("Skipping weather task %s due to post failure", name)
             return {}
+        log.info("[%s] Posted", name)
 
         if get_file_path(task_cfg):
             await FileItemTarget().push(ctx, task_cfg, session)
@@ -601,6 +603,7 @@ async def _process_finance_task(
         except Exception:
             log.error("Skipping finance task %s due to post failure", name)
             return {}
+        log.info("[%s] Posted", name)
 
         if get_file_path(task_cfg):
             await FileItemTarget().push(ctx, task_cfg, session)
@@ -772,6 +775,9 @@ async def _push_curate(
     else:
         target = DiscordEmbedTarget()
     failed_ids = await target.push(ctx, task_cfg, session)
+    posted = len(passing) - len(failed_ids)
+    if posted > 0:
+        log.info("[%s] Posted %d item(s)", task_name, posted)
     if get_file_path(task_cfg):
         await FileItemTarget().push(ctx, task_cfg, session)
     return failed_ids
@@ -1027,6 +1033,9 @@ async def _process_realestate_task(
             failed_ids = await DiscordMarkdownTarget().push(ctx, task_cfg, session)
         else:
             failed_ids = await DiscordEmbedTarget().push(ctx, task_cfg, session)
+        posted = len(all_new_items) - len(failed_ids)
+        if posted > 0:
+            log.info("[%s] Posted %d listing(s)", task_name, posted)
         if get_file_path(task_cfg):
             await FileItemTarget().push(ctx, task_cfg, session)
 

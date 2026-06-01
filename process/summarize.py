@@ -32,7 +32,7 @@ async def summarize_entry(
     if trace is not None:
         trace["instructions"] = combined
         trace["input"] = input_text
-    log.info("Summarizing entry: %s", title[:80])
+    log.debug("Summarizing entry: %s", title[:80])
     resp = await adapter.complete(
         input_text, model=model, instructions=combined, reasoning=reasoning
     )
@@ -40,7 +40,7 @@ async def summarize_entry(
         if trace is not None:
             trace["output"] = None
         return None
-    log.info("Summarized in %.1fs with %s: %s", resp.latency_s, resp.model, title[:60])
+    log.debug("Summarized in %.1fs with %s: %s", resp.latency_s, resp.model, title[:60])
     if trace is not None:
         trace["output"] = resp.text
         trace["input_tokens"] = resp.input_tokens

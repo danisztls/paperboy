@@ -318,7 +318,7 @@ class DiscordEmbedTarget(Target):
                     skip_image=bool(item.meta.get("skip_image")),
                     color=item.meta.get("color"),
                 )
-                log.info("[%s] Posted: %s", item.source, item.title[:80])
+                log.debug("[%s] Posted: %s", item.source, item.title[:80])
                 if i < len(items) - 1:
                     await asyncio.sleep(2)
             except Exception:
@@ -341,7 +341,7 @@ class DiscordTextTarget(Target):
                 continue
             try:
                 await post_text_to_discord(webhook, item.body, session, wrap=wrap)
-                log.info("[%s] Posted text (%d chars)", item.source, len(item.body))
+                log.debug("[%s] Posted text (%d chars)", item.source, len(item.body))
             except Exception:
                 log.error("Skipping item %s due to post failure", item.id)
                 if item.url:
@@ -366,7 +366,7 @@ class DiscordMarkdownTarget(Target):
             text = f"{header}\n{body}" if body else header
             try:
                 await post_text_to_discord(webhook, text, session, wrap=wrap)
-                log.info("[%s] Posted: %s", item.source, item.title[:80])
+                log.debug("[%s] Posted: %s", item.source, item.title[:80])
                 if i < len(items) - 1:
                     await asyncio.sleep(2)
             except Exception:
