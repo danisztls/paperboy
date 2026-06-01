@@ -21,16 +21,17 @@ Pure functions used by `pull/feed.py` during feed parsing:
 - `apply_regex(cfg, text)` runs `extract` / `replace` / `remove_phrases_with_urls` / `remove_phrases_containing` / `clear` ops.
 - `url_filtered(url, cfg)` checks `skip_containing`.
 
-## `_vasco.py` — bridge to vasco for URL content extraction
+## `_vasco.py` — thin client to the vascod daemon for URL content extraction
 
-Thin wrapper around the `vasco` library (sibling project) for content fetching and raw HTML retrieval.
+claudinho **no longer imports vasco as a library** — it is a thin client of `vascod`, the resident vasco daemon (`vasco serve`), reached over a UNIX socket (`$XDG_RUNTIME_DIR/vasco/vascod.sock`, overridable via `VASCO_SERVICE_SOCKET`). This module vendors a ~40-line stdlib socket client (length-prefixed JSON, mirroring `vasco/service/protocol.py`); `PROTOCOL_VERSION` is vendored and a mismatch is logged. The public function signatures are unchanged — only the transport moved.
 
-- `configure()` — loads `vasco.config.Config` (from `~/.config/vasco/config.yaml`) + `vasco.cache.Cache` singletons. Called once at startup from `main.py`.
-- `fetch_content(url, refresh=False)` → `(markdown, og_image) | None` — single-URL fetch via `vasco.fetch.fetch_one(mode="auto")`. Used by `tasks.py` during batch summarization.
-- `fetch_content_with_title(url, refresh=False)` → `(markdown, title, og_image, is_youtube) | None` — single-URL fetch returning metadata. Used by CLI `--summarize`, `--get-content`, and benchmark.
-- `fetch_raw_html(url)` → `str | None` — single-URL fetch with `raw=True`, returns the original HTML. Used for fetching original page HTML when a raw fetch is needed.
+- `configure()` — **no-op** retained for call-site compatibility (Config + Cache now live in vascod, not in claudinho's process).
+- `fetch_content(url, refresh=False)` → `(markdown, og_image) | None` — sends `{op:"fetch"}`; used by `tasks.py` during batch summarization.
+- `fetch_content_with_title(url, refresh=False)` → `(markdown, title, og_image, is_youtube) | None` — used by CLI `--summarize`, `--get-content`, and benchmark.
+- `fetch_raw_html(url, mode="auto")` → `str | None` — sends `raw=True`; returns the original HTML.
+- `fetch_listings(url, refresh=False)` → full envelope `| None` — real-estate listings (gated on `mode_used == "realestate"`); listings in `env["quality"]["listings"]`.
 
-Vasco's `mode="auto"` tries plain HTTP first, escalating to browser (Camoufox) only on bot-blocked pages. Per-domain strategy learning means subsequent fetches to the same domain skip tiers that previously failed. Shares vasco's global SQLite cache (`~/.cache/vasco/cache.db`). CLI one-shots use `refresh=True` to bypass cache reads.
+The daemon runs the same `mode="auto"` pipeline (HTTP-first, escalating to the shared Camoufox browser server on bot-blocked pages) over the one shared SQLite cache (`~/.cache/vasco/cache.db`), and adds cross-consumer single-flight + per-domain rate-limiting. CLI one-shots use `refresh=True`. **Requires vascod running** (`systemctl --user status vascod.service`); if it's unreachable, every fetch returns `None` (logged) and claudinho skips that item this run. Concurrency stays claudinho-side: `tasks.py`/`pull/realestate.py` `asyncio.gather` over many `fetch_content`/`fetch_listings` calls, which become N coordinated `fetch` messages to vascod (claudinho does not use a batch `fetch_many`).
 
 ## `summarize.py` — LLM summarization
 
