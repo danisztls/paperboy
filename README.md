@@ -17,7 +17,7 @@ Each task can push to any combination of `discord` (webhook) and `file` (local m
 
 ## Setup
 
-Requires [uv](https://github.com/astral-sh/uv).
+Requires [uv](https://github.com/astral-sh/uv) and a running **`vascod`** (the resident vasco daemon — sibling project) for content/listing fetches. claudinho talks to it over a UNIX socket; it does not embed vasco. Start it with `systemctl --user enable --now vascod.service` (see vasco's `contrib/systemd/`). If vascod isn't reachable, fetches return `None` and those items are skipped that run.
 
 ```sh
 uv sync
