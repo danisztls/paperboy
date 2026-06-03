@@ -6,6 +6,8 @@ Source implementations. Each implements `pipeline.Source` and returns `PullResul
 
 `RSSSource(Source)` wraps `get_new_entries(feed_cfg, seen, session)`, returning `(feed_title, current_items, new_entries: list[Item])` or `None` on parse failure.
 
+A `youtube` pull item is **not** a separate source — `config.get_feeds` expands it into a `feed` dict (URL built from `channel_id`), so it flows through `RSSSource` unchanged. See `config/CLAUDE.md`.
+
 - `feed_title` resolves `cfg.name → parsed.feed.title → url` and propagates through `PullResult.name` onto the feed dict in state.
 - `current_items` dicts include `source_date` (ISO8601) when the entry has a pubDate/updated date.
 - Entry ID is `entry.link`; entries with no link or older than 7 days are skipped.

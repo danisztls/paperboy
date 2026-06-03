@@ -15,6 +15,12 @@ Config loading and validation.
 - `resolve_model_specs(spec)` returns `list[ModelSpec]` from either a single dict or a list (list = fallback chain, tried in order).
 - Other helpers: `parse_color`, `parse_period`, `task_kind` (returns explicit `kind:` key if present; otherwise infers from `pull` list: `realestate` item → realestate, `search` item → search, else feeds), `get_api_key_for_provider`, `get_feeds`, `get_discord_cfg`, `get_search_cfg`, `_get_realestate_cfgs`, `get_file_path`.
 
+## `youtube` pull source — sugar over `feed`
+
+A `pull: - youtube: {channel_id, name?, …}` item is **not** a separate `Source`. `get_feeds` expands it via `_youtube_to_feed` into a normal `feed` dict — the URL is built from `channel_id` as `https://www.youtube.com/feeds/videos.xml?channel_id=<id>` (byte-identical to the verbose form, so feed state keyed by url is preserved). All five `get_feeds` callers (processing, due-checks, regen-state, stats) and the whole RSS pipeline therefore work unchanged; `task_kind` returns `feeds` for a youtube-only task. `_PullYouTubeItem` has full feed parity (`discord`, `image`, `filter`, `summarize`, `curate`) with `channel_id` replacing `url`, plus flat `ignore_shorts`/`ignore_livestreams` that `_youtube_to_feed` lifts into the feed's `youtube` filter block.
+
+**Naming:** `youtube` is used in two distinct schema positions — the _pull source_ (`pull: - youtube:`) and the _filter block_ (`youtube: {ignore_shorts, …}` at global/task/feed). Different models, different locations; not a conflict.
+
 ## `scope.py` — layered config resolution
 
 `layer_dict(*blocks)` is **the** primitive for settings that can be set at more than one scope (global → task → feed), each more specific scope overriding the broader one per leaf key. It shallow-merges the blocks in low→high precedence order, skipping non-dict (`None`/absent) blocks so callers can pass `cfg.get("filter")` directly.
