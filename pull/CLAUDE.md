@@ -13,6 +13,7 @@ Source implementations. Each implements `pipeline.Source` and returns `PullResul
 - `_entry_image` resolves a single image URL from feed metadata only, via fallback chain: `media_thumbnail` → `media_content` (medium `image` or `image/*` type) → `enclosures` (`image/*`) → `links` (`rel=enclosure`, `image/*`). It does not scrape `<img>` tags out of body HTML.
 - Heuristic filters (`filter.title`, `filter.description`, `filter.url`) applied via `process.filter_heuristic.apply_regex` and `url_filtered`.
 - Supported ops: `extract`, `replace`/`with`, `remove_phrases_with_urls`, `remove_phrases_containing`, `clear`, `skip_containing`.
+- `youtube` block (resolved global→task→feed via `config.scope.layer_dict`, injected onto `feed_cfg["youtube"]` by `tasks._pull_feeds`): `ignore_shorts` drops unseen entries whose link contains `/shorts/` (YouTube surfaces Shorts as `/shorts/<id>` links; regular videos are `/watch?v=`). Cheap URL check, no fetch. Dropped entries stay in `current_items` (so they're marked seen and not reconsidered) — same as `url_filtered`.
 
 **Gotcha:** `get_new_entries` reverses feedparser's order (oldest-first). So when the LLM curate filter sees XML items, the first XML item is `id=N-1`, the last is `id=0`. Tests need to wire `queue_filter` responses accordingly.
 

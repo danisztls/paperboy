@@ -337,6 +337,12 @@ class _FilterDict(BaseModel):
     url: _UrlFilter | None = None
 
 
+class _YouTube(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ignore_livestreams: bool | None = None
+    ignore_shorts: bool | None = None
+
+
 class _FeedDiscord(BaseModel):
     model_config = ConfigDict(extra="forbid")
     color: _Color = None
@@ -365,6 +371,7 @@ class _PullFeedItem(BaseModel):
     discord: _FeedDiscord = Field(default_factory=_FeedDiscord)
     image: _Image | None = None
     filter: _FilterDict | None = None
+    youtube: _YouTube | None = None
     summarize: bool | _Summarize | None = None
     curate: _FeedCurate | None = None
 
@@ -492,6 +499,7 @@ class _Task(BaseModel):
     push: list[_PushItem]
     image: _Image | None = None
     filter: _FilterDict | None = None
+    youtube: _YouTube | None = None
     curate: _TaskCurate | None = None
     summarize: bool | _Summarize | None = None
 
@@ -541,6 +549,7 @@ class _Config(BaseModel):
     search: _GlobalSearch | None = None
     summarize: _GlobalSummarize | None = None
     image: _Image | None = None
+    youtube: _YouTube | None = None
     retention: _Retention | None = None
     tasks: list[_Task]
 

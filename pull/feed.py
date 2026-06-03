@@ -13,6 +13,9 @@ from process.filter_heuristic import apply_regex, url_filtered
 DESCRIPTION_MAX = 512
 DEFAULT_ENTRY_MAX_AGE_SECONDS = 7 * 86400
 
+# YouTube feeds surface Shorts as /shorts/<id> links (regular videos are /watch?v=).
+_YT_SHORTS = "/shorts/"
+
 log = logging.getLogger(__name__)
 
 
@@ -98,6 +101,9 @@ async def get_new_entries(
     filter_description = feed_filter.get("description")
     filter_url = feed_filter.get("url")
 
+    youtube_cfg = feed_cfg.get("youtube", {})
+    ignore_shorts = bool(youtube_cfg.get("ignore_shorts"))
+
     now = datetime.now(UTC)
     _new_eligible = 0
     for entry in parsed.entries:
@@ -119,6 +125,10 @@ async def get_new_entries(
                 log.debug("[%s] URL-filtered: %s", feed_title, eid[:120])
                 if filter_log is not None:
                     filter_log["url_excluded"].append({"url": eid})
+            elif ignore_shorts and _YT_SHORTS in eid:
+                log.debug("[%s] Skipping YouTube short: %s", feed_title, eid[:120])
+                if filter_log is not None:
+                    filter_log["shorts_excluded"].append({"url": eid})
             else:
                 unseen_raw.append((eid, entry))
                 log.debug("[%s] New entry: %s", feed_title, eid[:120])
