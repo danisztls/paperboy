@@ -114,6 +114,11 @@ tasks:
           #     - remove_phrases_containing: ["Subscribe", "Merch"] # also accepts an inline array
           #     - replace: "Imagem do dia\\s*"     # re.sub(replace, with, description)
           #       with: ""
+      # - youtube:               # sugar over feed: builds the channel feed URL from channel_id
+      #     name: My Channel      # optional — display name (else resolved from the feed title)
+      #     channel_id: UCxxxxxxxxxxxxxxxxxxxxxx  # → feeds/videos.xml?channel_id=<id>
+      #     # ignore_shorts: false       # optional — per-source override of the youtube filter block
+      #     # ignore_livestreams: false  # optional — (also: summarize/curate/filter/discord/image, same as feed)
     push:
       - discord:
           webhook: !secret discord_webhook_my_feeds  # or a literal URL string

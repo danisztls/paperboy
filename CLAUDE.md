@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A personal notifier that posts to Discord webhooks on a cron schedule. Supported task types:
 
-- **RSS** — polls feeds, posts new entries as Discord embeds, tracks seen entries.
+- **RSS** — polls feeds, posts new entries as Discord embeds, tracks seen entries. A `youtube` pull item is sugar over `feed` (`config.get_feeds` builds the `videos.xml?channel_id=<id>` URL from `channel_id`); everything downstream treats it as a feed.
 - **Digest** — like RSS but all passing entries are collected and posted as a single text message (splits on 2000-char limit). No OG image fetching. Uses `[Title](<url>)` to suppress Discord link previews.
 - **Real-estate** — structured listings from real-estate portals. vasco's `realestate` adapter fetches (HTTP-first, auto-escalating to Camoufox browser on bot-blocked sites) and parses each portal (vivareal/binda/barreto) into normalized listing dicts; claudinho maps those to `Item`s and applies its own policy (`min_area_per_room`, `max_items`, dedup).
 - **Search** — calls a configurable LLM (OpenAI, Gemini, Anthropic, or DeepSeek) with a prompt + web search, posts the plain-text response.

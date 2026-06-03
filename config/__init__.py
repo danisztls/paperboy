@@ -81,8 +81,36 @@ def task_kind(task_cfg: dict) -> str:
     return "feeds"
 
 
+_YT_FEED_URL = "https://www.youtube.com/feeds/videos.xml?channel_id={}"
+
+
+def _youtube_to_feed(yt: dict) -> dict:
+    """Expand a `youtube` pull item into a `feed` dict (sugar over feed).
+
+    The URL is built from `channel_id` and is byte-identical to the verbose
+    `feeds/videos.xml?channel_id=...` form, so feed state (keyed by url) is preserved.
+    Flat `ignore_shorts`/`ignore_livestreams` move into the feed's `youtube` filter block.
+    """
+    feed = {
+        k: v
+        for k, v in yt.items()
+        if k not in ("channel_id", "ignore_shorts", "ignore_livestreams")
+    }
+    feed["url"] = _YT_FEED_URL.format(yt["channel_id"])
+    yt_block = {k: yt[k] for k in ("ignore_shorts", "ignore_livestreams") if k in yt}
+    if yt_block:
+        feed["youtube"] = yt_block
+    return feed
+
+
 def get_feeds(task_cfg: dict) -> list[dict]:
-    return [item["feed"] for item in task_cfg.get("pull", []) if "feed" in item]
+    feeds: list[dict] = []
+    for item in task_cfg.get("pull", []):
+        if "feed" in item:
+            feeds.append(item["feed"])
+        elif "youtube" in item:
+            feeds.append(_youtube_to_feed(item["youtube"]))
+    return feeds
 
 
 def get_discord_cfg(task_cfg: dict) -> dict:
@@ -376,6 +404,22 @@ class _PullFeedItem(BaseModel):
     curate: _FeedCurate | None = None
 
 
+class _PullYouTubeItem(BaseModel):
+    """Sugar over `feed`: a YouTube channel by `channel_id` (the feed URL is built in
+    `get_feeds`). Full feed parity; flat `ignore_*` map to the feed's `youtube` block."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = None
+    channel_id: str
+    ignore_livestreams: bool | None = None
+    ignore_shorts: bool | None = None
+    discord: _FeedDiscord = Field(default_factory=_FeedDiscord)
+    image: _Image | None = None
+    filter: _FilterDict | None = None
+    summarize: bool | _Summarize | None = None
+    curate: _FeedCurate | None = None
+
+
 class _PullSearchItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     prompt: str
@@ -431,6 +475,7 @@ class _PullFinanceItem(BaseModel):
 class _PullItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     feed: _PullFeedItem | None = None
+    youtube: _PullYouTubeItem | None = None
     search: _PullSearchItem | None = None
     realestate: _PullRealestateItem | None = None
     weather: _PullWeatherItem | None = None
@@ -440,12 +485,12 @@ class _PullItem(BaseModel):
     def _exactly_one(self):
         present = [
             k
-            for k in ("feed", "search", "realestate", "weather", "finance")
+            for k in ("feed", "youtube", "search", "realestate", "weather", "finance")
             if k in self.model_fields_set
         ]
         if len(present) != 1:
             raise ValueError(
-                "each pull item must have exactly one key: 'feed', 'search', 'realestate', 'weather', or 'finance'"
+                "each pull item must have exactly one key: 'feed', 'youtube', 'search', 'realestate', 'weather', or 'finance'"
             )
         return self
 
@@ -506,7 +551,8 @@ class _Task(BaseModel):
     @model_validator(mode="after")
     def _check_task(self):
         has_search_pull = any(item.search is not None for item in self.pull)
-        has_feed_pull = any(item.feed is not None for item in self.pull)
+        # youtube is sugar over feed (get_feeds expands it), so it's feed-family for mixing.
+        has_feed_pull = any(item.feed is not None or item.youtube is not None for item in self.pull)
         has_realestate_pull = any(item.realestate is not None for item in self.pull)
         has_weather_pull = any(item.weather is not None for item in self.pull)
         has_finance_pull = any(item.finance is not None for item in self.pull)
