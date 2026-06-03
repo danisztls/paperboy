@@ -16,7 +16,7 @@ Fixtures live in `tests/fixtures/` (`feed_basic.xml`, `feed_b.xml`, `article_bas
 - Curate happy path, already-seen dedup, single-feed pull failure (`None` from `Source.pull()` must not update `last_run`), filter-fails-twice fail-open.
 - Digest with `cite_map` resolution (structured `MemoryParagraph.citations` IDs → `[Source](url)` in `FileDigestTarget` and `[[Source](<url>)]` in `DiscordDigestTarget`; stored memory contains only plain `text` fields, no markers to strip).
 - Search task happy path.
-- `tasks._merge_filter` (task-level vs feed-level filter merging across single/list shapes).
+- `config.scope.layer_dict` (global→task→feed block merging: precedence, partial overrides, non-dict/None blocks skipped, inputs not mutated).
 - `main._merge_task_results` orchestrator invariant — empty / exception task results leave state untouched.
 - `main._prune_old_files` retention sweep.
 
