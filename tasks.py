@@ -16,6 +16,7 @@ from config import (
     parse_color,
     task_kind,
 )
+from config.scope import layer_dict
 from pipeline import Citation, FilterResult, Item, MemoryParagraph, PushContext
 from process._vasco import fetch_content
 from process.curate import curate_entries
@@ -99,17 +100,6 @@ def _decode_filter_results(
     return decoded
 
 
-def _merge_filter(task_f: dict, feed_f: dict) -> dict:
-    """Combine task-level and feed-level filter dicts.
-
-    Feed-level entries fully replace task-level entries for shared sub-keys
-    (title/description/url) so a feed can opt out of a task-wide rule
-    (e.g. task sets `description: clear: true` while one feed pins
-    `description: clear: false`). Disjoint sub-keys are inherited as-is.
-    """
-    return {**task_f, **feed_f}
-
-
 def _is_due(feed_state: dict, period: Period, now: datetime) -> bool:
     last_run = feed_state.get("last_run")
     if not last_run:
@@ -134,14 +124,14 @@ async def _pull_feeds(
     source: RSSSource,
     feed_cfgs: list[dict],
     feeds_state: dict,
-    task_filter: dict,
+    global_cfg: dict,
+    task_cfg: dict,
     session: aiohttp.ClientSession,
     *,
     collector=None,
     analysis: bool = False,
 ) -> tuple[dict[str, object], dict[str, dict]]:
     """Fetch all feeds concurrently. Returns ({url: PullResult | None}, {url: filter_log})."""
-    task_filter = task_filter or {}
 
     async def _fetch_one(fc: dict):
         url = fc["url"]
@@ -150,9 +140,8 @@ async def _pull_feeds(
             if analysis
             else {item["url"] for item in feeds_state.get(url, {}).get("items", [])}
         )
-        feed_filter = fc.get("filter", {})
-        merged_filter = (
-            _merge_filter(task_filter, feed_filter) if (task_filter or feed_filter) else {}
+        merged_filter = layer_dict(
+            global_cfg.get("filter"), task_cfg.get("filter"), fc.get("filter")
         )
         effective_fc = {**fc, "filter": merged_filter} if merged_filter else fc
         filter_log = (
@@ -621,9 +610,8 @@ def _collect_tagged_items(
     fetch_map: dict[str, object],
     filter_log_map: dict[str, dict],
     *,
-    task_color: int | None,
-    global_color: int | None,
-    task_skip_image: bool,
+    global_cfg: dict,
+    task_cfg: dict,
     collector,
     analysis_limit: int,
 ) -> tuple[list[Item], dict[str, list[Item]]]:
@@ -654,10 +642,13 @@ def _collect_tagged_items(
                 description_transforms=fl.get("description_transforms", []),
             )
 
-        feed_color = parse_color(fc.get("discord", {}).get("color")) or task_color or global_color
-        feed_image_cfg = fc.get("image")
-        feed_skip_image = (
-            bool(feed_image_cfg.get("skip")) if feed_image_cfg is not None else task_skip_image
+        feed_color = parse_color(
+            layer_dict(global_cfg.get("discord"), get_discord_cfg(task_cfg), fc.get("discord")).get(
+                "color"
+            )
+        )
+        feed_skip_image = bool(
+            layer_dict(global_cfg.get("image"), task_cfg.get("image"), fc.get("image")).get("skip")
         )
         feed_curate_cfg = fc.get("curate")
         feed_curate_skip = (
@@ -845,22 +836,20 @@ async def _process_feed_task(
     summarize_model: str | None = None,
     summarize_adapter: LLMAdapter | None = None,
     summarize_reasoning: str | bool | dict | None = None,
-    global_color: int | None = None,
+    global_cfg: dict | None = None,
     global_language: str = "EN-US",
     max_age_seconds: int | None = None,
     collector=None,
     analysis: bool = False,
 ) -> dict:
     """Pull RSS feeds, optionally filter/summarize, push to Discord. Returns {task_name: task_state}."""
+    global_cfg = global_cfg or {}
     task_name = task_cfg["name"]
     task_discord = get_discord_cfg(task_cfg)
-    task_color = parse_color(task_discord.get("color"))
     filter_cfg = task_cfg.get("curate") or None
     explain = bool(filter_cfg.get("explain")) if filter_cfg else False
     if analysis and filter_cfg:
         explain = True
-    task_skip_image = bool((task_cfg.get("image") or {}).get("skip"))
-    task_filter = task_cfg.get("filter", {})
     kind = task_kind(task_cfg)
     task_summarize = task_cfg.get("summarize", kind == "digest")
 
@@ -886,7 +875,8 @@ async def _process_feed_task(
             source,
             feed_cfgs,
             feeds_state,
-            task_filter,
+            global_cfg,
+            task_cfg,
             session,
             collector=collector,
             analysis=analysis,
@@ -898,9 +888,8 @@ async def _process_feed_task(
             feed_cfgs,
             fetch_map,
             filter_log_map,
-            task_color=task_color,
-            global_color=global_color,
-            task_skip_image=task_skip_image,
+            global_cfg=global_cfg,
+            task_cfg=task_cfg,
             collector=collector,
             analysis_limit=analysis_limit,
         )
@@ -983,7 +972,7 @@ async def _process_realestate_task(
     state: dict,
     session: aiohttp.ClientSession,
     *,
-    global_color: int | None = None,
+    global_cfg: dict | None = None,
 ) -> dict:
     """Scrape one or more sites, post new listings as one batched Discord stream.
 
@@ -993,9 +982,10 @@ async def _process_realestate_task(
     contributes URLs to every source's `seen` set for dedup but is never
     written to.
     """
+    global_cfg = global_cfg or {}
     task_name = task_cfg["name"]
     task_discord = get_discord_cfg(task_cfg)
-    task_color = parse_color(task_discord.get("color")) or global_color
+    task_color = parse_color(layer_dict(global_cfg.get("discord"), task_discord).get("color"))
 
     task_state = state.get("tasks", {}).get(task_name, {})
     realestate_state = task_state.get("realestate", {})

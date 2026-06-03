@@ -19,7 +19,6 @@ from config import (
     get_discord_cfg,
     get_feeds,
     load_config,
-    parse_color,
     parse_period,
     resolve_model_specs,
     task_kind,
@@ -306,8 +305,6 @@ async def _async_main(args: argparse.Namespace) -> None:
     instructions = search_cfg_global.get("instructions") or None
     global_language = curate_cfg.get("language") or "EN-US"
     configure_vasco()
-    discord_cfg = config.get("discord", {})
-    global_color = parse_color(discord_cfg.get("color"))
     feeds_cfg = config.get("feeds") or {}
     max_age_seconds = int(feeds_cfg.get("max_age_days") or 7) * 86400
 
@@ -414,9 +411,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     ):
                         continue
                     feed_tasks.append(
-                        _process_realestate_task(
-                            task_cfg, state, session, global_color=global_color
-                        )
+                        _process_realestate_task(task_cfg, state, session, global_cfg=config)
                     )
                 elif kind == "weather":
                     if (
@@ -471,7 +466,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                             summarize_model=summarize_model,
                             summarize_adapter=summarize_adapter,
                             summarize_reasoning=summarize_reasoning,
-                            global_color=global_color,
+                            global_cfg=config,
                             global_language=global_language,
                             max_age_seconds=max_age_seconds,
                             collector=collector,
