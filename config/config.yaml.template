@@ -4,6 +4,9 @@ discord:                    # optional — global defaults for Discord posting
 feeds:                      # optional — global defaults for RSS feed fetching
   # max_age_days: 7        # skip feed entries older than this on every pull (default: 7)
 
+youtube:                    # optional — global defaults for YouTube feeds (override per task / per feed)
+  # ignore_shorts: true    # drop entries whose link is a /shorts/ URL
+
 retention:                  # optional — disk retention for logs and eval traces
   # days: 30               # delete files under <state_dir>/{logs,evals}/ older than this (default: 30; 0 disables)
 
@@ -72,6 +75,8 @@ tasks:
     #     - remove_phrases_with_urls: true
     # image:                 # optional — image settings for this task
     #   skip: true           # skip image fetching entirely (default: false)
+    # youtube:               # optional — YouTube feed filters (overrides global; feeds override this)
+    #   ignore_shorts: true  # drop entries whose link is a /shorts/ URL
     # summarize: true        # optional — LLM-summarize each entry's description before filtering/posting
     #                        # default: true for digest tasks, false for RSS/embed tasks
     #                        # per-feed 'summarize' overrides this task-level default
@@ -85,6 +90,8 @@ tasks:
           # discord:
           #   color: "#FF0000"      # optional — overrides task/global discord.color for this feed
           # summarize: true         # optional — override task-level summarize for this feed (also accepts dict form)
+          # youtube:                 # optional — overrides task/global youtube settings for this feed
+          #   ignore_shorts: false   # e.g. opt one feed out of a task/global ignore_shorts
           # curate:
           #   skip: true             # optional — bypass LLM curation for this feed (items always pass)
           # filter:                                # feed-level filter sub-keys fully replace the

@@ -140,13 +140,20 @@ async def _pull_feeds(
             if analysis
             else {item["url"] for item in feeds_state.get(url, {}).get("items", [])}
         )
+        overrides: dict = {}
         merged_filter = layer_dict(
             global_cfg.get("filter"), task_cfg.get("filter"), fc.get("filter")
         )
-        effective_fc = {**fc, "filter": merged_filter} if merged_filter else fc
+        if merged_filter:
+            overrides["filter"] = merged_filter
+        youtube = layer_dict(global_cfg.get("youtube"), task_cfg.get("youtube"), fc.get("youtube"))
+        if youtube:
+            overrides["youtube"] = youtube
+        effective_fc = {**fc, **overrides} if overrides else fc
         filter_log = (
             {
                 "url_excluded": [],
+                "shorts_excluded": [],
                 "title_transforms": [],
                 "description_transforms": [],
                 "total_in_feed": 0,
