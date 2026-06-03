@@ -7,6 +7,7 @@ import aiohttp
 import feedparser
 from bs4 import BeautifulSoup
 
+from constants import USER_AGENT
 from pipeline import Item, PullResult, Source
 from process.filter_heuristic import apply_regex, url_filtered
 
@@ -15,6 +16,10 @@ DEFAULT_ENTRY_MAX_AGE_SECONDS = 7 * 86400
 
 # YouTube feeds surface Shorts as /shorts/<id> links (regular videos are /watch?v=).
 _YT_SHORTS = "/shorts/"
+# Regular YouTube videos; livestreams (live, upcoming, or VODs of past streams) share
+# this URL shape and carry no flag in the feed — only the watch page marks them.
+_YT_WATCH_RE = re.compile(r"https?://(?:www\.|m\.)?youtube\.com/watch\b")
+_LIVESTREAM_FETCH_TIMEOUT = 10.0
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +59,41 @@ def _entry_image(entry) -> str | None:
             if href:
                 return href
     return None
+
+
+async def _is_livestream(url: str, session: aiohttp.ClientSession) -> bool:
+    """Return True if `url` is a YouTube livestream (live, upcoming, or a past VOD).
+
+    The feed carries no live flag; the authoritative signal is `"isLiveContent":true`
+    in the watch-page HTML. vascod can't serve this (it routes YouTube URLs to its
+    transcript adapter), so we fetch the page directly with the shared session.
+    Fail-open: any non-watch URL, fetch error, or non-200 returns False so a transient
+    failure posts the video rather than silently dropping a real one.
+    """
+    if not _YT_WATCH_RE.match(url):
+        return False
+    try:
+        async with session.get(
+            url,
+            headers={"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"},
+            timeout=aiohttp.ClientTimeout(total=_LIVESTREAM_FETCH_TIMEOUT),
+        ) as resp:
+            if resp.status >= 400:
+                return False
+            text = await resp.text()
+    except (TimeoutError, aiohttp.ClientError) as exc:
+        log.debug("Livestream check failed for %s: %s", url[:120], exc)
+        return False
+    return '"isLiveContent":true' in text
+
+
+async def _live_url_set(urls: list[str], session: aiohttp.ClientSession) -> set[str]:
+    """Concurrently resolve which of `urls` are YouTube livestreams. Non-watch URLs skipped."""
+    watch_urls = [u for u in urls if _YT_WATCH_RE.match(u)]
+    if not watch_urls:
+        return set()
+    results = await asyncio.gather(*(_is_livestream(u, session) for u in watch_urls))
+    return {u for u, live in zip(watch_urls, results) if live}
 
 
 async def get_new_entries(
@@ -103,6 +143,7 @@ async def get_new_entries(
 
     youtube_cfg = feed_cfg.get("youtube", {})
     ignore_shorts = bool(youtube_cfg.get("ignore_shorts"))
+    ignore_livestreams = bool(youtube_cfg.get("ignore_livestreams"))
 
     now = datetime.now(UTC)
     _new_eligible = 0
@@ -141,8 +182,19 @@ async def get_new_entries(
 
     ordered = list(reversed(unseen_raw))
 
+    # Livestream check is last and only on survivors: it costs one watch-page fetch
+    # per entry, whereas the url/shorts filters above are free.
+    live_ids: set[str] = set()
+    if ignore_livestreams and ordered:
+        live_ids = await _live_url_set([eid for eid, _ in ordered], session)
+
     new_entries: list[Item] = []
     for eid, entry in ordered:
+        if eid in live_ids:
+            log.debug("[%s] Skipping livestream: %s", feed_title, eid[:120])
+            if filter_log is not None:
+                filter_log["livestream_excluded"].append({"url": eid})
+            continue
         link = entry.get("link", "")
         raw_desc = (
             entry.get("summary")

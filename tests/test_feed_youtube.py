@@ -68,6 +68,42 @@ async def test_shorts_kept_when_ignore_shorts_off(mock_http):
     assert SHORT in {it.url for it in new_entries}
 
 
+def _watch_html(is_live: bool) -> str:
+    flag = "true" if is_live else "false"
+    return f'<html><body><script>var d = {{"isLiveContent":{flag}}};</script></body></html>'
+
+
+async def test_ignore_livestreams_drops_livestream_keeps_regular(mock_http):
+    mock_http.get(FEED_URL, body=_feed_xml())
+    mock_http.get(WATCH_A, body=_watch_html(is_live=True))  # livestream
+    mock_http.get(WATCH_B, body=_watch_html(is_live=False))  # regular video
+    # SHORT is intentionally NOT registered: it's a /shorts/ URL, so the livestream
+    # stage must not fetch it. An unexpected fetch would raise in aioresponses.
+    cfg = {"url": FEED_URL, "youtube": {"ignore_livestreams": True}}
+
+    async with aiohttp.ClientSession() as session:
+        _title, current_items, new_entries = await get_new_entries(cfg, set(), session)
+
+    new_urls = {it.url for it in new_entries}
+    assert WATCH_A not in new_urls, "the livestream must not be posted"
+    assert WATCH_B in new_urls, "the regular video must be posted"
+    assert SHORT in new_urls, "shorts untouched when only ignore_livestreams is set"
+    assert WATCH_A in {ci["url"] for ci in current_items}, "livestream stays seen"
+
+
+async def test_livestream_check_fails_open_on_fetch_error(mock_http):
+    mock_http.get(FEED_URL, body=_feed_xml())
+    mock_http.get(WATCH_A, exception=aiohttp.ClientError("boom"))
+    mock_http.get(WATCH_B, body=_watch_html(is_live=False))
+    cfg = {"url": FEED_URL, "youtube": {"ignore_livestreams": True}}
+
+    async with aiohttp.ClientSession() as session:
+        _title, _current_items, new_entries = await get_new_entries(cfg, set(), session)
+
+    # fetch error → not flagged as livestream → kept (better to post than silently drop)
+    assert WATCH_A in {it.url for it in new_entries}
+
+
 def test_validate_config_accepts_youtube_at_all_levels():
     cfg = {
         "youtube": {"ignore_shorts": True, "ignore_livestreams": True},

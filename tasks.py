@@ -154,6 +154,7 @@ async def _pull_feeds(
             {
                 "url_excluded": [],
                 "shorts_excluded": [],
+                "livestream_excluded": [],
                 "title_transforms": [],
                 "description_transforms": [],
                 "total_in_feed": 0,
