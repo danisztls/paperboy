@@ -8,41 +8,35 @@ def test_layer_dict_empty():
 
 
 def test_layer_dict_skips_non_dict_blocks():
-    # callers pass cfg.get("filter") directly; absent → None → skipped
+    # callers pass cfg.get("ignore") directly; absent → None → skipped
     assert layer_dict(None, {"a": 1}, None) == {"a": 1}
 
 
 def test_layer_dict_single_block():
-    block = {"title": [{"extract": "x"}]}
+    block = {"description": {"remove": "x"}}
     assert layer_dict(block) == block
     assert layer_dict(None, block) == block
 
 
 def test_layer_dict_disjoint_keys_union():
-    task_f = {"title": [{"extract": "x"}]}
-    feed_f = {"url": {"skip_containing": "/foo"}}
-    assert layer_dict(task_f, feed_f) == {
-        "title": [{"extract": "x"}],
-        "url": {"skip_containing": "/foo"},
-    }
+    task_f = {"image": True}
+    feed_f = {"description": False}
+    assert layer_dict(task_f, feed_f) == {"image": True, "description": False}
 
 
 def test_layer_dict_later_block_overrides_per_key():
-    """The Cappy Army case: feed-level `clear: false` overrides task-level `clear: true`."""
-    task_f = {"description": {"clear": True}}
-    feed_f = {"description": {"clear": False}}
-    assert layer_dict(task_f, feed_f) == {"description": {"clear": False}}
+    """The Cappy Army case: feed-level `description: false` overrides task-level `true`."""
+    task_f = {"description": True}
+    feed_f = {"description": False}
+    assert layer_dict(task_f, feed_f) == {"description": False}
 
 
 def test_layer_dict_global_task_feed_precedence():
-    glob = {"ignore_shorts": True, "ignore_livestreams": True}
-    task = {"ignore_livestreams": False}
-    feed = {"ignore_shorts": False}
+    glob = {"shorts": True, "livestreams": True}
+    task = {"livestreams": False}
+    feed = {"shorts": False}
     # feed > task > global, per leaf key
-    assert layer_dict(glob, task, feed) == {
-        "ignore_shorts": False,
-        "ignore_livestreams": False,
-    }
+    assert layer_dict(glob, task, feed) == {"shorts": False, "livestreams": False}
 
 
 def test_layer_dict_does_not_mutate_inputs():
@@ -51,3 +45,30 @@ def test_layer_dict_does_not_mutate_inputs():
     layer_dict(glob, task)
     assert glob == {"a": 1}
     assert task == {"b": 2}
+
+
+def test_resolve_scoped_youtube_gate_applies_only_to_youtube_feeds():
+    from tasks import _resolve_scoped
+
+    g = {"ignore": {"image": True}, "youtube": {"ignore": {"description": True}}}
+    yt_fc = {"url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCx"}
+    other_fc = {"url": "https://example.com/rss"}
+    # YouTube feed: the global youtube.ignore.description merges in alongside the plain ignore.image
+    assert _resolve_scoped("ignore", g, {}, yt_fc, youtube=True) == {
+        "image": True,
+        "description": True,
+    }
+    # Non-YouTube feed: the youtube scope is not applied
+    assert _resolve_scoped("ignore", g, {}, other_fc, youtube=False) == {"image": True}
+
+
+def test_resolve_scoped_feed_overrides_youtube_scope():
+    """A per-channel `ignore.description: false` opts out of a global youtube lever."""
+    from tasks import _resolve_scoped
+
+    g = {"youtube": {"ignore": {"description": True}}}
+    fc = {
+        "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCx",
+        "ignore": {"description": False},
+    }
+    assert _resolve_scoped("ignore", g, {}, fc, youtube=True) == {"description": False}

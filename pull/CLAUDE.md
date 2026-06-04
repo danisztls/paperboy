@@ -13,12 +13,12 @@ A `youtube` pull item is **not** a separate source — `config.get_feeds` expand
 - Entry ID is `entry.link`; entries with no link or older than 7 days are skipped.
 - Bodies are HTML-stripped (BeautifulSoup `get_text`), truncated to 512 chars, Markdown-escaped.
 - `_entry_image` resolves a single image URL from feed metadata only, via fallback chain: `media_thumbnail` → `media_content` (medium `image` or `image/*` type) → `enclosures` (`image/*`) → `links` (`rel=enclosure`, `image/*`). It does not scrape `<img>` tags out of body HTML.
-- Heuristic filters (`filter.title`, `filter.description`, `filter.url`) applied via `process.filter_heuristic.apply_regex` and `url_filtered`.
-- Supported ops: `extract`, `replace`/`with`, `remove_phrases_with_urls`, `remove_phrases_containing`, `clear`, `skip_containing`.
-- `youtube` block (resolved global→task→feed via `config.scope.layer_dict`, injected onto `feed_cfg["youtube"]` by `tasks._pull_feeds`):
-  - `ignore_shorts` drops unseen entries whose link contains `/shorts/` (YouTube surfaces Shorts as `/shorts/<id>` links; regular videos are `/watch?v=`). Cheap URL check, no fetch.
-  - `ignore_livestreams` drops livestreams (live, upcoming, or VODs of past streams). The feed carries no live flag, so `_is_livestream` fetches each new `/watch` page directly via the shared aiohttp session (browser UA) and checks `"isLiveContent":true` — vascod can't serve this since it routes YouTube URLs to its transcript adapter. Runs **last and only on survivors** of the url/shorts filters (`_live_url_set`, concurrent), since it costs one fetch per entry. **Fail-open**: a fetch error or non-200 keeps the entry. One fetch per video ever (the entry is then marked seen).
-  - Dropped entries (both) stay in `current_items` so they're marked seen and not reconsidered — same as `url_filtered`.
+- `get_new_entries` reads the **already-resolved** `ignore` / `skip` / `description` / `title` blocks off the feed cfg — `tasks._pull_feeds` merges the global→task→feed (+ youtube-scope) layers and injects them. The blocks:
+  - `ignore.description` → drop the body entirely (`body = ""`); else `description` runs `apply_regex` (`remove`/`extract`/`replace`); `title` likewise. `ignore.image` is consumed later (`tasks.py` meta loop), not here.
+  - `skip.url_contains` → `url_filtered`; `skip.shorts` → `/shorts/` URL check; `skip.livestreams` → livestream check.
+- `skip.shorts` drops unseen entries whose link contains `/shorts/` (YouTube surfaces Shorts as `/shorts/<id>` links; regular videos are `/watch?v=`). Cheap URL check, no fetch — self-gates to YouTube.
+- `skip.livestreams` drops livestreams (live, upcoming, or VODs of past streams). The feed carries no live flag, so `_is_livestream` fetches each new `/watch` page directly via the shared aiohttp session (browser UA) and checks `"isLiveContent":true` — vascod can't serve this since it routes YouTube URLs to its transcript adapter. Runs **last and only on survivors** of the url/shorts filters (`_live_url_set`, concurrent — non-`/watch` URLs are skipped, so it self-gates to YouTube), since it costs one fetch per entry. **Fail-open**: a fetch error or non-200 keeps the entry. One fetch per video ever (the entry is then marked seen).
+- Dropped entries (url/shorts/livestreams) stay in `current_items` so they're marked seen and not reconsidered.
 
 **Gotcha:** `get_new_entries` reverses feedparser's order (oldest-first). So when the LLM curate filter sees XML items, the first XML item is `id=N-1`, the last is `id=0`. Tests need to wire `queue_filter` responses accordingly.
 

@@ -18,8 +18,8 @@ Between-pull-and-push processing stages.
 
 Pure functions used by `pull/feed.py` during feed parsing:
 
-- `apply_regex(cfg, text)` runs `extract` / `replace` / `remove_phrases_with_urls` / `remove_phrases_containing` / `clear` ops.
-- `url_filtered(url, cfg)` checks `skip_containing`.
+- `apply_regex(cfg, text)` runs a flat `_TextTransform` op-set on a single field: `remove` (raw regex or list, `re.sub`'d out), `extract` (keep the match), `replace`/`with`. Consumed for the `description`/`title` blocks. Dropping a whole field (`ignore.description`) is handled in `pull/feed.py`, not here.
+- `url_filtered(url, needles)` checks whether the URL contains any of `skip.url_contains`.
 
 ## `_vasco.py` — thin client to the vascod daemon for URL content extraction
 

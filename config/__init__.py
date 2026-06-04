@@ -84,22 +84,22 @@ def task_kind(task_cfg: dict) -> str:
 _YT_FEED_URL = "https://www.youtube.com/feeds/videos.xml?channel_id={}"
 
 
+def is_youtube_feed_url(url: str) -> bool:
+    """True for a YouTube channel feed URL (both the `youtube:` sugar and a verbose
+    `feed:` pointing at one). Used to gate the `youtube:` scope blocks to YouTube feeds."""
+    return url.startswith("https://www.youtube.com/feeds/videos.xml")
+
+
 def _youtube_to_feed(yt: dict) -> dict:
     """Expand a `youtube` pull item into a `feed` dict (sugar over feed).
 
     The URL is built from `channel_id` and is byte-identical to the verbose
     `feeds/videos.xml?channel_id=...` form, so feed state (keyed by url) is preserved.
-    Flat `ignore_shorts`/`ignore_livestreams` move into the feed's `youtube` filter block.
+    Every other key (`ignore`/`skip`/`description`/`title`/…) carries through unchanged;
+    `shorts`/`livestreams` self-gate to YouTube and the global `youtube:` scope merges in.
     """
-    feed = {
-        k: v
-        for k, v in yt.items()
-        if k not in ("channel_id", "ignore_shorts", "ignore_livestreams")
-    }
+    feed = {k: v for k, v in yt.items() if k != "channel_id"}
     feed["url"] = _YT_FEED_URL.format(yt["channel_id"])
-    yt_block = {k: yt[k] for k in ("ignore_shorts", "ignore_livestreams") if k in yt}
-    if yt_block:
-        feed["youtube"] = yt_block
     return feed
 
 
@@ -314,71 +314,67 @@ class _GlobalSummarize(BaseModel):
     model: ModelSpecList = None
 
 
-class _FilterOp(BaseModel):
+class _TextTransform(BaseModel):
+    """Heuristic regex transforms applied to a single text field (`description`/`title`).
+
+    A flat op-set (no chaining): at least one of `remove` / `extract` / `replace`.
+    `remove` is a raw regex (or list) `re.sub`'d out; `extract` keeps the match;
+    `replace`/`with` is a plain `re.sub`.
+    """
+
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
-    remove_phrases_with_urls: Any = None
-    remove_phrases_containing: Any = None
+    remove: Any = None
     extract: str | None = None
     replace: str | None = None
     with_: str | None = Field(None, alias="with")
-    clear: bool | None = None
 
     @model_validator(mode="after")
     def _has_op(self):
-        ops = {
-            "remove_phrases_with_urls",
-            "remove_phrases_containing",
-            "extract",
-            "replace",
-            "clear",
-        }
-        if not (ops & self.model_fields_set):
-            raise ValueError("no recognized operation key")
+        if not ({"remove", "extract", "replace"} & self.model_fields_set):
+            raise ValueError("no recognized operation key (remove/extract/replace)")
         return self
 
-    @field_validator("extract", "replace", mode="before")
+    @field_validator("remove", "extract", "replace", mode="before")
     @classmethod
     def _valid_regex(cls, v):
-        if isinstance(v, str):
-            try:
-                re.compile(v)
-            except re.error as exc:
-                raise ValueError(f"invalid regex {v!r}: {exc}")
+        for pat in v if isinstance(v, list) else [v]:
+            if isinstance(pat, str):
+                try:
+                    re.compile(pat)
+                except re.error as exc:
+                    raise ValueError(f"invalid regex {pat!r}: {exc}")
         return v
 
 
-class _UrlFilter(BaseModel):
+class _Ignore(BaseModel):
+    """Omit a whole FIELD from the post."""
+
     model_config = ConfigDict(extra="forbid")
-    skip_containing: str | list[str] | None = None
-
-    @model_validator(mode="after")
-    def _has_op(self):
-        if not self.model_fields_set:
-            raise ValueError("no recognized operation key")
-        return self
+    image: bool | None = None
+    description: bool | None = None
 
 
-class _FilterDict(BaseModel):
+class _Skip(BaseModel):
+    """Omit a whole ENTRY. `shorts`/`livestreams` self-gate to YouTube by URL."""
+
     model_config = ConfigDict(extra="forbid")
-    title: list[_FilterOp] | _FilterOp | None = None
-    description: list[_FilterOp] | _FilterOp | None = None
-    url: _UrlFilter | None = None
+    shorts: bool | None = None
+    livestreams: bool | None = None
+    url_contains: str | list[str] | None = None
 
 
 class _YouTube(BaseModel):
+    """YouTube-feeds-only scope: reuses the `ignore`/`skip` vocabulary, applied only
+    to feeds whose URL is a YouTube channel feed (see `is_youtube_feed_url`)."""
+
     model_config = ConfigDict(extra="forbid")
-    ignore_livestreams: bool | None = None
-    ignore_shorts: bool | None = None
+    ignore: _Ignore | None = None
+    skip: _Skip | None = None
 
 
 class _FeedDiscord(BaseModel):
     model_config = ConfigDict(extra="forbid")
     color: _Color = None
-
-
-class _Image(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    skip: bool | None = None
 
 
 class _Summarize(BaseModel):
@@ -397,8 +393,10 @@ class _PullFeedItem(BaseModel):
     name: str | None = None
     url: str
     discord: _FeedDiscord = Field(default_factory=_FeedDiscord)
-    image: _Image | None = None
-    filter: _FilterDict | None = None
+    ignore: _Ignore | None = None
+    skip: _Skip | None = None
+    description: _TextTransform | None = None
+    title: _TextTransform | None = None
     youtube: _YouTube | None = None
     summarize: bool | _Summarize | None = None
     curate: _FeedCurate | None = None
@@ -406,16 +404,18 @@ class _PullFeedItem(BaseModel):
 
 class _PullYouTubeItem(BaseModel):
     """Sugar over `feed`: a YouTube channel by `channel_id` (the feed URL is built in
-    `get_feeds`). Full feed parity; flat `ignore_*` map to the feed's `youtube` block."""
+    `get_feeds`). Full feed parity (ignore/skip/description/title/summarize/curate);
+    the entry is itself a YouTube feed, so its `ignore`/`skip` apply directly and the
+    global `youtube:` scope merges in — no nested `youtube:` block needed."""
 
     model_config = ConfigDict(extra="forbid")
     name: str | None = None
     channel_id: str
-    ignore_livestreams: bool | None = None
-    ignore_shorts: bool | None = None
     discord: _FeedDiscord = Field(default_factory=_FeedDiscord)
-    image: _Image | None = None
-    filter: _FilterDict | None = None
+    ignore: _Ignore | None = None
+    skip: _Skip | None = None
+    description: _TextTransform | None = None
+    title: _TextTransform | None = None
     summarize: bool | _Summarize | None = None
     curate: _FeedCurate | None = None
 
@@ -542,8 +542,10 @@ class _Task(BaseModel):
     period: _Period = None
     pull: list[_PullItem]
     push: list[_PushItem]
-    image: _Image | None = None
-    filter: _FilterDict | None = None
+    ignore: _Ignore | None = None
+    skip: _Skip | None = None
+    description: _TextTransform | None = None
+    title: _TextTransform | None = None
     youtube: _YouTube | None = None
     curate: _TaskCurate | None = None
     summarize: bool | _Summarize | None = None
@@ -594,7 +596,10 @@ class _Config(BaseModel):
     curate: _GlobalCurate | None = None
     search: _GlobalSearch | None = None
     summarize: _GlobalSummarize | None = None
-    image: _Image | None = None
+    ignore: _Ignore | None = None
+    skip: _Skip | None = None
+    description: _TextTransform | None = None
+    title: _TextTransform | None = None
     youtube: _YouTube | None = None
     retention: _Retention | None = None
     tasks: list[_Task]

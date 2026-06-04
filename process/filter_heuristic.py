@@ -1,20 +1,8 @@
 import re
 
-_PHRASE_URL_RE = re.compile(r"[^.!?\n]*?https?://\S+")
 
-
-def _remove_phrases_with_urls(text: str) -> str:
-    text = _PHRASE_URL_RE.sub("", text)
-    return re.sub(r"[ \t]+", " ", text).strip()
-
-
-def url_filtered(url: str, cfg) -> bool:
-    """Return True if the URL should be excluded by the url filter config."""
-    if not cfg:
-        return False
-    if isinstance(cfg, list):
-        return any(url_filtered(url, item) for item in cfg)
-    needles = cfg.get("skip_containing")
+def url_filtered(url: str, needles) -> bool:
+    """Return True if `url` contains any of `needles` (the `skip.url_contains` config)."""
     if not needles:
         return False
     if isinstance(needles, str):
@@ -23,25 +11,20 @@ def url_filtered(url: str, cfg) -> bool:
 
 
 def apply_regex(cfg, text: str) -> str:
-    if not isinstance(cfg, (list, dict)):
+    """Apply a flat `_TextTransform` op-set (`remove` / `extract` / `replace`+`with`) to text.
+
+    `remove` is a raw regex (or list) `re.sub`'d out; `extract` keeps the match (group 1 if
+    captured, else group 0); `replace`/`with` is a plain `re.sub`.
+    """
+    if not isinstance(cfg, dict):
         return text
-    if isinstance(cfg, list):
-        for item in cfg:
-            text = apply_regex(item, text)
-        return text
-    if isinstance(cfg, dict):
-        if cfg.get("clear"):
-            return ""
-        if cfg.get("remove_phrases_with_urls"):
-            text = _remove_phrases_with_urls(text)
-        if needle := cfg.get("remove_phrases_containing"):
-            needles = needle if isinstance(needle, list) else [needle]
-            for n in needles:
-                text = re.sub(r"[^.!?\n]*?" + re.escape(n) + r"[^.!?\n]*", "", text)
-            text = re.sub(r"[ \t]+", " ", text).strip()
-        if key := cfg.get("extract"):
-            m = re.search(key, text)
-            text = (m.group(1) if m.lastindex else m.group(0)) if m else text
-        if "replace" in cfg:
-            text = re.sub(cfg["replace"], cfg.get("with", ""), text)
-        return text
+    if remove := cfg.get("remove"):
+        for pat in remove if isinstance(remove, list) else [remove]:
+            text = re.sub(pat, "", text)
+        text = re.sub(r"[ \t]+", " ", text).strip()
+    if key := cfg.get("extract"):
+        m = re.search(key, text)
+        text = (m.group(1) if m.lastindex else m.group(0)) if m else text
+    if "replace" in cfg:
+        text = re.sub(cfg["replace"], cfg.get("with", ""), text)
+    return text

@@ -166,7 +166,7 @@ def make_curate_cfg(
         "name": name,
         "pull": [{"feed": f} for f in feeds],
         "push": push,
-        "image": {"skip": True},
+        "ignore": {"image": True},
     }
     if llm_filter is not None:
         cfg["curate"] = llm_filter

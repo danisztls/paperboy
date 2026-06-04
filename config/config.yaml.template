@@ -4,10 +4,32 @@ discord:                    # optional — global defaults for Discord posting
 feeds:                      # optional — global defaults for RSS feed fetching
   # max_age_days: 7        # skip feed entries older than this on every pull (default: 7)
 
-youtube:                    # optional — global defaults for YouTube feeds (override per task / per feed)
-  # ignore_shorts: true        # drop entries whose link is a /shorts/ URL (cheap, no fetch)
-  # ignore_livestreams: true   # drop livestreams / VODs of past streams (fetches each new
-  #                            # watch page to check isLiveContent; one fetch per video, fail-open)
+# Heuristic processing blocks (ignore / skip / description / title / youtube) are all *layered*:
+# set globally here, override per task, override again per feed — each more specific scope wins
+# per leaf key. They are also valid inside each task and each feed (see the task example below).
+ignore:                     # optional — omit a whole FIELD from the post
+  # image: true            #   don't fetch / attach the og:image
+  # description: true      #   drop the entry description/body entirely
+skip:                       # optional — omit a whole ENTRY
+  # url_contains: "/tag/"  #   skip entries whose URL contains this substring (str or list)
+  # shorts: true           #   (YouTube) drop /shorts/ entries — self-gates to YouTube feeds
+  # livestreams: true      #   (YouTube) drop livestreams / past-stream VODs — one watch-page fetch
+  #                        #   per video, fail-open; self-gates to YouTube feeds
+description:                # optional — regex transforms on the description (after HTML-stripping)
+  # remove: "Points:.*"    #   re.sub each pattern out (str or list of regexes)
+  # extract: "\\d+ de \\w+" #  keep only the match (group 1 if captured, else group 0)
+  # replace: "Ad:\\s*"     #   re.sub(replace, with, description)
+  # with: ""
+title:                      # optional — same regex transforms, applied to the title
+  # remove: "\\s*\\| Sponsored$"
+youtube:                    # optional — YouTube-feeds-only scope: the same ignore/skip vocabulary,
+                            # but applied only to YouTube channel feeds (a global ignore.description
+                            # would otherwise clear every feed). shorts/livestreams self-gate anyway.
+  # skip:
+  #   shorts: true
+  #   livestreams: true
+  # ignore:
+  #   description: true     #   one global lever: clear the description on all YouTube feeds
 
 retention:                  # optional — disk retention for logs and eval traces
   # days: 30               # delete files under <state_dir>/{logs,evals}/ older than this (default: 30; 0 disables)
@@ -70,16 +92,18 @@ tasks:
     #   instructions: "..."  # optional; extra instructions appended after the filter criteria
     #   web_search: true     # optional — let the LLM search for context / fact-check items (default: false)
     #   explain: true        # optional — use filter_reason as item body (default: false)
-    # filter:                # optional — heuristic cleanup applied to all feeds in this task
-    #   title:
-    #     extract: "\\d+ de \\w+"
-    #   description:
-    #     - remove_phrases_with_urls: true
-    # image:                 # optional — image settings for this task
-    #   skip: true           # skip image fetching entirely (default: false)
-    # youtube:                   # optional — YouTube feed filters (overrides global; feeds override this)
-    #   ignore_shorts: true      # drop entries whose link is a /shorts/ URL
-    #   ignore_livestreams: true # drop livestreams / past-stream VODs (one watch-page fetch per video)
+    # ignore:                # optional — omit a FIELD (overrides global; feeds override this)
+    #   image: true          #   skip image fetching for all feeds in this task
+    #   description: true     #   drop the description for all feeds in this task
+    # skip:                  # optional — omit an ENTRY
+    #   url_contains: ["/shorts/", "/live/"]
+    # description:           # optional — regex transforms on the description
+    #   remove: ["Points:.*", "# Comments:.*"]
+    # title:                # optional — regex transforms on the title
+    #   extract: "\\d+ de \\w+"
+    # youtube:                   # optional — YouTube-feeds-only scope (overrides global; feeds override this)
+    #   skip: { shorts: true, livestreams: true }
+    #   ignore: { description: true }
     # summarize: true        # optional — LLM-summarize each entry's description before filtering/posting
     #                        # default: true for digest tasks, false for RSS/embed tasks
     #                        # per-feed 'summarize' overrides this task-level default
@@ -93,32 +117,28 @@ tasks:
           # discord:
           #   color: "#FF0000"      # optional — overrides task/global discord.color for this feed
           # summarize: true         # optional — override task-level summarize for this feed (also accepts dict form)
-          # youtube:                    # optional — overrides task/global youtube settings for this feed
-          #   ignore_shorts: false      # e.g. opt one feed out of a task/global ignore_shorts
-          #   ignore_livestreams: false # e.g. keep livestreams from one feed
           # curate:
           #   skip: true             # optional — bypass LLM curation for this feed (items always pass)
-          # filter:                                # feed-level filter sub-keys fully replace the
-          #                                        # task-level value for the same sub-key
-          #                                        # (e.g. set `description: clear: false` to opt
-          #                                        # out of a task-wide `description: clear: true`)
-          #   title:
-          #     extract: "\\d+ de \\w+"           # extract match (group 1 if captured, else group 0)
-          #   url:
-          #     skip_containing: "/shorts/"       # skip entries whose URL contains this substring
-          #     # skip_containing: ["/shorts/", "/live/"]  # also accepts a list
-          #   description:                         # dict or list applied after HTML-stripping
-          #     - clear: true                      # discard the description entirely
-          #     - remove_phrases_with_urls: true   # drop phrases containing https:// URLs
-          #     - remove_phrases_containing: "Subscribe"             # drop the clause containing this string
-          #     - remove_phrases_containing: ["Subscribe", "Merch"] # also accepts an inline array
-          #     - replace: "Imagem do dia\\s*"     # re.sub(replace, with, description)
-          #       with: ""
+          # Feed-level ignore/skip/description/title override the task/global value per leaf key.
+          # ignore:
+          #   image: true
+          #   description: false      # e.g. opt one channel out of a task/global youtube.ignore.description
+          # skip:
+          #   url_contains: "/shorts/"   # skip entries whose URL contains this substring (str or list)
+          #   shorts: false              # e.g. opt one feed out of a task/global skip.shorts
+          #   livestreams: false
+          # description:                 # regex transforms (after HTML-stripping)
+          #   remove: ["Subscribe", "Merch"]   # re.sub each out (str or list of regexes)
+          #   extract: "\\d+ de \\w+"          # keep only the match (group 1 if captured, else group 0)
+          #   replace: "Imagem do dia\\s*"     # re.sub(replace, with, description)
+          #   with: ""
+          # title:
+          #   remove: "\\s*\\| Sponsored$"
       # - youtube:               # sugar over feed: builds the channel feed URL from channel_id
       #     name: My Channel      # optional — display name (else resolved from the feed title)
       #     channel_id: UCxxxxxxxxxxxxxxxxxxxxxx  # → feeds/videos.xml?channel_id=<id>
-      #     # ignore_shorts: false       # optional — per-source override of the youtube filter block
-      #     # ignore_livestreams: false  # optional — (also: summarize/curate/filter/discord/image, same as feed)
+      #     # skip: { shorts: false }   # optional — per-source overrides (also: ignore / description /
+      #     #                           # title / summarize / curate / discord, same as a feed)
     push:
       - discord:
           webhook: !secret discord_webhook_my_feeds  # or a literal URL string

@@ -23,7 +23,7 @@ def layer_dict(*blocks: dict | None) -> dict:
     """Shallow-merge dict blocks; later blocks override earlier ones per key.
 
     Blocks are passed low→high precedence (global, task, feed). Non-dict blocks
-    (``None`` / absent) are skipped, so callers can pass ``cfg.get("filter")``
+    (``None`` / absent) are skipped, so callers can pass ``cfg.get("ignore")``
     directly without guarding.
     """
     merged: dict = {}

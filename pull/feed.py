@@ -136,14 +136,16 @@ async def get_new_entries(
     current_items = []
     unseen_raw = []
 
-    feed_filter = feed_cfg.get("filter", {})
-    filter_title = feed_filter.get("title")
-    filter_description = feed_filter.get("description")
-    filter_url = feed_filter.get("url")
+    title_transform = feed_cfg.get("title")
+    description_transform = feed_cfg.get("description")
 
-    youtube_cfg = feed_cfg.get("youtube", {})
-    ignore_shorts = bool(youtube_cfg.get("ignore_shorts"))
-    ignore_livestreams = bool(youtube_cfg.get("ignore_livestreams"))
+    ignore = feed_cfg.get("ignore") or {}
+    ignore_description = bool(ignore.get("description"))
+
+    skip = feed_cfg.get("skip") or {}
+    skip_url_contains = skip.get("url_contains")
+    skip_shorts = bool(skip.get("shorts"))
+    skip_livestreams = bool(skip.get("livestreams"))
 
     now = datetime.now(UTC)
     _new_eligible = 0
@@ -162,11 +164,11 @@ async def get_new_entries(
         current_items.append(ci)
         if eid not in seen:
             _new_eligible += 1
-            if url_filtered(eid, filter_url):
+            if url_filtered(eid, skip_url_contains):
                 log.debug("[%s] URL-filtered: %s", feed_title, eid[:120])
                 if filter_log is not None:
                     filter_log["url_excluded"].append({"url": eid})
-            elif ignore_shorts and _YT_SHORTS in eid:
+            elif skip_shorts and _YT_SHORTS in eid:
                 log.debug("[%s] Skipping YouTube short: %s", feed_title, eid[:120])
                 if filter_log is not None:
                     filter_log["shorts_excluded"].append({"url": eid})
@@ -185,7 +187,7 @@ async def get_new_entries(
     # Livestream check is last and only on survivors: it costs one watch-page fetch
     # per entry, whereas the url/shorts filters above are free.
     live_ids: set[str] = set()
-    if ignore_livestreams and ordered:
+    if skip_livestreams and ordered:
         live_ids = await _live_url_set([eid for eid, _ in ordered], session)
 
     new_entries: list[Item] = []
@@ -204,9 +206,9 @@ async def get_new_entries(
         )
         body_soup = BeautifulSoup(raw_desc, "html.parser")
         body = body_soup.get_text().strip()
-        if filter_description:
+        if ignore_description or description_transform:
             _orig_body = body
-            body = apply_regex(filter_description, body)
+            body = "" if ignore_description else apply_regex(description_transform, body)
             if filter_log is not None and body != _orig_body:
                 filter_log["description_transforms"].append(
                     {"id": eid, "before": _orig_body[:300], "after": body[:300]}
@@ -220,9 +222,9 @@ async def get_new_entries(
         published = datetime(*pt[:6], tzinfo=UTC) if pt else None
 
         title = (_entry_title(entry) or "(no title)")[:256]
-        if filter_title:
+        if title_transform:
             _orig_title = title
-            title = apply_regex(filter_title, title)
+            title = apply_regex(title_transform, title)
             if filter_log is not None and title != _orig_title:
                 filter_log["title_transforms"].append(
                     {"id": eid, "before": _orig_title, "after": title}
