@@ -13,6 +13,7 @@ from config import (
     get_file_path,
     get_finance_cfg,
     get_weather_cfg,
+    is_youtube_feed_url,
     parse_color,
     task_kind,
 )
@@ -120,6 +121,20 @@ def _is_due(feed_state: dict, period: Period, now: datetime) -> bool:
     return (ny * 53 + nw) - (ly * 53 + lw) >= period.count
 
 
+def _resolve_scoped(key: str, global_cfg: dict, task_cfg: dict, fc: dict, *, youtube: bool) -> dict:
+    """layer_dict a scoped block (global→task→feed) by `key`. When `youtube` is True (feed is a
+    YouTube feed), interleave the global/task `youtube.<key>` contributions at the matching scope,
+    so a global `youtube.ignore.description` is overridable per task/feed."""
+    blocks: list = [global_cfg.get(key)]
+    if youtube:
+        blocks.append((global_cfg.get("youtube") or {}).get(key))
+    blocks.append(task_cfg.get(key))
+    if youtube:
+        blocks.append((task_cfg.get("youtube") or {}).get(key))
+    blocks.append(fc.get(key))
+    return layer_dict(*blocks)
+
+
 async def _pull_feeds(
     source: RSSSource,
     feed_cfgs: list[dict],
@@ -140,15 +155,17 @@ async def _pull_feeds(
             if analysis
             else {item["url"] for item in feeds_state.get(url, {}).get("items", [])}
         )
+        is_yt = is_youtube_feed_url(url)
         overrides: dict = {}
-        merged_filter = layer_dict(
-            global_cfg.get("filter"), task_cfg.get("filter"), fc.get("filter")
-        )
-        if merged_filter:
-            overrides["filter"] = merged_filter
-        youtube = layer_dict(global_cfg.get("youtube"), task_cfg.get("youtube"), fc.get("youtube"))
-        if youtube:
-            overrides["youtube"] = youtube
+        for key, yt_scoped in (
+            ("ignore", True),
+            ("skip", True),
+            ("description", False),
+            ("title", False),
+        ):
+            merged = _resolve_scoped(key, global_cfg, task_cfg, fc, youtube=is_yt and yt_scoped)
+            if merged:
+                overrides[key] = merged
         effective_fc = {**fc, **overrides} if overrides else fc
         filter_log = (
             {
@@ -656,7 +673,9 @@ def _collect_tagged_items(
             )
         )
         feed_skip_image = bool(
-            layer_dict(global_cfg.get("image"), task_cfg.get("image"), fc.get("image")).get("skip")
+            _resolve_scoped(
+                "ignore", global_cfg, task_cfg, fc, youtube=is_youtube_feed_url(url)
+            ).get("image")
         )
         feed_curate_cfg = fc.get("curate")
         feed_curate_skip = (

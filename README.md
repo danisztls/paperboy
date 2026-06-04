@@ -213,21 +213,34 @@ curate:
 
 The filter is fail-open: if the LLM call fails twice, all items pass.
 
-## Heuristic filters
+## Heuristic processing
 
-Per-feed or per-task text cleanup, applied before the LLM filter:
+Per-feed / per-task / global cleanup, applied before the LLM filter. Four blocks, each
+layered global → task → feed (more specific scope wins per leaf key):
 
 ```yaml
-filter:
-  title:
-    extract: "\\d+ de \\w+"
-  description:
-    - remove_phrases_with_urls: true
-    - remove_phrases_containing: "Subscribe"
-    - replace: "Imagem do dia\\s*"
-      with: ""
-  url:
-    skip_containing: "/shorts/"
+ignore: # omit a whole FIELD
+  image: true # don't fetch / attach the og:image
+  description: true # drop the entry description/body
+skip: # omit a whole ENTRY
+  shorts: true # YouTube /shorts/ entries (self-gates to YouTube)
+  livestreams: true # YouTube livestreams / past-stream VODs (self-gates)
+  url_contains: ["/tag/"] # entries whose URL contains any substring (str or list)
+description: # regex transforms on the description (after HTML-stripping)
+  remove: ["Points:.*", "# Comments:.*"] # re.sub each pattern out (str or list)
+  extract: "\\d+ de \\w+" # keep only the match (group 1 if captured, else group 0)
+  replace: "Imagem do dia\\s*" # re.sub(replace, with, text)
+  with: ""
+title: # same transform shape, applied to the title
+  remove: "\\s*\\| Sponsored$"
 ```
 
-Supported ops: `extract`, `replace`/`with`, `remove_phrases_with_urls`, `remove_phrases_containing`, `clear`, `skip_containing`.
+`ignore` = *don't include this field*; `skip` = *don't include this entry*. A `youtube:` block
+takes the same `ignore`/`skip` vocabulary but applies **only to YouTube feeds**, e.g. clear the
+description on every YouTube channel with one global lever:
+
+```yaml
+youtube:
+  skip: { shorts: true, livestreams: true }
+  ignore: { description: true }
+```

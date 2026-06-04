@@ -19,7 +19,7 @@ def test_get_feeds_expands_youtube_item():
                     "channel_id": CHANNEL,
                     "summarize": False,
                     "curate": {"skip": True},
-                    "ignore_livestreams": False,
+                    "skip": {"livestreams": False},
                 }
             }
         ]
@@ -31,15 +31,14 @@ def test_get_feeds_expands_youtube_item():
     assert feed["name"] == "Tom Scott"
     assert feed["summarize"] is False
     assert feed["curate"] == {"skip": True}
-    # flat ignore_* move into the feed's youtube filter block; channel_id is not leaked
-    assert feed["youtube"] == {"ignore_livestreams": False}
+    # every non-channel_id key carries through unchanged; channel_id is not leaked
+    assert feed["skip"] == {"livestreams": False}
     assert "channel_id" not in feed
-    assert "ignore_livestreams" not in feed
 
 
-def test_get_feeds_no_youtube_block_when_no_ignore_keys():
+def test_get_feeds_plain_youtube_item_carries_only_name_and_url():
     feeds = get_feeds({"pull": [{"youtube": {"name": "X", "channel_id": CHANNEL}}]})
-    assert "youtube" not in feeds[0]
+    assert feeds[0] == {"name": "X", "url": EXPECTED_URL}
 
 
 def test_get_feeds_mixes_feed_and_youtube_in_order():
@@ -64,11 +63,11 @@ def _task_with_pull(pull: list[dict]) -> dict:
 
 def test_validate_config_accepts_youtube_source():
     cfg = {
-        "youtube": {"ignore_shorts": True},  # global filter block coexists with the source
+        "youtube": {"skip": {"shorts": True}},  # global youtube scope coexists with the source
         "tasks": [
             _task_with_pull(
                 [
-                    {"youtube": {"name": "B", "channel_id": CHANNEL, "ignore_shorts": False}},
+                    {"youtube": {"name": "B", "channel_id": CHANNEL, "skip": {"shorts": False}}},
                     {"feed": {"url": "https://a.example/rss"}},
                 ]
             )
