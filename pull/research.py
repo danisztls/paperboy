@@ -14,6 +14,7 @@ LLM failure ends the loop early and we synthesize from whatever was gathered.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -64,9 +65,40 @@ _DECISION_SYSTEM = (
 
 _SYNTHESIS_SYSTEM = (
     "You are a research assistant. Using ONLY the numbered sources provided, write a clear, "
-    "well-organized answer to the user's request. Cite sources inline as [n] using their "
-    "numbers. If the sources are insufficient, say so plainly. No filler or meta-commentary."
+    "well-organized answer to the user's request. "
+    "Be ruthlessly selective: include only items that materially matter to the request and "
+    "omit marginal, low-impact, speculative, or purely narrative ones entirely. Prefer a few "
+    "high-signal items over a long list. Report concrete facts, not opinion, mood, or "
+    "political color. Do not pad — if little is genuinely significant, keep it short. Honor "
+    "any KEEP/DISCARD or selectivity rules in the request. "
+    "Cite sources inline as [n] using the same numbers shown in the sources list (the "
+    "bracketed number alone — the system turns each [n] into a clickable link). Do NOT write "
+    "URLs yourself and do NOT add a separate sources/references section. If the sources are "
+    "insufficient, say so plainly. No filler or meta-commentary."
 )
+
+# Matches a citation marker: one or more comma-separated numbers in brackets, e.g.
+# "[1]", "[1, 2]". Adjacent markers like "[1][2]" match separately.
+_CITATION_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
+
+
+def _linkify_citations(text: str, url_by_num: dict[int, str]) -> str:
+    """Turn inline citation markers `[n]` into digest-style links `[[n](url)]`.
+
+    Mirrors the digest citation form (`push.discord._render_paragraph` emits
+    `[[label](url)]`). Uses the same numbering the model was shown; `[1, 2]`
+    expands to two space-separated links; a number with no known URL is left as a
+    plain `[n]`. URLs are emitted plain — Discord preview-suppression (`<...>`) and
+    wrap-protection are applied later by `push.discord.post_text_to_discord`, the
+    same path the digest tasks use.
+    """
+
+    def repl(m: re.Match[str]) -> str:
+        nums = [int(x) for x in re.split(r"\s*,\s*", m.group(1))]
+        parts = [(f"[[{k}]({url_by_num[k]})]" if k in url_by_num else f"[{k}]") for k in nums]
+        return " ".join(parts)
+
+    return _CITATION_RE.sub(repl, text)
 
 
 def _passage_text(p) -> str:
@@ -234,21 +266,25 @@ async def _synthesize(
     reasoning: bool | str | dict,
 ) -> str | None:
     blocks: list[str] = []
+    url_by_num: dict[int, str] = {}  # citation number -> url, for inline linkification
     n = 0
+
+    def _add(url: str, title: str, body: str) -> None:
+        nonlocal n
+        n += 1
+        blocks.append(f"[{n}] {title}\nURL: {url}\n{body}")
+        url_by_num[n] = url
+
     for url, s in state.sources.items():
         body = "\n".join(t for p in s.get("passages", []) if (t := _passage_text(p)))
-        if not body:
-            continue
-        n += 1
-        blocks.append(f"[{n}] {s.get('title') or url}\nURL: {url}\n{body}")
+        if body:
+            _add(url, s.get("title") or url, body)
     # If little was read, fall back to unread candidate snippets as weaker sources.
     if len(blocks) < 2:
         for url, c in state.candidates.items():
             snip = (c.get("snippet") or "").strip()
-            if not snip:
-                continue
-            n += 1
-            blocks.append(f"[{n}] {c.get('title') or url}\nURL: {url}\n{snip}")
+            if snip:
+                _add(url, c.get("title") or url, snip)
     sources_text = "\n\n".join(blocks) if blocks else "(no sources were gathered)"
 
     system = _SYNTHESIS_SYSTEM
@@ -256,4 +292,8 @@ async def _synthesize(
         system += f"\n\nAdditional guidance:\n{instructions}"
     user = f"Request: {prompt}\n\nSources:\n\n{sources_text}"
     resp = await adapter.complete(user, model=model, instructions=system, reasoning=reasoning)
-    return resp.text if resp else None
+    if resp is None or not resp.text:
+        return None
+    # Inline-link the citations: [n] -> [[n](url)] (digest citation style).
+    # post_text_to_discord applies the same embed-suppression + wrap-protection.
+    return _linkify_citations(resp.text.strip(), url_by_num)
