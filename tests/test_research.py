@@ -8,11 +8,23 @@ No network, no real LLM, no vascod.
 import aiohttp
 import pytest
 
-from pull.research import ResearchAction, run_research_task
+from pull.research import ResearchAction, _linkify_citations, run_research_task
 from tasks import _process_research_task
 from tests.conftest import make_research_cfg
 
 WEBHOOK_URL = "https://discord.example/webhook"
+
+
+def test_linkify_citations():
+    urls = {1: "https://a", 2: "https://b"}
+    # single, adjacent, and comma-grouped markers all become digest-style [[n](url)] links
+    assert (
+        _linkify_citations("see [1] and [2]", urls) == "see [[1](https://a)] and [[2](https://b)]"
+    )
+    assert _linkify_citations("x [1][2]", urls) == "x [[1](https://a)][[2](https://b)]"
+    assert _linkify_citations("both [1, 2]", urls) == "both [[1](https://a)] [[2](https://b)]"
+    # a number with no known URL is left untouched (never breaks)
+    assert _linkify_citations("ref [3]", urls) == "ref [3]"
 
 
 class FakeVasco:
@@ -74,7 +86,9 @@ async def test_research_loop_happy(fake_adapter, patch_vasco):
         make_research_cfg(prompt="explain the topic"), adapter=fake_adapter, trace=trace
     )
 
-    assert answer == "FINAL ANSWER [1][2]"
+    # Inline citations are linkified to digest-style [[n](url)]; the <...> embed
+    # suppression is added later by push.discord.post_text_to_discord, not here.
+    assert answer == "FINAL ANSWER [[1](https://u1)][[2](https://u2)]"
     assert fake.searched == ["q1"]
     assert set(fake.read) == {
         ("https://u1", "explain the topic"),
