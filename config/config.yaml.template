@@ -34,15 +34,14 @@ youtube:                    # optional — YouTube-feeds-only scope: the same ig
 retention:                  # optional — disk retention for logs and eval traces
   # days: 30               # delete files under <state_dir>/{logs,evals}/ older than this (default: 30; 0 disables)
 
-llm:                        # optional — LLM provider credentials
-  api_key:                  # per-provider API keys (omit to read from $DEEPSEEK_API_KEY / $OPENAI_API_KEY / $GEMINI_API_KEY env var)
+llm:                        # optional — LLM provider credentials (DeepSeek + Gemini only)
+  api_key:                  # per-provider API keys (omit to read from $DEEPSEEK_API_KEY / $GEMINI_API_KEY env var)
     deepseek: !secret deepseek_api_key
-    openai: !secret openai_api_key
     # gemini: !secret gemini_api_key
 
 curate:                     # optional — global defaults for LLM curation/filter (RSS/digest tasks)
   model:                    # model used for filtering
-    provider: deepseek      # one of: openai, gemini, anthropic, deepseek
+    provider: deepseek      # one of: deepseek, gemini
     name: deepseek-v4-flash
     # reasoning: low        # optional — off|low|medium|high. Adapter ignores it on non-thinking models.
                             # Validator errors if set on a model the registry marks thinking:false.
@@ -51,15 +50,17 @@ curate:                     # optional — global defaults for LLM curation/filt
   #   - provider: deepseek
   #     name: deepseek-v4-flash
   #     reasoning: low
-  #   - provider: openai
-  #     name: gpt-5.4-mini
+  #   - provider: gemini
+  #     name: gemini-2.5-flash
   language: "EN-US"         # language for filter memory briefings (default: EN-US; per-task 'language' overrides)
 
-search:                     # optional — global defaults for LLM search tasks
-  model:                    # model used for web-search tasks; deepseek doesn't support web_search
-    provider: openai
-    name: gpt-5.4-nano
-  # instructions: "..."     # additional instructions appended to the built-in system prompt for search tasks
+research:                   # optional — global defaults for agentic research tasks
+  model:                    # model(s) driving the research loop. Array form = fallback chain;
+    - provider: deepseek    # DeepSeek primary, Gemini fallback (e.g. for prompts DeepSeek refuses).
+      name: deepseek-v4-flash
+    - provider: gemini
+      name: gemini-2.5-flash
+  # instructions: "..."     # extra guidance appended to the research agent's system prompt
 
 summarize:                  # optional — global defaults for LLM summarization
   model:
@@ -68,8 +69,8 @@ summarize:                  # optional — global defaults for LLM summarization
   # model:
   #   - provider: deepseek
   #     name: deepseek-v4-flash
-  #   - provider: openai
-  #     name: gpt-5.4-mini
+  #   - provider: gemini
+  #     name: gemini-2.5-flash
 
 tasks:
   # RSS task: fetches feeds and posts new entries as Discord embeds.
@@ -269,24 +270,24 @@ tasks:
   #         webhook: !secret discord_webhook_finance
   #         wrap: false
 
-  # Search task: calls an LLM with web search and posts the plain-text response to Discord.
-  # Detected by pull containing a search item. Web search is always on.
+  # Research task: an agentic loop that drives vasco's real search + fetch/extract (over vascod).
+  # The LLM searches, reads promising pages, then synthesizes a cited answer — no provider
+  # web_search. Detected by pull containing a research item. Posts the answer as plain text.
   - name: world-news
     period: 24h
     pull:
-      - search:
-          prompt: "Today news. World. Filter for signal > noise."
-          # model:              # optional; overrides search.model
-          #   provider: openai
-          #   name: gpt-5.4-mini
+      - research:
+          prompt: "Today's world news. Filter for signal > noise. Summarize with sources."
+          # model:              # optional; overrides research.model (single spec or fallback list)
+          #   provider: deepseek
+          #   name: deepseek-v4-flash
           #   reasoning: low    # optional
-          # instructions: "..."  # optional; extra instructions appended to the built-in system prompt
-          # web_search:         # optional; pass a dict to configure web_search_preview options
-          #   allowed_domains:
-          #     - reuters.com
-          #   user_location:
-          #     type: approximate
-          #     country: US
+          # instructions: "..."  # optional; extra guidance for the research agent
+          # max_steps: 6        # optional — hard cap on agent turns (termination guarantee)
+          # max_searches: 3     # optional — cap on total searches across the run
+          # max_reads: 6        # optional — cap on total page reads across the run
+          # max_results: 8      # optional — search results pulled per query
+          # read_top: 5         # optional — passages extracted per page read
     push:
       - discord:
           webhook: !secret discord_webhook_world_news  # or a literal URL string

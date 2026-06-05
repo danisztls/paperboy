@@ -72,8 +72,8 @@ def task_kind(task_cfg: dict) -> str:
     pull = task_cfg.get("pull", [])
     if any("realestate" in item for item in pull):
         return "realestate"
-    if any("search" in item for item in pull):
-        return "search"
+    if any("research" in item for item in pull):
+        return "research"
     if any("weather" in item for item in pull):
         return "weather"
     if any("finance" in item for item in pull):
@@ -117,8 +117,8 @@ def get_discord_cfg(task_cfg: dict) -> dict:
     return next((item["discord"] for item in task_cfg.get("push", []) if "discord" in item), {})
 
 
-def get_search_cfg(task_cfg: dict) -> dict:
-    return next((item["search"] for item in task_cfg.get("pull", []) if "search" in item), {})
+def get_research_cfg(task_cfg: dict) -> dict:
+    return next((item["research"] for item in task_cfg.get("pull", []) if "research" in item), {})
 
 
 def get_weather_cfg(task_cfg: dict) -> dict:
@@ -142,7 +142,7 @@ def resolve_model_specs(spec) -> list[ModelSpec]:
 
 
 def get_api_key_for_provider(api_key_cfg, provider: str | None) -> str | None:
-    """Return the API key for a given provider from an {openai, gemini} dict."""
+    """Return the API key for a given provider from a {deepseek, gemini} dict."""
     if api_key_cfg is None or not provider:
         return None
     return api_key_cfg.get(provider)
@@ -218,7 +218,7 @@ class _Retention(BaseModel):
     days: int = 30  # 0 disables pruning
 
 
-Provider = Literal["openai", "gemini", "deepseek", "anthropic"]
+Provider = Literal["deepseek", "gemini"]
 ReasoningLevel = Literal["off", "low", "medium", "high"]
 
 
@@ -286,10 +286,8 @@ ModelSpecList = Annotated[list[ModelSpec] | None, BeforeValidator(_normalize_mod
 
 class _ApiKeys(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    openai: str | None = None
-    gemini: str | None = None
     deepseek: str | None = None
-    anthropic: str | None = None
+    gemini: str | None = None
 
 
 class _GlobalLLM(BaseModel):
@@ -303,7 +301,7 @@ class _GlobalCurate(BaseModel):
     language: str | None = None
 
 
-class _GlobalSearch(BaseModel):
+class _GlobalResearch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: ModelSpecList = None
     instructions: str | None = None
@@ -420,12 +418,17 @@ class _PullYouTubeItem(BaseModel):
     curate: _FeedCurate | None = None
 
 
-class _PullSearchItem(BaseModel):
+class _PullResearchItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     prompt: str
     model: ModelSpec | None = None
-    web_search: bool | dict = True
     instructions: str | None = None
+    # Agent-loop limits (termination guarantees, not cost tracking).
+    max_steps: int = 6
+    max_searches: int = 3
+    max_reads: int = 6
+    max_results: int = 8  # search results pulled per query
+    read_top: int = 5  # passages extracted per read
 
 
 class _PullRealestateItem(BaseModel):
@@ -476,7 +479,7 @@ class _PullItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     feed: _PullFeedItem | None = None
     youtube: _PullYouTubeItem | None = None
-    search: _PullSearchItem | None = None
+    research: _PullResearchItem | None = None
     realestate: _PullRealestateItem | None = None
     weather: _PullWeatherItem | None = None
     finance: _PullFinanceItem | None = None
@@ -485,12 +488,12 @@ class _PullItem(BaseModel):
     def _exactly_one(self):
         present = [
             k
-            for k in ("feed", "youtube", "search", "realestate", "weather", "finance")
+            for k in ("feed", "youtube", "research", "realestate", "weather", "finance")
             if k in self.model_fields_set
         ]
         if len(present) != 1:
             raise ValueError(
-                "each pull item must have exactly one key: 'feed', 'youtube', 'search', 'realestate', 'weather', or 'finance'"
+                "each pull item must have exactly one key: 'feed', 'youtube', 'research', 'realestate', 'weather', or 'finance'"
             )
         return self
 
@@ -552,7 +555,7 @@ class _Task(BaseModel):
 
     @model_validator(mode="after")
     def _check_task(self):
-        has_search_pull = any(item.search is not None for item in self.pull)
+        has_research_pull = any(item.research is not None for item in self.pull)
         # youtube is sugar over feed (get_feeds expands it), so it's feed-family for mixing.
         has_feed_pull = any(item.feed is not None or item.youtube is not None for item in self.pull)
         has_realestate_pull = any(item.realestate is not None for item in self.pull)
@@ -562,8 +565,8 @@ class _Task(BaseModel):
         has_file_push = any(item.file is not None for item in self.push)
         if not (has_discord_push or has_file_push):
             raise ValueError("push must contain at least one target (discord or file)")
-        if has_realestate_pull and (has_search_pull or has_feed_pull):
-            raise ValueError("pull cannot mix realestate with feed or search items")
+        if has_realestate_pull and (has_research_pull or has_feed_pull):
+            raise ValueError("pull cannot mix realestate with feed or research items")
         if has_realestate_pull:
             seen_urls: set[str] = set()
             for item in self.pull:
@@ -573,14 +576,14 @@ class _Task(BaseModel):
                 if url in seen_urls:
                     raise ValueError(f"pull has duplicate realestate url: {url}")
                 seen_urls.add(url)
-        if has_search_pull and has_feed_pull:
-            raise ValueError("pull cannot mix feed and search items")
-        if has_weather_pull and (has_feed_pull or has_search_pull or has_realestate_pull):
+        if has_research_pull and has_feed_pull:
+            raise ValueError("pull cannot mix feed and research items")
+        if has_weather_pull and (has_feed_pull or has_research_pull or has_realestate_pull):
             raise ValueError("pull cannot mix weather with other pull types")
         if has_weather_pull and sum(1 for item in self.pull if item.weather is not None) > 1:
             raise ValueError("pull can have at most one weather item")
         if has_finance_pull and (
-            has_feed_pull or has_search_pull or has_realestate_pull or has_weather_pull
+            has_feed_pull or has_research_pull or has_realestate_pull or has_weather_pull
         ):
             raise ValueError("pull cannot mix finance with other pull types")
         if has_finance_pull and sum(1 for item in self.pull if item.finance is not None) > 1:
@@ -594,7 +597,7 @@ class _Config(BaseModel):
     feeds: _Feeds | None = None
     llm: _GlobalLLM | None = None
     curate: _GlobalCurate | None = None
-    search: _GlobalSearch | None = None
+    research: _GlobalResearch | None = None
     summarize: _GlobalSummarize | None = None
     ignore: _Ignore | None = None
     skip: _Skip | None = None

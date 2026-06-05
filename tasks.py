@@ -26,7 +26,7 @@ from providers.llm.base import LLMAdapter
 from pull.feed import RSSSource
 from pull.finance import FinanceSource
 from pull.realestate import _get_realestate_cfgs, pull_realestate
-from pull.search import run_search_task
+from pull.research import run_research_task
 from pull.weather import WeatherSource, _climate_cache_fresh, fetch_climate_normals
 from push.discord import (
     DiscordDigestTarget,
@@ -434,53 +434,50 @@ async def _apply_curate(
     return FilterResult(items=annotated, memory=memory_paragraphs, cite_map=cite_map)
 
 
-async def _process_search_task(
+async def _process_research_task(
     task_cfg: dict,
     state: dict,
     session: aiohttp.ClientSession,
     *,
     instructions: str | None = None,
-    search_model: str | None = None,
-    search_adapter: LLMAdapter | None,
-    search_reasoning: str | bool | dict | None = None,
+    research_model: str | None = None,
+    research_adapter: LLMAdapter | None,
+    research_reasoning: str | bool | dict | None = None,
     collector=None,
     analysis: bool = False,
 ) -> dict:
-    """Pull from LLM web search, post as plain text. Returns {name: task_state} or {}."""
+    """Run the agentic research loop, post the answer as plain text. Returns {name: state} or {}."""
     name = task_cfg["name"]
     if collector:
-        collector.begin_task(name, "search")
+        collector.begin_task(name, "research")
     try:
-        if search_adapter is None:
-            log.error("[%s] Skipping — search.model is not configured", name)
+        if research_adapter is None:
+            log.error("[%s] Skipping — research.model is not configured", name)
             return {}
 
         trace: dict | None = {} if collector else None
-        text = await run_search_task(
+        text = await run_research_task(
             task_cfg,
             instructions,
-            search_model,
-            adapter=search_adapter,
-            reasoning=_effective_reasoning(search_reasoning, analysis),
+            research_model,
+            adapter=research_adapter,
+            reasoning=_effective_reasoning(research_reasoning, analysis),
             trace=trace,
         )
         if collector and trace is not None:
-            collector.record_search(
+            collector.record_research(
                 model=trace.get("model"),
                 instructions=trace.get("instructions"),
                 prompt=trace.get("prompt", ""),
-                raw_response=text,
+                answer=text,
+                steps=trace.get("steps"),
+                sources=trace.get("sources"),
                 model_used=trace.get("model_used"),
-                input_tokens=trace.get("input_tokens"),
-                output_tokens=trace.get("output_tokens"),
-                latency_s=trace.get("latency_s"),
-                reasoning=trace.get("reasoning"),
-                web_search=trace.get("web_search", True),
             )
 
         if analysis:
             new_items_preview = (
-                [Item(id=f"{name}:search_result", title=name, source=name, body=text)]
+                [Item(id=f"{name}:research_result", title=name, source=name, body=text)]
                 if text
                 else []
             )
@@ -490,14 +487,14 @@ async def _process_search_task(
 
         if not text:
             return {}
-        new_items = [Item(id=f"{name}:search_result", title=name, source=name, body=text)]
+        new_items = [Item(id=f"{name}:research_result", title=name, source=name, body=text)]
 
         target = DiscordTextTarget()
         ctx = PushContext(items=new_items)
         try:
             await target.push(ctx, task_cfg, session)
         except Exception:
-            log.error("Skipping search task %s due to post failure", name)
+            log.error("Skipping research task %s due to post failure", name)
             return {}
         log.info("[%s] Posted response (%d chars)", name, len(text))
 

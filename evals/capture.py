@@ -30,7 +30,7 @@ class LLMCall:
     """
 
     task: str
-    call_type: str  # "filter" | "summarize" | "search"
+    call_type: str  # "filter" | "summarize" | "research"
     ts: str
     instructions: str | None = None
     response: str | None = None
@@ -54,8 +54,10 @@ class LLMCall:
     item_url: str | None = None
     fetched_body: str | None = None
 
-    # search-specific
+    # research-specific (trajectory only — no tokens/cost)
     prompt: str | None = None
+    steps: list | None = None
+    sources: list | None = None
 
     def to_record(self) -> dict:
         """Project to the JSONL shape: only fields relevant to call_type."""
@@ -94,8 +96,14 @@ class LLMCall:
                 "item_url": self.item_url,
                 "fetched_body": self.fetched_body,
             }
-        if self.call_type == "search":
-            return {**common, "model": self.model, "prompt": self.prompt}
+        if self.call_type == "research":
+            return {
+                **common,
+                "model": self.model,
+                "prompt": self.prompt,
+                "steps": self.steps or [],
+                "sources": self.sources or [],
+            }
         return common
 
 
@@ -225,37 +233,32 @@ class RunCapture:
             )
         )
 
-    def record_search(
+    def record_research(
         self,
         model: str | None,
         instructions: str | None,
         prompt: str,
-        raw_response: str | None,
+        answer: str | None,
         *,
+        steps: list | None = None,
+        sources: list | None = None,
         model_used: str | None = None,
-        input_tokens: int | None = None,
-        output_tokens: int | None = None,
-        latency_s: float | None = None,
-        reasoning: str | None = None,
-        web_search: bool = True,
     ) -> None:
+        """Record the research loop's trajectory only — no tokens/cost tracking."""
         if self._current is None:
             return
         self._current.calls.append(
             LLMCall(
                 task=self._current.task,
-                call_type="search",
+                call_type="research",
                 ts=self._current.timestamp,
                 instructions=instructions,
-                response=raw_response,
+                response=answer,
                 model_used=model_used,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                latency_s=latency_s,
-                reasoning=reasoning,
-                web_search=web_search,
                 model=model,
                 prompt=prompt,
+                steps=steps,
+                sources=sources,
             )
         )
 

@@ -28,7 +28,7 @@ def _render_task(console, task: TaskCapture) -> None:
             _render_summarize(console, call)
         elif call.call_type == "filter":
             _render_filter(console, call)
-        elif call.call_type == "llm_search":
+        elif call.call_type == "research":
             _render_search(console, call)
     color = "green" if task.would_post > 0 else "dim"
     label = f"{task.would_post} item" + ("s" if task.would_post != 1 else "")

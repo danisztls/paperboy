@@ -16,7 +16,7 @@ def test_modelspec_accepts_verbose_form():
 
 
 def test_modelspec_reasoning_optional():
-    s = ModelSpec.model_validate({"provider": "openai", "name": "gpt-5.4-mini"})
+    s = ModelSpec.model_validate({"provider": "gemini", "name": "gemini-2.5-flash"})
     assert s.reasoning is None
 
 
@@ -27,7 +27,9 @@ def test_modelspec_rejects_unknown_provider():
 
 def test_modelspec_rejects_extra_keys():
     with pytest.raises(ValidationError):
-        ModelSpec.model_validate({"provider": "openai", "name": "gpt-5.4-mini", "temperature": 0.5})
+        ModelSpec.model_validate(
+            {"provider": "gemini", "name": "gemini-2.5-flash", "temperature": 0.5}
+        )
 
 
 def test_modelspec_rejects_reasoning_on_non_thinking_model():
@@ -47,8 +49,8 @@ def test_modelspec_allows_reasoning_off_on_non_thinking_model():
 
 def test_modelspec_warns_on_unknown_model(caplog):
     with caplog.at_level(logging.WARNING, logger="config"):
-        s = ModelSpec.model_validate({"provider": "openai", "name": "gpt-never-released"})
-    assert s.name == "gpt-never-released"
+        s = ModelSpec.model_validate({"provider": "gemini", "name": "gemini-never-released"})
+    assert s.name == "gemini-never-released"
     assert any("not in providers/llm/models.json" in r.message for r in caplog.records)
 
 
@@ -60,19 +62,19 @@ def test_modelspec_warns_on_deprecated_model(caplog):
 
 
 def test_resolve_model_specs_normalizes_scalar_to_list():
-    out = resolve_model_specs({"provider": "openai", "name": "gpt-5.4-mini"})
+    out = resolve_model_specs({"provider": "deepseek", "name": "deepseek-v4-flash"})
     assert len(out) == 1
-    assert out[0].provider == "openai"
+    assert out[0].provider == "deepseek"
 
 
 def test_resolve_model_specs_passes_list_through():
     out = resolve_model_specs(
         [
-            {"provider": "openai", "name": "gpt-5.4-mini"},
+            {"provider": "deepseek", "name": "deepseek-v4-flash"},
             {"provider": "gemini", "name": "gemini-2.5-flash"},
         ]
     )
-    assert [s.provider for s in out] == ["openai", "gemini"]
+    assert [s.provider for s in out] == ["deepseek", "gemini"]
 
 
 def test_resolve_model_specs_returns_empty_for_none():

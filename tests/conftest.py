@@ -177,17 +177,18 @@ def make_curate_cfg(
     return cfg
 
 
-def make_search_cfg(
+def make_research_cfg(
     *,
-    name: str = "test-search",
+    name: str = "test-research",
     prompt: str = "tell me something",
     file_path: str | None = None,
+    **research_kwargs,
 ) -> dict:
     push: list[dict] = [{"discord": {"webhook": WEBHOOK_URL}}]
     if file_path is not None:
         push.append({"file": file_path})
     return {
         "name": name,
-        "pull": [{"search": {"prompt": prompt}}],
+        "pull": [{"research": {"prompt": prompt, **research_kwargs}}],
         "push": push,
     }

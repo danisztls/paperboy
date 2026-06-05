@@ -7,7 +7,7 @@ A personal notifier that polls feeds and posts to Discord webhooks (or local mar
 - **RSS** — fetches feeds, posts new entries as Discord embeds with OG images.
 - **Digest** — like RSS but collects all passing entries into a single text message (splits at 2000 chars). No OG images. Uses `[Title](<url>)` to suppress Discord link previews.
 - **Real-estate** — structured listings from real-estate portals (vivareal / portal-a / portal-b) via vasco's `realestate` adapter (HTTP-first with auto-escalation to browser on bot-blocked pages); posts new listings as Discord embeds.
-- **Search** — calls an LLM with web search enabled and posts the plain-text response.
+- **Research** — an agentic loop over vasco's real search + `fetch`/`extract` (via vascod): the LLM searches, reads promising pages, then posts a synthesized, cited plain-text answer (DeepSeek primary, Gemini fallback).
 - **Weather** — pulls the daily forecast from Open-Meteo (no API key) and posts a `wttr.in`-style plain-text report. `kind: smart` switches to a signal-only variant that only surfaces dangerous UV windows, significant rain, and σ-based apparent-temp / humidity anomalies vs the location's monthly climate normal.
 - **Finance** — yfinance quotes. `report` posts a periodic snapshot (current price, weekly change, 52w range); `monitor` posts intraday alerts when prices move past a `delta` threshold or cross a `price: [low, high]` band. Monitor rules are gated by exchange hours.
 
@@ -40,7 +40,7 @@ uv run main.py --clean                 # remove stale state entries, then exit
 uv run main.py --stats                 # rich-formatted summary of state.json (per-task/per-source last_run, next_run, item counts)
 uv run main.py --summarize <url>       # fetch YouTube transcript and print summary
 uv run main.py --analysis --task <t>   # inspection mode: LLM reasoning + ELI5 reasons, dry-run, render to stdout (extra tokens)
-uv run main.py --replay <jsonl> --models openai:gpt-4o-mini,gemini:gemini-2.5-flash --call filter
+uv run main.py --replay <jsonl> --models deepseek:deepseek-v4-flash,gemini:gemini-2.5-flash --call filter
 uv run main.py --verbose               # verbose output
 ```
 
@@ -57,7 +57,7 @@ Every run writes a JSONL of its LLM calls (prompts, responses, tokens, latency, 
 
 ```sh
 uv run main.py --replay ~/.local/share/claudinho/evals/world-news/2026-05-13T08-00-00.jsonl \
-  --models openai:gpt-4o-mini,gemini:gemini-2.5-flash \
+  --models deepseek:deepseek-v4-flash,gemini:gemini-2.5-flash \
   --call filter
 ```
 
@@ -121,15 +121,25 @@ tasks:
           webhook: !secret discord_webhook_listings
 ```
 
-### Search task
+### Research task
+
+An agentic loop that drives vasco's real search + `fetch`/`extract` over vascod — the LLM searches, reads promising pages, then synthesizes a cited answer. No provider `web_search`.
 
 ```yaml
+research: # optional global default model(s); array form = fallback chain
+  model:
+    - { provider: deepseek, name: deepseek-v4-flash }
+    - { provider: gemini, name: gemini-2.5-flash } # fallback, e.g. for prompts DeepSeek refuses
+
 tasks:
   - name: world-news
     period: 24h
     pull:
-      - search:
-          prompt: "Today's news. Filter for signal > noise."
+      - research:
+          prompt: "Today's world news. Filter for signal > noise. Summarize with sources."
+          # max_steps: 6      # optional loop limits (termination guarantees, not cost tracking)
+          # max_searches: 3
+          # max_reads: 6
     push:
       - discord:
           webhook: !secret discord_webhook_world_news
@@ -201,8 +211,8 @@ Add a `curate` block to any RSS or Digest task to classify items before posting:
 curate:
   criteria: "Only keep items about AI and machine learning"
   model: # optional; overrides global curate.model
-    provider: openai # one of: openai, gemini, anthropic, deepseek
-    name: gpt-5.4-mini
+    provider: deepseek # one of: deepseek, gemini
+    name: deepseek-v4-flash
     reasoning: low # optional: off|low|medium|high (only for thinking-capable models)
   language: "PT-BR" # optional; language for memory briefings
   web_search: true # optional; let the LLM search for context

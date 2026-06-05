@@ -140,7 +140,7 @@ async def test_weather_post_failure(mock_http):
         result = await _process_weather_task(cfg, {}, session)
 
     # DiscordTextTarget.push() handles errors internally (logs, returns failed set, does not raise)
-    # so the task saves last_run — consistent with how _process_search_task behaves
+    # so the task saves last_run — consistent with how _process_research_task behaves
     assert "test-weather" in result
 
 

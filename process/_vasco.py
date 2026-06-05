@@ -134,6 +134,40 @@ async def fetch_raw_html(url: str, *, mode: str = "auto") -> str | None:
     return env["markdown"]
 
 
+async def search(
+    query: str,
+    *,
+    max_results: int = 10,
+    region: str | None = None,
+    site: str | None = None,
+) -> list[dict] | None:
+    """Run a web search via vascod (real DDG/Tavily SERP).
+
+    Returns a list of ``{title, url, snippet}`` dicts, or ``None`` on
+    unreachable/failure — callers treat that as "no results this step".
+    """
+    params: dict[str, Any] = {"query": query, "max_results": max_results}
+    if region:
+        params["region"] = region
+    if site:
+        params["site"] = site
+    result = await _request("search", **params)
+    return result if isinstance(result, list) else None
+
+
+async def extract(url: str, query: str, *, top: int = 5) -> list[dict] | None:
+    """Fetch ``url`` via vascod and return the top-``top`` passages matching ``query``.
+
+    Returns the ranked ``passages`` list (BM25/semantic), or ``None`` on
+    unreachable/failure / when the page yields nothing.
+    """
+    result = await _request("extract", url=url, query=query, top=top)
+    if not isinstance(result, dict):
+        return None
+    passages = result.get("passages")
+    return passages if isinstance(passages, list) else None
+
+
 async def fetch_listings(url: str, *, refresh: bool = False) -> dict | None:
     """Fetch structured real-estate listings via vasco's realestate adapter.
 

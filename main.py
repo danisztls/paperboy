@@ -39,7 +39,7 @@ from tasks import (
     _process_feed_task,
     _process_finance_task,
     _process_realestate_task,
-    _process_search_task,
+    _process_research_task,
     _process_weather_task,
 )
 
@@ -290,7 +290,7 @@ async def _async_main(args: argparse.Namespace) -> None:
 
     llm_cfg = config.get("llm", {})
     curate_cfg = config.get("curate", {})
-    search_cfg_global = config.get("search", {})
+    research_cfg_global = config.get("research", {})
     summarize_cfg = config.get("summarize", {})
     api_key_cfg = llm_cfg.get("api_key") or None
     curate_adapter, curate_model, curate_reasoning = _build_adapter(
@@ -299,10 +299,10 @@ async def _async_main(args: argparse.Namespace) -> None:
     summarize_adapter, summarize_model, summarize_reasoning = _build_adapter(
         resolve_model_specs(summarize_cfg.get("model")), api_key_cfg
     )
-    search_adapter, search_model, search_reasoning = _build_adapter(
-        resolve_model_specs(search_cfg_global.get("model")), api_key_cfg
+    research_adapter, research_model, research_reasoning = _build_adapter(
+        resolve_model_specs(research_cfg_global.get("model")), api_key_cfg
     )
-    instructions = search_cfg_global.get("instructions") or None
+    instructions = research_cfg_global.get("instructions") or None
     global_language = curate_cfg.get("language") or "EN-US"
     configure_vasco()
     feeds_cfg = config.get("feeds") or {}
@@ -382,7 +382,7 @@ async def _async_main(args: argparse.Namespace) -> None:
                     continue
                 task_state = state.get("tasks", {}).get(name, {})
 
-                if kind == "search":
+                if kind == "research":
                     if (
                         not force_task
                         and not analysis
@@ -390,14 +390,14 @@ async def _async_main(args: argparse.Namespace) -> None:
                     ):
                         continue
                     feed_tasks.append(
-                        _process_search_task(
+                        _process_research_task(
                             task_cfg,
                             state,
                             session,
                             instructions=instructions,
-                            search_model=search_model,
-                            search_adapter=search_adapter,
-                            search_reasoning=search_reasoning,
+                            research_model=research_model,
+                            research_adapter=research_adapter,
+                            research_reasoning=research_reasoning,
                             collector=collector,
                             analysis=analysis,
                         )
