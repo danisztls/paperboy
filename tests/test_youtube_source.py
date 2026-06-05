@@ -86,13 +86,13 @@ def test_validate_config_rejects_unknown_youtube_source_key():
     assert any("bogus" in e or "youtube" in e for e in validate_config(cfg))
 
 
-def test_validate_config_rejects_mixing_youtube_with_search():
+def test_validate_config_rejects_mixing_youtube_with_research():
     cfg = {
         "tasks": [
             _task_with_pull(
                 [
                     {"youtube": {"channel_id": CHANNEL}},
-                    {"search": {"prompt": "x"}},
+                    {"research": {"prompt": "x"}},
                 ]
             )
         ]

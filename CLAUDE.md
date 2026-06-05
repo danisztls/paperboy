@@ -9,7 +9,7 @@ A personal notifier that posts to Discord webhooks on a cron schedule. Supported
 - **RSS** — polls feeds, posts new entries as Discord embeds, tracks seen entries. A `youtube` pull item is sugar over `feed` (`config.get_feeds` builds the `videos.xml?channel_id=<id>` URL from `channel_id`); everything downstream treats it as a feed.
 - **Digest** — like RSS but all passing entries are collected and posted as a single text message (splits on 2000-char limit). No OG image fetching. Uses `[Title](<url>)` to suppress Discord link previews.
 - **Real-estate** — structured listings from real-estate portals. vasco's `realestate` adapter fetches (HTTP-first, auto-escalating to Camoufox browser on bot-blocked sites) and parses each portal (vivareal/binda/barreto) into normalized listing dicts; claudinho maps those to `Item`s and applies its own policy (`min_area_per_room`, `max_items`, dedup).
-- **Search** — calls a configurable LLM (OpenAI, Gemini, Anthropic, or DeepSeek) with a prompt + web search, posts the plain-text response.
+- **Research** — an agentic loop over vasco's real search + `fetch`/`extract` (via vascod): the LLM searches, reads promising pages, then synthesizes a cited plain-text answer. DeepSeek primary, Gemini fallback. No provider `web_search`.
 - **Weather** — fetches the daily forecast from Open-Meteo (no API key) and posts a `wttr.in`-style text report. `kind: smart` switches to a signal-only variant gated by σ-based anomaly thresholds against climate normals + past 7 days.
 - **Finance** — pulls quotes from yfinance (sync lib wrapped in `asyncio.to_thread`). Detected by `pull` containing a `finance` item with exactly one of two sub-keys: `report` (periodic snapshot) or `monitor` (intraday alerts on deltas + price-band crossings). User writes yfinance symbols verbatim (no alias map).
 
@@ -40,7 +40,7 @@ The project uses `uv` (see `uv.lock`, `.python-version` pinning Python 3.14).
   - `--analysis-limit-items N` (default 7, 0 = unlimited): cap entries per feed
   - `--analysis-limit-feeds N` (default 7, 0 = unlimited): cap feeds per task
   - `--human`: render rich/human-readable output to stdout instead of JSON
-- Replay captured LLM calls against alternative models: `uv run main.py --replay <state_dir>/evals/<task>/<run_iso>.jsonl --models openai:gpt-4o-mini,gemini:gemini-2.5-flash --call filter`
+- Replay captured LLM calls against alternative models: `uv run main.py --replay <state_dir>/evals/<task>/<run_iso>.jsonl --models deepseek:deepseek-v4-flash,gemini:gemini-2.5-flash --call filter`
 
 After any implementation, run format then lint before finishing.
 
@@ -61,7 +61,7 @@ Source.pull()  →  _summarize_items() + _apply_curate()  →  Target.push()
 ### Root modules
 
 - `main.py` — CLI entry point and orchestration. Resolves config/state paths, manages a lock file, loads config + state, opens a single shared `aiohttp.ClientSession`, then dispatches to one of these short-circuit modes (`--regenerate-state`, `--clean`/`--migrate`, `--validate`, `--summarize`, `--replay`) or the normal run-due-tasks-in-parallel path. A `RunCapture` is constructed unconditionally; after tasks finish, captured LLM calls are flushed to `<state_dir>/evals/<task>/<run_iso>.jsonl`. `--analysis` reshapes the run into "expensive inspection mode" (reasoning on, ELI5 filter reasons, item/feed truncation, dry-run, render to stdout).
-- `tasks.py` — task orchestration. `_process_feed_task`, `_process_search_task`, `_process_realestate_task`, `_process_weather_task`, `_process_finance_task`. Helpers: `_pull_feeds`, `_summarize_items`, `_apply_curate`, `_is_due`, `_effective_reasoning`. Layered config (global→task→feed) resolves via `config.scope.layer_dict`. Every LLM-touching stage takes a `collector=` (always-on `RunCapture`) and an `analysis: bool = False`. `analysis` controls dry-run, item/feed truncation, `reasoning=True` on adapter calls, and forcing `explain=True` on the filter prompt; the collector controls only what gets recorded.
+- `tasks.py` — task orchestration. `_process_feed_task`, `_process_research_task`, `_process_realestate_task`, `_process_weather_task`, `_process_finance_task`. Helpers: `_pull_feeds`, `_summarize_items`, `_apply_curate`, `_is_due`, `_effective_reasoning`. Layered config (global→task→feed) resolves via `config.scope.layer_dict`. Every LLM-touching stage takes a `collector=` (always-on `RunCapture`) and an `analysis: bool = False`. `analysis` controls dry-run, item/feed truncation, `reasoning=True` on adapter calls, and forcing `explain=True` on the filter prompt; the collector controls only what gets recorded.
 - `pipeline.py` — `Source` / `Target` ABCs and data types: `Item`, `PullResult` (with optional `name`), `FilterResult`, `MemoryParagraph` (`text` + `citations: list[int]`), `PushContext`. To add a source (e.g. Reddit, YouTube), implement `Source`. To add a target (Telegram, email), implement `Target` — no changes to task orchestration needed.
 - `stats.py` — `print_stats(config, state)` builds a Rich table of per-task and per-source state (kind, period, last_run, estimated next_run, item counts) for `--stats` mode. Pure read-only: no network, no LLM, no state writes. `_humanize_minutes` and `_humanize_delta` live here; `main.py`'s `_check_due_or_skip` imports `_humanize_minutes` from this module.
 
@@ -69,7 +69,7 @@ Source.pull()  →  _summarize_items() + _apply_curate()  →  Target.push()
 
 Each has its own `CLAUDE.md` with details:
 
-- [`pull/CLAUDE.md`](pull/CLAUDE.md) — source implementations (RSS, search, realestate, weather, finance)
+- [`pull/CLAUDE.md`](pull/CLAUDE.md) — source implementations (RSS, research, realestate, weather, finance)
 - [`push/CLAUDE.md`](push/CLAUDE.md) — Discord + file target implementations
 - [`process/CLAUDE.md`](process/CLAUDE.md) — curate (LLM), filter_heuristic (regex), summarize
 - [`providers/llm/CLAUDE.md`](providers/llm/CLAUDE.md) — provider adapters and `ModelSpec` capability registry

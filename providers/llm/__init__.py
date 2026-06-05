@@ -99,18 +99,10 @@ class FallbackAdapter(LLMAdapter):
 
 
 def get_adapter(provider: str | None = None, api_key: str | None = None) -> LLMAdapter:
-    if provider == "openai":
-        from providers.llm.openai import OpenAIAdapter
-
-        return OpenAIAdapter(api_key=api_key)
     if provider == "gemini":
         from providers.llm.gemini import GeminiAdapter
 
         return GeminiAdapter(api_key=api_key)
-    if provider == "anthropic":
-        from providers.llm.anthropic import AnthropicAdapter
-
-        return AnthropicAdapter(api_key=api_key)
     from providers.llm.deepseek import DeepSeekAdapter
 
     return DeepSeekAdapter(api_key=api_key)

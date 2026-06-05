@@ -14,13 +14,13 @@ Reads a JSONL produced by `RunCapture` and re-issues each captured call against 
 
 `<state_dir>/evals/<task>/<run_iso>.jsonl`, one record per LLM call.
 
-**Common keys:** `task`, `call_type` (`filter` | `summarize` | `search`), `ts`, `model_used`, `instructions`, `response`, `input_tokens`, `output_tokens`, `latency_s`, `reasoning`, `web_search`.
+**Common keys:** `task`, `call_type` (`filter` | `summarize` | `research`), `ts`, `model_used`, `instructions`, `response`, `input_tokens`, `output_tokens`, `latency_s`, `reasoning`, `web_search`. (`research` records carry only the trajectory — no tokens/latency/cost.)
 
 **`filter` adds:** `payload` (list of source groups with items, each item has `id`, `title`, `url`, optional `description`), `parsed` (per-item `id`, `source`, `title`, `url`, `pass`, `reason`), `memory`, `source_groups_count`, `items_count`, `passing_count`, `model` (configured spec).
 
 **`summarize` adds:** `input` (text sent to the LLM), `item_id`, `item_title`, `item_url`, `fetched_body`.
 
-**`search` adds:** `prompt`, `model` (configured spec).
+**`research` adds:** `prompt`, `model` (configured spec), `steps` (the agent trajectory: per-step `kind`/`rationale`/`queries`/`urls`), `sources` (gathered `url`/`title`).
 
 ## Replay output shape
 
@@ -34,8 +34,8 @@ The first entry in `results` is the original captured response (`is_original: tr
 
 ## Caveats
 
-- Replays of calls with `web_search: true` (always for `search`, configurable for `filter`) are noisy because each run gets different search results.
+- Replays of calls with `web_search: true` (configurable for `filter`) are noisy because each run gets different search results.
 - Replay uses captured `instructions` + `input` verbatim — only the model varies. Prompt-change comparisons require capturing a new run after the change.
-- `reasoning` fires when either the per-spec `ModelSpec.reasoning` is set (`low|medium|high`) or `--analysis` is passed. The captured `reasoning` field is provider-dependent: populated when the provider returns a reasoning trace (OpenAI summary blocks, Anthropic thinking blocks, Gemini thoughts, DeepSeek `reasoning_content`). Non-thinking models return `reasoning: null` regardless.
+- `reasoning` fires when either the per-spec `ModelSpec.reasoning` is set (`low|medium|high`) or `--analysis` is passed. The captured `reasoning` field is provider-dependent: populated when the provider returns a reasoning trace (Gemini thoughts, DeepSeek `reasoning_content`). Non-thinking models return `reasoning: null` regardless.
 - Curate (which goes through `complete_structured`) is supported on OpenAI + Gemini; Anthropic + DeepSeek ignore reasoning on structured calls (one-time warning) because their forced-structured-output paths conflict with thinking.
 - No rotation policy ships yet; clean up manually if disk pressure becomes an issue.

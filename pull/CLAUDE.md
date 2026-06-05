@@ -22,9 +22,9 @@ A `youtube` pull item is **not** a separate source — `config.get_feeds` expand
 
 **Gotcha:** `get_new_entries` reverses feedparser's order (oldest-first). So when the LLM curate filter sees XML items, the first XML item is `id=N-1`, the last is `id=0`. Tests need to wire `queue_filter` responses accordingly.
 
-## `search.py` — LLM web-search source
+## `research.py` — agentic research over vasco
 
-`SearchSource(Source)` calls `run_search_task(task_cfg, instructions, model, adapter)`, which invokes the configured LLM with web search enabled and wraps the response as a single `Item`. Returns `None` on LLM error.
+`run_research_task(task_cfg, instructions, model, *, adapter, reasoning, trace)` runs a bounded agentic loop: each turn the LLM emits a `ResearchAction` (`search` / `read` / `finish`) via `complete_structured`; claudinho executes it against vascod (`_vasco.search` for a real DDG/Tavily SERP, `_vasco.extract` for query-ranked page passages), accumulates sources in `ResearchState`, then synthesizes a final cited answer via `complete`. Bounded by `max_steps` / `max_searches` / `max_reads` (termination guarantees, not cost tracking). Never raises — a vascod `None` is treated as "no results", an LLM `None` ends the loop early and we synthesize from what was gathered. Replaces the old provider-`web_search` search source; retrieval now comes from vasco (cache, escalation, quality scoring). `tasks._process_research_task` wraps it into the pull→push flow.
 
 ## `realestate.py` — structured real-estate listings via vasco
 
