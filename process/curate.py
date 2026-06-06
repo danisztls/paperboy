@@ -44,6 +44,7 @@ async def curate_entries(
     extra_instructions: str | None = None,
     reasoning: bool | str | dict = False,
     trace: dict | None = None,
+    task_name: str | None = None,
 ) -> tuple[dict[str, dict], list[MemoryParagraph] | None] | None:
     """Filter feed entries through LLM and optionally update memory.
 
@@ -53,6 +54,7 @@ async def curate_entries(
     memory_history: chronological list of prior memory entries (oldest first) passed as
     context so the model can build continuity across runs.
     """
+    prefix_tag = f"[{task_name}] " if task_name else ""
     raw_model = filter_cfg.get("model")
     model = (raw_model.get("name") if isinstance(raw_model, dict) else None) or global_model or None
     if not reasoning and isinstance(raw_model, dict) and raw_model.get("reasoning"):
@@ -133,7 +135,7 @@ async def curate_entries(
         trace=trace,
     )
     if decisions is None:
-        log.error("LLM filter returned no parseable response")
+        log.error("%sLLM filter returned no parseable response", prefix_tag)
         return None
 
     if trace is not None:
@@ -147,5 +149,5 @@ async def curate_entries(
         for p in decisions.memory
     ]
     passed = sum(1 for v in parsed.values() if v["pass"])
-    log.info("Filter: %d/%d items passed", passed, total)
+    log.info("%sFilter: %d/%d items passed", prefix_tag, passed, total)
     return parsed, paragraphs or None

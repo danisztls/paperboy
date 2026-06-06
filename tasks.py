@@ -304,6 +304,7 @@ async def _apply_curate(
     default_reasoning: str | bool | dict | None = None,
     collector=None,
     analysis: bool = False,
+    task_name: str | None = None,
 ) -> FilterResult:
     """Run LLM curate filter on items. Returns FilterResult with filter_pass set on each item."""
     # Build grouped payload for the LLM (grouped by source)
@@ -351,10 +352,11 @@ async def _apply_curate(
         extra_instructions=effective_filter_cfg.get("instructions") or None,
         reasoning=_effective_reasoning(default_reasoning, analysis),
         trace=filter_trace,
+        task_name=task_name,
     )
     llm_return = await curate_entries(payload_groups, effective_filter_cfg, model, **_filter_kwargs)
     if llm_return is None:
-        log.warning("Filter failed, retrying in 10s")
+        log.warning("[%s] Filter failed, retrying in 10s", task_name or "?")
         await asyncio.sleep(10)
         llm_return = await curate_entries(
             payload_groups, effective_filter_cfg, model, **_filter_kwargs
@@ -496,7 +498,7 @@ async def _process_research_task(
         except Exception:
             log.error("Skipping research task %s due to post failure", name)
             return {}
-        log.info("[%s] Posted response (%d chars)", name, len(text))
+        log.info("[%s] Posted response (%d chars) to Discord", name, len(text))
 
         if get_file_path(task_cfg):
             await FileItemTarget().push(ctx, task_cfg, session)
@@ -550,7 +552,7 @@ async def _process_weather_task(
         except Exception:
             log.error("Skipping weather task %s due to post failure", name)
             return {}
-        log.info("[%s] Posted", name)
+        log.info("[%s] Posted to Discord", name)
 
         if get_file_path(task_cfg):
             await FileItemTarget().push(ctx, task_cfg, session)
@@ -614,7 +616,7 @@ async def _process_finance_task(
         except Exception:
             log.error("Skipping finance task %s due to post failure", name)
             return {}
-        log.info("[%s] Posted", name)
+        log.info("[%s] Posted to Discord", name)
 
         if get_file_path(task_cfg):
             await FileItemTarget().push(ctx, task_cfg, session)
@@ -779,7 +781,7 @@ async def _push_curate(
         except Exception:
             log.error("[%s] Failed to post digest — state not saved", task_name)
             return None
-        log.info("[%s] Posted digest", task_name)
+        log.info("[%s] Posted digest to Discord", task_name)
         if get_file_path(task_cfg):
             await FileDigestTarget().push(ctx, task_cfg, session)
         return failed_ids
@@ -792,7 +794,7 @@ async def _push_curate(
     failed_ids = await target.push(ctx, task_cfg, session)
     posted = len(passing) - len(failed_ids)
     if posted > 0:
-        log.info("[%s] Posted %d item(s)", task_name, posted)
+        log.info("[%s] Posted %d item(s) to Discord", task_name, posted)
     if get_file_path(task_cfg):
         await FileItemTarget().push(ctx, task_cfg, session)
     return failed_ids
@@ -947,6 +949,7 @@ async def _process_feed_task(
                 default_reasoning=curate_reasoning,
                 collector=collector,
                 analysis=analysis,
+                task_name=task_name,
             )
 
         passing, all_annotated, memory_paragraphs, cite_map = _select_passing(
@@ -1049,7 +1052,7 @@ async def _process_realestate_task(
             failed_ids = await DiscordEmbedTarget().push(ctx, task_cfg, session)
         posted = len(all_new_items) - len(failed_ids)
         if posted > 0:
-            log.info("[%s] Posted %d listing(s)", task_name, posted)
+            log.info("[%s] Posted %d listing(s) to Discord", task_name, posted)
         if get_file_path(task_cfg):
             await FileItemTarget().push(ctx, task_cfg, session)
 

@@ -107,7 +107,14 @@ else:
     )
 log = logging.getLogger(__name__)
 
-for _noisy in ("httpx", "httpcore"):
+# Third-party SDK chatter we never want in our logs:
+# - httpx/httpcore: per-request transport lines
+# - openai: "Retrying request to /chat/completions in N seconds" (the SDK's own
+#   transient-failure retries; the real outcome is logged by timed_call + the
+#   FallbackAdapter, so these are redundant noise)
+# - google_genai: "AFC is enabled with max remote calls: 10." (Automatic Function
+#   Calling notice emitted on every Gemini call)
+for _noisy in ("httpx", "httpcore", "openai", "google_genai"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 _LOG_FORMAT = logging.Formatter(

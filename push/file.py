@@ -111,7 +111,7 @@ class FileItemTarget(Target):
                 content = "\n".join(_item_to_markdown(item) for item in items)
                 with path.open("a", encoding="utf-8") as f:
                     f.write(content)
-            log.info("Appended %d item(s) to %s", len(items), path)
+            log.info("[%s] Appended %d item(s) to %s", cfg.get("name") or "?", len(items), path)
         except OSError as exc:
             log.error("Failed to write to %s: %s", path, exc)
             failed = {item.url for item in items if item.url}
@@ -143,7 +143,7 @@ class FileDigestTarget(Target):
                 block = f"## {date_str}\n\n{text}\n\n---\n\n"
                 with path.open("a", encoding="utf-8") as f:
                     f.write(block)
-            log.info("Appended digest to %s", path)
+            log.info("[%s] Appended digest to %s", cfg.get("name") or "?", path)
         except OSError as exc:
             log.error("Failed to write to %s: %s", path, exc)
 

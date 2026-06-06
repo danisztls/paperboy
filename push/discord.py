@@ -272,6 +272,12 @@ async def post_to_discord(
             s = u.strip()
             if not s or s in seen:
                 continue
+            # Discord rejects the whole embed (HTTP 400) if image.url isn't a
+            # well-formed absolute URL; drop it so we degrade to a no-image embed
+            # rather than failing the entire post.
+            if not s.startswith(("http://", "https://")):
+                log.warning("Dropping non-absolute embed image URL: %s", s)
+                continue
             seen.add(s)
             imgs.append(s)
             if len(imgs) >= _EMBED_IMAGE_CAP:

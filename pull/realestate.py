@@ -12,6 +12,7 @@ which also serves as the per-source identity used to key state.
 import asyncio
 import logging
 import unicodedata
+from urllib.parse import urljoin
 
 from pipeline import Item, PullResult
 from process._vasco import fetch_listings
@@ -114,16 +115,31 @@ def _format_body(listing: dict) -> str:
     return "\n".join(lines)
 
 
+def _abs_url(base: str, u: str | None) -> str | None:
+    """Resolve a possibly-relative image URL against the listing page URL.
+
+    Some portals (e.g. portal-a) emit relative image paths like
+    `../imoveis/x.jpeg`; Discord rejects non-absolute embed image URLs with a 400,
+    so absolutize here at the source→Item boundary.
+    """
+    if not isinstance(u, str) or not u.strip():
+        return None
+    return urljoin(base, u.strip())
+
+
 def _to_item(listing: dict, source: str) -> Item:
     title = listing.get("title") or _title(listing)
+    url = listing["url"]
+    images = [a for img in (listing.get("images") or []) if (a := _abs_url(url, img))]
+    image = _abs_url(url, listing.get("image")) or (images[0] if images else None)
     return Item(
-        id=listing["url"],
+        id=url,
         title=title[:256],
         source=source,
-        url=listing["url"],
+        url=url,
         body=_format_body(listing),
-        image=listing.get("image"),
-        images=listing.get("images") or [],
+        image=image,
+        images=images,
         meta={k: listing.get(k) for k in _META_FIELDS},
     )
 
