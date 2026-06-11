@@ -13,11 +13,9 @@ from datetime import UTC, datetime
 
 import aiohttp
 
+import logsetup
 from config import (
-    Period,
-    get_api_key_for_provider,
     get_discord_cfg,
-    get_feeds,
     load_config,
     parse_period,
     resolve_model_specs,
@@ -28,175 +26,23 @@ from constants import USER_AGENT
 from evals.capture import RunCapture
 from process._vasco import configure as configure_vasco
 from process.summarize import run_get_content, run_summarize
-from providers.llm import FallbackAdapter, get_adapter
-from pull.feed import RSSSource
-from state import _auto_clean, _remove_unknown, load_state, save_state
+from providers.llm import build_model_handle
+from state import auto_clean, load_state, remove_unknown, save_state
 from state.migrate import CURRENT_VERSION, migrate, needs_migration
-from stats import _humanize_minutes, print_stats
+from stats import humanize_minutes, print_stats
 from tasks import (
     DEFAULT_PERIOD,
-    _is_due,
-    _process_feed_task,
-    _process_finance_task,
-    _process_realestate_task,
-    _process_research_task,
-    _process_weather_task,
+    LLMHandles,
+    RunContext,
+    processor_for,
+    regenerate_feeds_state,
+    task_is_due,
 )
 
-
-def _under_systemd() -> bool:
-    # JOURNAL_STREAM is set when stdout/stderr is captured by journald
-    return "JOURNAL_STREAM" in os.environ
-
-
-_SYSLOG_PREFIX = {
-    logging.CRITICAL: "<2>",
-    logging.ERROR: "<3>",
-    logging.WARNING: "<4>",
-    logging.INFO: "<6>",
-    logging.DEBUG: "<7>",
-}
-
-
-class _JournaldFormatter(logging.Formatter):
-    def format(self, record: logging.LogRecord) -> str:
-        return _SYSLOG_PREFIX.get(record.levelno, "<6>") + super().format(record)
-
-
-# Our own package loggers. Setting a parent (e.g. "pull") to DEBUG propagates to
-# its children ("pull.feed", …); third-party libraries are left alone.
-_APP_LOGGERS = (
-    "__main__",
-    "tasks",
-    "stats",
-    "pull",
-    "push",
-    "process",
-    "state",
-    "config",
-    "providers",
-    "evals",
-)
-
-
-if _under_systemd():
-    _handler = logging.StreamHandler()
-    _handler.setFormatter(_JournaldFormatter("[%(name)s] %(message)s"))
-    # Journal shows the INFO heartbeat only; full DEBUG detail goes to the
-    # per-run file log (added later in _setup_log_file). Root stays at INFO so
-    # noisy third-party loggers are unaffected; our loggers go to DEBUG so their
-    # records reach the file handler while the journald handler filters them out.
-    _handler.setLevel(logging.INFO)
-    logging.basicConfig(handlers=[_handler], level=logging.INFO)
-    for _name in _APP_LOGGERS:
-        logging.getLogger(_name).setLevel(logging.DEBUG)
-elif sys.stderr.isatty():
-    from rich.logging import RichHandler
-
-    logging.basicConfig(
-        format="%(message)s",
-        datefmt="[%X]",
-        handlers=[RichHandler(rich_tracebacks=True, show_path=False)],
-        level=logging.INFO,
-    )
-else:
-    logging.basicConfig(
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        level=logging.INFO,
-    )
 log = logging.getLogger(__name__)
 
-# Third-party SDK chatter we never want in our logs:
-# - httpx/httpcore: per-request transport lines
-# - openai: "Retrying request to /chat/completions in N seconds" (the SDK's own
-#   transient-failure retries; the real outcome is logged by timed_call + the
-#   FallbackAdapter, so these are redundant noise)
-# - google_genai: "AFC is enabled with max remote calls: 10." (Automatic Function
-#   Calling notice emitted on every Gemini call)
-for _noisy in ("httpx", "httpcore", "openai", "google_genai"):
-    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
-_LOG_FORMAT = logging.Formatter(
-    "%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
-)
-
-
-def _setup_log_file(logs_dir: pathlib.Path, ts: datetime) -> None:
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    stamp = ts.strftime("%Y-%m-%dT%H-%M-%S")
-    handler = logging.FileHandler(logs_dir / f"{stamp}.log", encoding="utf-8")
-    handler.setFormatter(_LOG_FORMAT)
-    logging.getLogger().addHandler(handler)
-
-
-def _prune_old_files(root: pathlib.Path, days: int) -> int:
-    if days <= 0 or not root.exists():
-        return 0
-    cutoff = time.time() - days * 86400
-    removed = 0
-    for path in root.rglob("*"):
-        if path.is_file() and path.stat().st_mtime < cutoff:
-            path.unlink()
-            removed += 1
-    return removed
-
-
-def _merge_task_results(state: dict, results: list) -> None:
-    """Fold per-task result dicts into state. Empty/Exception results leave state untouched."""
-    tasks_state = state.setdefault("tasks", {})
-    for result in results:
-        if isinstance(result, Exception):
-            log.error("Feed task failed: %s", result)
-        elif result:
-            for task_name, task_state in result.items():
-                if task_name in tasks_state:
-                    tasks_state[task_name] = {**tasks_state[task_name], **task_state}
-                else:
-                    tasks_state[task_name] = task_state
-
-
-def _check_due_or_skip(name: str, last_run: str | None, period: Period, now: datetime) -> bool:
-    """True if the task is due. Otherwise log a skip message and return False."""
-    if _is_due({"last_run": last_run}, period, now):
-        return True
-    if last_run:
-        last = datetime.fromisoformat(last_run)
-        mins = int((now - last).total_seconds() // 60)
-        log.debug(
-            "[%s] Skipping — last run %s ago, period is %s",
-            name,
-            _humanize_minutes(mins),
-            period,
-        )
-    return False
-
-
-def _build_adapter(specs: list, api_key_cfg: dict | None) -> tuple:
-    """Return (adapter, model, default_reasoning) from a list of ModelSpec.
-
-    Single spec: returns the adapter, model name, and the spec's reasoning level.
-    Multiple specs: returns a FallbackAdapter that carries per-entry reasoning;
-    the outer default_reasoning is None (each entry uses its own).
-    """
-    if not specs:
-        return None, None, None
-    if len(specs) == 1:
-        s = specs[0]
-        return (
-            get_adapter(s.provider, get_api_key_for_provider(api_key_cfg, s.provider)),
-            s.name,
-            s.reasoning,
-        )
-    entries = [
-        (
-            get_adapter(s.provider, get_api_key_for_provider(api_key_cfg, s.provider)),
-            s.name,
-            s.reasoning,
-        )
-        for s in specs
-    ]
-    return FallbackAdapter(entries), None, None
+# --- Paths and process lock ---
 
 
 def _xdg_config_path() -> pathlib.Path:
@@ -209,45 +55,153 @@ def _xdg_state_path() -> pathlib.Path:
     return xdg_data / "claudinho" / "state.json"
 
 
-async def _async_main(args: argparse.Namespace) -> None:
+def resolve_paths(args: argparse.Namespace) -> tuple[pathlib.Path, pathlib.Path]:
+    """Resolve (config_path, state_path) from CLI args / XDG defaults.
+
+    Exits when the config file does not exist. With an explicit --config but no
+    --state, state lives next to the config file.
+    """
     xdg_defaults = args.config is None
     config_path = (
         _xdg_config_path() if xdg_defaults else pathlib.Path(args.config).expanduser().resolve()
     )
+    if not config_path.exists():
+        log.error("Config file not found: %s", config_path)
+        sys.exit(1)
     state_path = (
         pathlib.Path(args.state).expanduser().resolve()
         if args.state
         else (_xdg_state_path() if xdg_defaults else config_path.parent / "state.json")
     )
+    return config_path, state_path
 
-    _xdg_runtime = pathlib.Path(os.environ.get("XDG_RUNTIME_DIR", f"/tmp/claudinho-{os.getuid()}"))
-    _xdg_runtime.mkdir(parents=True, exist_ok=True)
-    lock_path = _xdg_runtime / "claudinho.lock"
-    lock_fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY, 0o600)
+
+def _acquire_lock() -> int:
+    """Take the single-instance flock; exits if another instance holds it."""
+    xdg_runtime = pathlib.Path(os.environ.get("XDG_RUNTIME_DIR", f"/tmp/claudinho-{os.getuid()}"))
+    xdg_runtime.mkdir(parents=True, exist_ok=True)
+    lock_fd = os.open(xdg_runtime / "claudinho.lock", os.O_CREAT | os.O_WRONLY, 0o600)
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         os.close(lock_fd)
         log.error("Another instance is running, exiting.")
         sys.exit(1)
+    return lock_fd
 
-    if not config_path.exists():
-        log.error("Config file not found: %s", config_path)
+
+def _load_valid_config(config_path: pathlib.Path) -> dict:
+    config = load_config(config_path)
+    errors = validate_config(config)
+    if errors:
+        for err in errors:
+            log.error("Config error: %s", err)
         sys.exit(1)
+    return config
 
-    _run_ts = datetime.now(UTC).replace(microsecond=0)
-    _run_local = _run_ts.astimezone()
-    _setup_log_file(state_path.parent / "logs", _run_local)
+
+# --- Housekeeping ---
+
+
+def prune_old_files(root: pathlib.Path, days: int) -> int:
+    if days <= 0 or not root.exists():
+        return 0
+    cutoff = time.time() - days * 86400
+    removed = 0
+    for path in root.rglob("*"):
+        if path.is_file() and path.stat().st_mtime < cutoff:
+            path.unlink()
+            removed += 1
+    return removed
+
+
+def merge_task_results(state: dict, results: list) -> None:
+    """Fold per-task result dicts into state. Empty/Exception results leave state untouched."""
+    tasks_state = state.setdefault("tasks", {})
+    for result in results:
+        if isinstance(result, Exception):
+            log.error("Task failed: %s", result)
+        elif result:
+            for task_name, task_state in result.items():
+                if task_name in tasks_state:
+                    tasks_state[task_name] = {**tasks_state[task_name], **task_state}
+                else:
+                    tasks_state[task_name] = task_state
+
+
+# --- The normal run path ---
+
+
+def _build_llm_handles(config: dict) -> LLMHandles:
+    api_keys = (config.get("llm", {}).get("api_key")) or None
+
+    def _handle(section: str):
+        specs = resolve_model_specs((config.get(section) or {}).get("model"))
+        return build_model_handle(specs, api_keys)
+
+    return LLMHandles(
+        curate=_handle("curate"),
+        summarize=_handle("summarize"),
+        research=_handle("research"),
+    )
+
+
+def _log_not_due(name: str, task_state: dict, period, now: datetime) -> None:
+    last_run = task_state.get("last_run")
+    if last_run:
+        mins = int((now - datetime.fromisoformat(last_run)).total_seconds() // 60)
+        log.debug(
+            "[%s] Skipping — last run %s ago, period is %s", name, humanize_minutes(mins), period
+        )
+    else:
+        log.debug("[%s] Skipping — no feeds are due (period %s)", name, period)
+
+
+def _collect_due_tasks(ctx: RunContext, state: dict, force_task: str | None, now: datetime) -> list:
+    """Build the processor coroutines for every due (or forced) task."""
+    tasks_cfg = ctx.config.get("tasks", [])
+    if force_task:
+        tasks_cfg = [t for t in tasks_cfg if t.get("name") == force_task]
+        if not tasks_cfg:
+            log.error("No task named %r found in config", force_task)
+            sys.exit(1)
+
+    coros = []
+    for task_cfg in tasks_cfg:
+        if not get_discord_cfg(task_cfg).get("webhook"):
+            continue
+        kind = task_kind(task_cfg)
+        name = task_cfg.get("name")
+        if not name:
+            log.warning("Skipping %s task with no name", kind)
+            continue
+        if kind == "realestate" and ctx.analysis:
+            log.info("[%s] Skipping real-estate task in analysis mode", name)
+            continue
+        period = parse_period(task_cfg.get("period", DEFAULT_PERIOD))
+        task_state = state.get("tasks", {}).get(name, {})
+        if (
+            not force_task
+            and not ctx.analysis
+            and not task_is_due(task_cfg, task_state, period, now)
+        ):
+            _log_not_due(name, task_state, period, now)
+            continue
+        coros.append(processor_for(kind)(task_cfg, state, ctx))
+    return coros
+
+
+async def _async_main(args: argparse.Namespace) -> None:
+    config_path, state_path = resolve_paths(args)
+    _lock_fd = _acquire_lock()  # held for the lifetime of the run
+
+    run_local = datetime.now(UTC).replace(microsecond=0).astimezone()
+    logsetup.add_file_handler(state_path.parent / "logs", run_local)
 
     log.info("Config: %s", config_path)
     log.info("State:  %s", state_path)
 
-    config = load_config(config_path)
-    config_errors = validate_config(config)
-    if config_errors:
-        for err in config_errors:
-            log.error("Config error: %s", err)
-        sys.exit(1)
+    config = _load_valid_config(config_path)
     state = load_state(state_path)
 
     if state and needs_migration(state):
@@ -258,7 +212,7 @@ async def _async_main(args: argparse.Namespace) -> None:
 
     retention_days = (config.get("retention") or {}).get("days", 30)
     for sub in ("logs", "evals"):
-        removed = _prune_old_files(state_path.parent / sub, retention_days)
+        removed = prune_old_files(state_path.parent / sub, retention_days)
         if removed:
             log.info(
                 "Pruned %d file(s) older than %d day(s) from %s/", removed, retention_days, sub
@@ -274,231 +228,102 @@ async def _async_main(args: argparse.Namespace) -> None:
         return
 
     if args.clean:
-        _auto_clean(state)
-        known_tasks = {t["name"] for t in config.get("tasks", []) if t.get("name")}
-        known_feeds = {
-            t["name"]: {f["url"] for f in get_feeds(t) if f.get("url")}
-            for t in config.get("tasks", [])
-            if t.get("name") and t.get("pull")
-        }
-        known_realestate_urls = {
-            t["name"]: {
-                item["realestate"]["url"]
-                for item in t.get("pull", [])
-                if "realestate" in item and item["realestate"].get("url")
-            }
-            for t in config.get("tasks", [])
-            if t.get("name") and t.get("pull")
-        }
-        _remove_unknown(state, known_tasks, known_feeds, known_realestate_urls)
+        auto_clean(state)
+        remove_unknown(state, config)
         save_state(state_path, state)
         log.info("Done. State saved to %s", state_path)
         return
 
-    llm_cfg = config.get("llm", {})
-    curate_cfg = config.get("curate", {})
-    research_cfg_global = config.get("research", {})
-    summarize_cfg = config.get("summarize", {})
-    api_key_cfg = llm_cfg.get("api_key") or None
-    curate_adapter, curate_model, curate_reasoning = _build_adapter(
-        resolve_model_specs(curate_cfg.get("model")), api_key_cfg
-    )
-    summarize_adapter, summarize_model, summarize_reasoning = _build_adapter(
-        resolve_model_specs(summarize_cfg.get("model")), api_key_cfg
-    )
-    research_adapter, research_model, research_reasoning = _build_adapter(
-        resolve_model_specs(research_cfg_global.get("model")), api_key_cfg
-    )
-    instructions = research_cfg_global.get("instructions") or None
-    global_language = curate_cfg.get("language") or "EN-US"
-    configure_vasco()
-    feeds_cfg = config.get("feeds") or {}
-    max_age_seconds = int(feeds_cfg.get("max_age_days") or 7) * 86400
-
-    tasks = config.get("tasks", [])
-    if not tasks:
+    if not config.get("tasks"):
         log.error("No tasks defined in config.")
         sys.exit(1)
+
+    configure_vasco()
+    analysis = args.analysis
+    collector = RunCapture(
+        limit=args.analysis_limit_items if analysis else 0,
+        limit_feeds=args.analysis_limit_feeds if analysis else 0,
+    )
 
     async with aiohttp.ClientSession(
         connector=aiohttp.TCPConnector(limit=20),
         timeout=aiohttp.ClientTimeout(total=15),
         headers={"User-Agent": USER_AGENT},
     ) as session:
+        ctx = RunContext(
+            session=session,
+            config=config,
+            llm=_build_llm_handles(config),
+            collector=collector,
+            analysis=analysis,
+        )
+
         if args.regenerate_state:
-            now = datetime.now(UTC).replace(microsecond=0).isoformat()
-            for task_cfg in tasks:
-                if task_kind(task_cfg) != "feeds":
-                    continue
-                task_name = task_cfg.get("name")
-                if not task_name:
-                    log.warning("Skipping feeds task with no name")
-                    continue
-                task_state = state.setdefault("tasks", {}).setdefault(task_name, {})
-                feeds_state = task_state.setdefault("feeds", {})
-                source = RSSSource(max_age_seconds)
-                for feed_cfg in get_feeds(task_cfg):
-                    url = feed_cfg.get("url")
-                    if not url:
-                        continue
-                    pull_result = await source.pull(feed_cfg, set(), session)
-                    if pull_result is None:
-                        log.warning("Failed to fetch %s, skipping", url)
-                        continue
-                    prev_seen = {
-                        item["url"]: item["first_seen"]
-                        for item in feeds_state.get(url, {}).get("items", [])
-                        if "first_seen" in item
-                    }
-                    for item in pull_result.current_items:
-                        item["first_seen"] = prev_seen.get(item["url"], now)
-                    feed_dict: dict = {"items": pull_result.current_items, "last_run": now}
-                    if pull_result.name:
-                        feed_dict["name"] = pull_result.name
-                    feeds_state[url] = feed_dict
-                    log.info("Regenerated %d items for %s", len(pull_result.current_items), url)
+            await regenerate_feeds_state(config, state, ctx)
             save_state(state_path, state)
             log.info("Done. State regenerated and saved to %s", state_path)
-        else:
-            # Concurrent: all tasks run in parallel.
-            now = datetime.now(UTC)
-            feed_tasks = []
-            force_task = args.task
-            analysis = args.analysis
-            collector = RunCapture(
-                limit=args.analysis_limit_items if analysis else 0,
-                limit_feeds=args.analysis_limit_feeds if analysis else 0,
-            )
+            return
 
-            task_list = tasks
-            if force_task:
-                task_list = [t for t in tasks if t.get("name") == force_task]
-                if not task_list:
-                    log.error("No task named %r found in config", force_task)
-                    sys.exit(1)
+        coros = _collect_due_tasks(ctx, state, args.task, datetime.now(UTC))
+        results = await asyncio.gather(*coros, return_exceptions=True)
 
-            for task_cfg in task_list:
-                webhook = get_discord_cfg(task_cfg).get("webhook")
-                if not webhook:
-                    continue
-                period = parse_period(task_cfg.get("period", DEFAULT_PERIOD))
-                kind = task_kind(task_cfg)
-                name = task_cfg.get("name")
-                if not name:
-                    log.warning("Skipping %s task with no name", kind)
-                    continue
-                task_state = state.get("tasks", {}).get(name, {})
+        evals_dir = state_path.parent / "evals"
+        written = collector.write_jsonl(evals_dir, run_local.strftime("%Y-%m-%dT%H-%M-%S"))
+        if written:
+            log.info("Wrote eval traces: %d file(s) under %s", len(written), evals_dir)
 
-                if kind == "research":
-                    if (
-                        not force_task
-                        and not analysis
-                        and not _check_due_or_skip(name, task_state.get("last_run"), period, now)
-                    ):
-                        continue
-                    feed_tasks.append(
-                        _process_research_task(
-                            task_cfg,
-                            state,
-                            session,
-                            instructions=instructions,
-                            research_model=research_model,
-                            research_adapter=research_adapter,
-                            research_reasoning=research_reasoning,
-                            collector=collector,
-                            analysis=analysis,
-                        )
-                    )
-                elif kind == "realestate":
-                    if analysis:
-                        log.info("[%s] Skipping real-estate task in analysis mode", name)
-                        continue
-                    if not force_task and not _check_due_or_skip(
-                        name, task_state.get("last_run"), period, now
-                    ):
-                        continue
-                    feed_tasks.append(
-                        _process_realestate_task(task_cfg, state, session, global_cfg=config)
-                    )
-                elif kind == "weather":
-                    if (
-                        not force_task
-                        and not analysis
-                        and not _check_due_or_skip(name, task_state.get("last_run"), period, now)
-                    ):
-                        continue
-                    feed_tasks.append(
-                        _process_weather_task(
-                            task_cfg,
-                            state,
-                            session,
-                            collector=collector,
-                            analysis=analysis,
-                        )
-                    )
-                elif kind == "finance":
-                    if (
-                        not force_task
-                        and not analysis
-                        and not _check_due_or_skip(name, task_state.get("last_run"), period, now)
-                    ):
-                        continue
-                    feed_tasks.append(
-                        _process_finance_task(
-                            task_cfg,
-                            state,
-                            session,
-                            collector=collector,
-                            analysis=analysis,
-                        )
-                    )
-                else:
-                    feeds_state = task_state.get("feeds", {})
-                    feed_urls = [f["url"] for f in get_feeds(task_cfg) if f.get("url")]
-                    if (
-                        not force_task
-                        and not analysis
-                        and not any(_is_due(feeds_state.get(u, {}), period, now) for u in feed_urls)
-                    ):
-                        log.debug("[%s] Skipping — no feeds are due", name)
-                        continue
-                    feed_tasks.append(
-                        _process_feed_task(
-                            task_cfg,
-                            state,
-                            session,
-                            curate_model=curate_model,
-                            curate_adapter=curate_adapter,
-                            curate_reasoning=curate_reasoning,
-                            summarize_model=summarize_model,
-                            summarize_adapter=summarize_adapter,
-                            summarize_reasoning=summarize_reasoning,
-                            global_cfg=config,
-                            global_language=global_language,
-                            max_age_seconds=max_age_seconds,
-                            collector=collector,
-                            analysis=analysis,
-                        )
-                    )
+        if analysis:
+            if args.human:
+                collector.display()
+            else:
+                print(collector.to_json())
+            return
 
-            results = await asyncio.gather(*feed_tasks, return_exceptions=True)
+        merge_task_results(state, results)
+        save_state(state_path, state)
+        log.info("Done. State saved to %s", state_path)
 
-            evals_dir = state_path.parent / "evals"
-            run_stamp = _run_local.strftime("%Y-%m-%dT%H-%M-%S")
-            written = collector.write_jsonl(evals_dir, run_stamp)
-            if written:
-                log.info("Wrote eval traces: %d file(s) under %s", len(written), evals_dir)
 
-            if analysis:
-                if args.human:
-                    collector.display()
-                else:
-                    print(collector.to_json())
-                return
+# --- One-shot CLI modes ---
 
-            _merge_task_results(state, results)
-            save_state(state_path, state)
-            log.info("Done. State saved to %s", state_path)
+
+def _mode_validate(args: argparse.Namespace) -> None:
+    config_path, _ = resolve_paths(args)
+    _load_valid_config(config_path)
+    log.info("Config is valid: %s", config_path)
+
+
+def _mode_stats(args: argparse.Namespace) -> None:
+    config_path, state_path = resolve_paths(args)
+    print_stats(load_config(config_path), load_state(state_path))
+
+
+def _mode_replay(args: argparse.Namespace) -> None:
+    if not args.models:
+        log.error("--replay requires --models")
+        sys.exit(1)
+    from evals.replay import replay
+
+    config_path, state_path = resolve_paths(args)
+    jsonl_path = pathlib.Path(args.replay).expanduser().resolve()
+    model_specs = [s.strip() for s in args.models.split(",") if s.strip()]
+    asyncio.run(replay(jsonl_path, model_specs, args.call, state_path.parent, config_path))
+
+
+def _mode_summarize(args: argparse.Namespace) -> None:
+    config_path, _ = resolve_paths(args)
+    config = load_config(config_path)
+    handle = build_model_handle(
+        resolve_model_specs((config.get("summarize") or {}).get("model")),
+        (config.get("llm") or {}).get("api_key") or None,
+    )
+    if handle is None:
+        log.error("--summarize requires summarize.model with a provider configured")
+        sys.exit(1)
+    language = (config.get("curate") or {}).get("language") or "EN-US"
+    asyncio.run(
+        run_summarize(args.summarize, adapter=handle.adapter, model=handle.model, language=language)
+    )
 
 
 def main():
@@ -572,7 +397,7 @@ def main():
     parser.add_argument(
         "--models",
         metavar="LIST",
-        help="Comma-separated provider:model pairs to replay against, e.g. openai:gpt-4o-mini,gemini:gemini-2.5-flash",
+        help="Comma-separated provider:model pairs to replay against, e.g. deepseek:deepseek-chat,gemini:gemini-2.5-flash",
     )
     parser.add_argument(
         "--call",
@@ -605,113 +430,20 @@ def main():
     )
     args = parser.parse_args()
 
-    if args.verbose:
-        for name in _APP_LOGGERS:
-            logging.getLogger(name).setLevel(logging.DEBUG)
+    logsetup.setup(verbose=args.verbose)
 
     if args.validate:
-        config_path = (
-            _xdg_config_path()
-            if args.config is None
-            else pathlib.Path(args.config).expanduser().resolve()
-        )
-        if not config_path.exists():
-            log.error("Config file not found: %s", config_path)
-            sys.exit(1)
-        config = load_config(config_path)
-        errors = validate_config(config)
-        if errors:
-            for err in errors:
-                log.error("Config error: %s", err)
-            sys.exit(1)
-        log.info("Config is valid: %s", config_path)
-        return
-
-    if args.stats:
-        config_path = (
-            _xdg_config_path()
-            if args.config is None
-            else pathlib.Path(args.config).expanduser().resolve()
-        )
-        if not config_path.exists():
-            log.error("Config file not found: %s", config_path)
-            sys.exit(1)
-        state_path = (
-            pathlib.Path(args.state).expanduser().resolve()
-            if args.state
-            else (_xdg_state_path() if args.config is None else config_path.parent / "state.json")
-        )
-        config = load_config(config_path)
-        state = load_state(state_path)
-        print_stats(config, state)
-        return
-
-    if args.replay:
-        if not args.models:
-            log.error("--replay requires --models")
-            sys.exit(1)
-        from evals.replay import replay as _replay
-
-        jsonl_path = pathlib.Path(args.replay).expanduser().resolve()
-        config_path = (
-            _xdg_config_path()
-            if args.config is None
-            else pathlib.Path(args.config).expanduser().resolve()
-        )
-        if not config_path.exists():
-            log.error("Config file not found: %s", config_path)
-            sys.exit(1)
-        state_path = (
-            pathlib.Path(args.state).expanduser().resolve()
-            if args.state
-            else (_xdg_state_path() if args.config is None else config_path.parent / "state.json")
-        )
-        model_specs = [s.strip() for s in args.models.split(",") if s.strip()]
-        asyncio.run(
-            _replay(
-                jsonl_path,
-                model_specs,
-                args.call,
-                state_path.parent,
-                config_path,
-            )
-        )
-        return
-
-    if args.summarize:
-        _sum_adapter = None
-        _sum_api_key_cfg = None
-        _sum_model = None
-        _sum_language = "EN-US"
-        config_path = (
-            _xdg_config_path()
-            if args.config is None
-            else pathlib.Path(args.config).expanduser().resolve()
-        )
-        if config_path.exists():
-            try:
-                cfg = load_config(config_path)
-                _sum_api_key_cfg = (cfg.get("llm") or {}).get("api_key") or None
-                _sum_language = (cfg.get("curate") or {}).get("language") or "EN-US"
-                _sum_specs = resolve_model_specs((cfg.get("summarize") or {}).get("model"))
-                _sum_adapter, _sum_model, _ = _build_adapter(_sum_specs, _sum_api_key_cfg)
-            except Exception:
-                pass
-        if _sum_adapter is None:
-            log.error("--summarize requires summarize.model with a provider configured")
-            sys.exit(1)
-        asyncio.run(
-            run_summarize(
-                args.summarize, adapter=_sum_adapter, model=_sum_model, language=_sum_language
-            )
-        )
-        return
-
-    if args.get_content:
+        _mode_validate(args)
+    elif args.stats:
+        _mode_stats(args)
+    elif args.replay:
+        _mode_replay(args)
+    elif args.summarize:
+        _mode_summarize(args)
+    elif args.get_content:
         asyncio.run(run_get_content(args.get_content))
-        return
-
-    asyncio.run(_async_main(args))
+    else:
+        asyncio.run(_async_main(args))
 
 
 if __name__ == "__main__":

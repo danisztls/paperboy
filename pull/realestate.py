@@ -36,10 +36,6 @@ _META_FIELDS = (
 )
 
 
-def _get_realestate_cfgs(task_cfg: dict) -> list[dict]:
-    return [item["realestate"] for item in task_cfg.get("pull", []) if "realestate" in item]
-
-
 def _as_int(value) -> int | None:
     try:
         return int(float(value))

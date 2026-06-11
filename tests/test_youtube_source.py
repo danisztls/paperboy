@@ -3,8 +3,8 @@
 import aiohttp
 
 from config import get_feeds, task_kind, validate_config
-from tasks import _process_feed_task
-from tests.conftest import make_curate_cfg
+from tasks import process_feed_task
+from tests.conftest import make_ctx, make_curate_cfg
 
 CHANNEL = "UCBa659QWEk1AI4Tg--mrJ2A"
 EXPECTED_URL = f"https://www.youtube.com/feeds/videos.xml?channel_id={CHANNEL}"
@@ -118,8 +118,8 @@ async def test_youtube_source_fetches_constructed_url(mock_http, fake_adapter, t
     cfg.pop("curate", None)
 
     async with aiohttp.ClientSession() as session:
-        result = await _process_feed_task(
-            cfg, {"tasks": {}}, session, summarize_adapter=fake_adapter
+        result = await process_feed_task(
+            cfg, {"tasks": {}}, make_ctx(session, summarize=fake_adapter)
         )
 
     feeds_state = result["test-curate"]["feeds"]

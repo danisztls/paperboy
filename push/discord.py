@@ -45,6 +45,27 @@ async def _post_webhook(
             return
 
 
+async def _post_json(
+    session: aiohttp.ClientSession,
+    webhook_url: str,
+    payload: dict,
+) -> None:
+    """POST a JSON payload to a webhook; logs and re-raises on HTTP/connection errors."""
+    data = json.dumps(payload).encode()
+    try:
+        await _post_webhook(
+            session,
+            webhook_url,
+            lambda: {"data": data, "headers": {"Content-Type": "application/json"}},
+        )
+    except aiohttp.ClientResponseError as e:
+        log.error("Discord webhook HTTP error: %s - %s", e.status, e.message)
+        raise
+    except aiohttp.ClientError as e:
+        log.error("Discord webhook connection error: %s", e)
+        raise
+
+
 async def post_text_to_discord(
     webhook_url: str,
     text: str,
@@ -58,20 +79,8 @@ async def post_text_to_discord(
         text = _wrap_text(text)
     if len(text) > 2000:
         text = text[:1997] + "…"
-    payload = json.dumps({"content": text}).encode()
     log.debug("Posting text to Discord (%d chars)", len(text))
-    try:
-        await _post_webhook(
-            session,
-            webhook_url,
-            lambda: {"data": payload, "headers": {"Content-Type": "application/json"}},
-        )
-    except aiohttp.ClientResponseError as e:
-        log.error("Discord webhook HTTP error: %s - %s", e.status, e.message)
-        raise
-    except aiohttp.ClientError as e:
-        log.error("Discord webhook connection error: %s", e)
-        raise
+    await _post_json(session, webhook_url, {"content": text})
 
 
 _CONTENT_LIMIT = 2000
@@ -289,19 +298,28 @@ async def post_to_discord(
                 embeds.extend({"url": entry.url, "image": {"url": u}} for u in imgs[1:])
 
     log.debug("Posting embed to Discord: %s", embed.get("title", ""))
-    payload = json.dumps({"embeds": embeds}).encode()
-    try:
-        await _post_webhook(
-            session,
-            webhook_url,
-            lambda: {"data": payload, "headers": {"Content-Type": "application/json"}},
-        )
-    except aiohttp.ClientResponseError as e:
-        log.error("Discord webhook HTTP error: %s - %s", e.status, e.message)
-        raise
-    except aiohttp.ClientError as e:
-        log.error("Discord webhook connection error: %s", e)
-        raise
+    await _post_json(session, webhook_url, {"embeds": embeds})
+
+
+async def _push_each(items: list[Item], post_one) -> set[str]:
+    """Post items oldest-first with a rate-limit sleep between posts.
+
+    A failed item is logged and collected into the returned failed set (by url)
+    without aborting the rest of the batch.
+    """
+    failed: set[str] = set()
+    ordered = sorted(items, key=lambda e: e.published or _FAR_FUTURE)
+    for i, item in enumerate(ordered):
+        try:
+            await post_one(item)
+            log.debug("[%s] Posted: %s", item.source, item.title[:80])
+            if i < len(ordered) - 1:
+                await asyncio.sleep(2)
+        except Exception:
+            log.error("Skipping entry %s due to post failure", item.id)
+            if item.url:
+                failed.add(item.url)
+    return failed
 
 
 class DiscordEmbedTarget(Target):
@@ -313,25 +331,17 @@ class DiscordEmbedTarget(Target):
 
     async def push(self, ctx: PushContext, cfg: dict, session) -> set[str]:
         webhook = get_discord_cfg(cfg).get("webhook", "")
-        failed: set[str] = set()
-        items = sorted(ctx.items, key=lambda e: e.published or _FAR_FUTURE)
-        for i, item in enumerate(items):
-            try:
-                await post_to_discord(
-                    webhook,
-                    item,
-                    session,
-                    skip_image=bool(item.meta.get("skip_image")),
-                    color=item.meta.get("color"),
-                )
-                log.debug("[%s] Posted: %s", item.source, item.title[:80])
-                if i < len(items) - 1:
-                    await asyncio.sleep(2)
-            except Exception:
-                log.error("Skipping entry %s due to post failure", item.id)
-                if item.url:
-                    failed.add(item.url)
-        return failed
+
+        async def _post_one(item: Item) -> None:
+            await post_to_discord(
+                webhook,
+                item,
+                session,
+                skip_image=bool(item.meta.get("skip_image")),
+                color=item.meta.get("color"),
+            )
+
+        return await _push_each(ctx.items, _post_one)
 
 
 class DiscordTextTarget(Target):
@@ -362,24 +372,15 @@ class DiscordMarkdownTarget(Target):
         discord_cfg = get_discord_cfg(cfg)
         webhook = discord_cfg.get("webhook", "")
         wrap = discord_cfg.get("wrap", True)
-        failed: set[str] = set()
-        items = sorted(ctx.items, key=lambda e: e.published or _FAR_FUTURE)
-        for i, item in enumerate(items):
+
+        async def _post_one(item: Item) -> None:
             title_part = f"[{item.title}]({item.url})" if item.url else item.title
             source_part = f" [{item.source}]" if item.source else ""
             header = f"## {title_part}{source_part}"
-            body = item.body or ""
-            text = f"{header}\n{body}" if body else header
-            try:
-                await post_text_to_discord(webhook, text, session, wrap=wrap)
-                log.debug("[%s] Posted: %s", item.source, item.title[:80])
-                if i < len(items) - 1:
-                    await asyncio.sleep(2)
-            except Exception:
-                log.error("Skipping entry %s due to post failure", item.id)
-                if item.url:
-                    failed.add(item.url)
-        return failed
+            text = f"{header}\n{item.body}" if item.body else header
+            await post_text_to_discord(webhook, text, session, wrap=wrap)
+
+        return await _push_each(ctx.items, _post_one)
 
 
 class DiscordDigestTarget(Target):

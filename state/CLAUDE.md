@@ -5,9 +5,9 @@ State I/O and schema migrations. State shape canonical reference lives in the ro
 ## `__init__.py`
 
 - `load_state` — parses JSON as-is; absent or `null` `last_run` always means "due now".
-- `save_state` — writes `.old` backup, stamps `_version` and `_last_run`.
-- `_auto_clean` — removes malformed items.
-- `_remove_unknown` — prunes tasks/feeds absent from config.
+- `save_state` — atomic tmp-file replace, stamps `_version` and `_last_run`, sorts tasks/feeds/items for stable diffs.
+- `auto_clean` — removes malformed items.
+- `remove_unknown(state, config)` — prunes tasks/feeds/real-estate urls absent from config (the `--clean` mode is `auto_clean` + `remove_unknown`).
 
 ## `migrate.py` — schema migrations
 

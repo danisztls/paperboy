@@ -9,8 +9,8 @@ import aiohttp
 import pytest
 
 from pull.research import ResearchAction, _linkify_citations, run_research_task
-from tasks import _process_research_task
-from tests.conftest import make_research_cfg
+from tasks import process_research_task
+from tests.conftest import make_ctx, make_research_cfg
 
 WEBHOOK_URL = "https://discord.example/webhook"
 
@@ -188,7 +188,7 @@ async def test_research_stops_when_decision_is_none(fake_adapter, patch_vasco):
 
 
 async def test_pipeline_research_happy(mock_http, fake_adapter, patch_vasco, tmp_path):
-    """End-to-end: _process_research_task posts the answer to Discord + a file."""
+    """End-to-end: process_research_task posts the answer to Discord + a file."""
     mock_http.post(WEBHOOK_URL, status=204)
     patch_vasco(
         FakeVasco(
@@ -206,8 +206,8 @@ async def test_pipeline_research_happy(mock_http, fake_adapter, patch_vasco, tmp
     out_file = tmp_path / "out.md"
     cfg = make_research_cfg(file_path=str(out_file))
     async with aiohttp.ClientSession() as session:
-        result = await _process_research_task(
-            cfg, {"tasks": {}}, session, research_adapter=fake_adapter
+        result = await process_research_task(
+            cfg, {"tasks": {}}, make_ctx(session, research=fake_adapter)
         )
 
     assert result == {"test-research": {"last_run": result["test-research"]["last_run"]}}

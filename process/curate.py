@@ -1,11 +1,13 @@
+import asyncio
 import json
 import logging
 import textwrap
+from dataclasses import replace as dc_replace
 
 from pydantic import BaseModel
 
-from pipeline import MemoryParagraph
-from providers.llm.base import LLMAdapter
+from pipeline import Citation, CurateResult, Item, MemoryParagraph
+from providers.llm.base import LLMAdapter, ModelHandle
 
 log = logging.getLogger(__name__)
 
@@ -151,3 +153,154 @@ async def curate_entries(
     passed = sum(1 for v in parsed.values() if v["pass"])
     log.info("%sFilter: %d/%d items passed", prefix_tag, passed, total)
     return parsed, paragraphs or None
+
+
+def _decode_results(raw_results: dict[str, dict], id_map: dict[int, Item]) -> dict[str, dict]:
+    """Map the LLM's int-id results to {item.id: {pass, reason}} using the int→Item map."""
+    decoded: dict[str, dict] = {}
+    for gid, v in raw_results.items():
+        if gid.isdigit() and (item := id_map.get(int(gid))):
+            decoded[item.id] = v
+    return decoded
+
+
+def _record_trace(
+    collector,
+    trace: dict,
+    *,
+    model: str | None,
+    parsed: list[dict],
+    memory: str | None,
+) -> None:
+    collector.record_filter(
+        model=model,
+        instructions=trace.get("instructions", ""),
+        payload=trace.get("payload", []),
+        raw_response=trace.get("raw_response"),
+        parsed=parsed,
+        memory=memory,
+        model_used=trace.get("model_used"),
+        input_tokens=trace.get("input_tokens"),
+        output_tokens=trace.get("output_tokens"),
+        latency_s=trace.get("latency_s"),
+        reasoning=trace.get("reasoning"),
+        web_search=trace.get("web_search", False),
+    )
+
+
+async def curate_items(
+    all_items: list[Item],
+    curate_cfg: dict,
+    handle: ModelHandle | None,
+    *,
+    language: str = "EN-US",
+    memory_history: list[tuple[str, str]] | None = None,
+    collector=None,
+    analysis: bool = False,
+    task_name: str | None = None,
+) -> CurateResult:
+    """Run the LLM curate filter on items. Returns CurateResult with filter_pass set on each item.
+
+    Items tagged `meta["curate_skip"]` bypass the LLM (they always pass). Fails
+    open: a second LLM failure returns all items as passing.
+    """
+    # Build grouped payload for the LLM (grouped by source) with monotonically
+    # increasing integer IDs across all sources.
+    global_id = 0
+    id_map: dict[int, Item] = {}
+    payload_groups: list[dict] = []
+
+    seen_sources: dict[str, list] = {}
+    for item in all_items:
+        seen_sources.setdefault(item.source, []).append(item)
+
+    for source_name, items in seen_sources.items():
+        group: dict = {"source": source_name, "items": []}
+        for item in items:
+            if item.meta.get("curate_skip"):
+                continue
+            payload_item: dict = {"id": global_id, "title": item.title, "url": item.url}
+            desc = item.summary or item.body
+            if desc:
+                payload_item["description"] = desc
+            group["items"].append(payload_item)
+            id_map[global_id] = item
+            global_id += 1
+        if group["items"]:
+            payload_groups.append(group)
+
+    cite_map: dict[int, Citation] = {
+        gid: Citation(item.source, item.url) for gid, item in id_map.items()
+    }
+
+    if not payload_groups:
+        return CurateResult(items=all_items, memory=None, cite_map=cite_map)
+
+    if handle is None:
+        log.error("LLM curate skipped — curate.model is not configured")
+        return CurateResult(items=all_items, memory=None, cite_map=cite_map)
+
+    trace: dict | None = {} if collector else None
+    effective_cfg = {**curate_cfg, "explain": True} if analysis else curate_cfg
+    kwargs = dict(
+        language=language,
+        memory_history=memory_history,
+        adapter=handle.adapter,
+        extra_instructions=effective_cfg.get("instructions") or None,
+        reasoning=handle.reasoning_for(analysis),
+        trace=trace,
+        task_name=task_name,
+    )
+    llm_return = await curate_entries(payload_groups, effective_cfg, handle.model, **kwargs)
+    if llm_return is None:
+        log.warning("[%s] Filter failed, retrying in 10s", task_name or "?")
+        await asyncio.sleep(10)
+        llm_return = await curate_entries(payload_groups, effective_cfg, handle.model, **kwargs)
+    if llm_return is None:
+        if collector and trace is not None:
+            _record_trace(collector, trace, model=handle.model, parsed=[], memory=None)
+        log.error("Filter failed twice — treating all items as passing")
+        return CurateResult(items=all_items, memory=None, cite_map=cite_map)
+
+    raw_results, memory_paragraphs = llm_return
+
+    if collector and trace is not None:
+        parsed_list = []
+        for gid_str, v in raw_results.items():
+            try:
+                it = id_map.get(int(gid_str))
+            except ValueError:
+                it = None
+            parsed_list.append(
+                {
+                    "id": gid_str,
+                    "source": it.source if it else "?",
+                    "title": it.title if it else "?",
+                    "url": it.url if it else None,
+                    "pass": v["pass"],
+                    "reason": v["reason"],
+                }
+            )
+        memory_for_trace = (
+            "\n\n".join(p.text for p in memory_paragraphs) if memory_paragraphs else None
+        )
+        _record_trace(
+            collector, trace, model=handle.model, parsed=parsed_list, memory=memory_for_trace
+        )
+
+    result_by_item_id = _decode_results(raw_results, id_map)
+
+    annotated = [
+        dc_replace(
+            item,
+            filter_pass=result_by_item_id[item.id]["pass"]
+            if item.id in result_by_item_id
+            else True,
+            filter_reason=result_by_item_id[item.id]["reason"]
+            if item.id in result_by_item_id
+            else "",
+        )
+        for item in all_items
+    ]
+
+    return CurateResult(items=annotated, memory=memory_paragraphs, cite_map=cite_map)

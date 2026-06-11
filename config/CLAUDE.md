@@ -1,19 +1,25 @@
 # config/
 
-Config loading and validation.
+Config loading, primitives/accessors, and validation. `__init__.py` only re-exports; the code lives in three modules:
 
-## `__init__.py`
+## `loader.py`
 
-- `load_config(path)` — reads YAML or JSON.
-- `validate_config(config)` — uses Pydantic models to validate the full config, returns a list of error strings.
-- Global LLM config is split into four top-level sections:
-  - `llm` (API keys only, under `llm.api_key`)
-  - `curate`, `search`, `summarize` (each can carry its own `model` spec)
-- Task/feed-level `curate.model` etc. override the matching global section.
-- Model specs are verbose dicts: `{provider, name, reasoning?}` where provider ∈ `{openai, gemini, anthropic, deepseek}` and reasoning ∈ `{off, low, medium, high}` (absent = off).
+- `load_config(path)` — reads YAML or JSON; YAML supports `!secret <key>` resolved against a sibling `secrets.yaml`.
+
+## `values.py` — primitives and raw-dict accessors
+
+- `Period` dataclass + `parse_period`, `parse_color`.
+- `task_kind` (returns explicit `kind:` key if present; otherwise infers from the `pull` list: `realestate`/`research`/`weather`/`finance` item → that kind, else feeds).
+- Accessors over raw config dicts: `get_feeds` (expands `youtube` sugar), `get_realestate_cfgs`, `get_discord_cfg`, `get_research_cfg`, `get_weather_cfg`, `get_finance_cfg`, `get_file_path`, `get_api_key_for_provider`.
+- `is_youtube_feed_url` (URL-prefix test gating the `youtube:` scope).
+
+## `schema.py` — Pydantic validation
+
+- `validate_config(config)` — validates the full config against `_Config`, returns a list of error strings.
+- Global LLM config is split into four top-level sections: `llm` (API keys only, under `llm.api_key`) and `curate` / `research` / `summarize` (each can carry its own `model` spec). Task/feed-level `curate.model` etc. override the matching global section.
+- Model specs are verbose dicts: `{provider, name, reasoning?}` where provider ∈ `{deepseek, gemini}` and reasoning ∈ `{off, low, medium, high}` (absent = off).
 - The Pydantic `ModelSpec` model validates each entry against `providers/llm/models.json` — unknown model names log a warning; setting `reasoning: low|medium|high` on a model whose registry entry has `thinking: false` is a hard error.
 - `resolve_model_specs(spec)` returns `list[ModelSpec]` from either a single dict or a list (list = fallback chain, tried in order).
-- Other helpers: `parse_color`, `parse_period`, `task_kind` (returns explicit `kind:` key if present; otherwise infers from `pull` list: `realestate` item → realestate, `search` item → search, else feeds), `get_api_key_for_provider`, `get_feeds`, `is_youtube_feed_url` (URL-prefix test gating the `youtube:` scope), `get_discord_cfg`, `get_search_cfg`, `_get_realestate_cfgs`, `get_file_path`.
 
 ## `youtube` pull source — sugar over `feed`
 
@@ -31,10 +37,10 @@ Callers extract each scope's block themselves, because accessors differ — e.g.
 color = parse_color(layer_dict(global_cfg.get("discord"), get_discord_cfg(task_cfg), fc.get("discord")).get("color"))
 ```
 
-Used in `tasks.py` for `ignore`, `skip`, `description`, `title` (all via the `_resolve_scoped` helper), and `discord` (`.color`). `_resolve_scoped(key, …, youtube=bool)` adds the YouTube-scope layers: for a feed where `is_youtube_feed_url(url)` is true it interleaves the global/task `youtube.<key>` blocks at the matching precedence, so a global `youtube.ignore.description` is overridable per task/feed. `language` is the deliberate exception — it is sourced from different parent blocks at different scopes (`curate.language` globally vs feed-level) and doesn't reduce to one keyed merge, so it keeps its own `global_language` threading.
+Used in `tasks/feeds.py` for `ignore`, `skip`, `description`, `title` (all via `resolve_scoped`), and `discord` (`.color`). `resolve_scoped(key, …, youtube=bool)` adds the YouTube-scope layers: for a feed where `is_youtube_feed_url(url)` is true it interleaves the global/task `youtube.<key>` blocks at the matching precedence, so a global `youtube.ignore.description` is overridable per task/feed. `language` is the deliberate exception — it is sourced from different parent blocks at different scopes (`curate.language` globally vs feed-level) and doesn't reduce to one keyed merge, so it stays a `RunContext.language` property read at the curate call site.
 
 ## `config.yaml.template`
 
 Canonical reference for all supported config keys and defaults.
 
-Any change that adds, removes, or renames a config key must also update the Pydantic model here so validation stays in sync.
+Any change that adds, removes, or renames a config key must also update the Pydantic model in `schema.py` so validation stays in sync.

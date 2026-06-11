@@ -13,8 +13,8 @@ A `youtube` pull item is **not** a separate source — `config.get_feeds` expand
 - Entry ID is `entry.link`; entries with no link or older than 7 days are skipped.
 - Bodies are HTML-stripped (BeautifulSoup `get_text`), truncated to 512 chars, Markdown-escaped.
 - `_entry_image` resolves a single image URL from feed metadata only, via fallback chain: `media_thumbnail` → `media_content` (medium `image` or `image/*` type) → `enclosures` (`image/*`) → `links` (`rel=enclosure`, `image/*`). It does not scrape `<img>` tags out of body HTML.
-- `get_new_entries` reads the **already-resolved** `ignore` / `skip` / `description` / `title` blocks off the feed cfg — `tasks._pull_feeds` merges the global→task→feed (+ youtube-scope) layers and injects them. The blocks:
-  - `ignore.description` → drop the body entirely (`body = ""`); else `description` runs `apply_regex` (`remove`/`extract`/`replace`); `title` likewise. `ignore.image` is consumed later (`tasks.py` meta loop), not here.
+- `get_new_entries` reads the **already-resolved** `ignore` / `skip` / `description` / `title` blocks off the feed cfg — `tasks/feeds.py:pull_feeds` merges the global→task→feed (+ youtube-scope) layers and injects them. The blocks:
+  - `ignore.description` → drop the body entirely (`body = ""`); else `description` runs `apply_regex` (`remove`/`extract`/`replace`); `title` likewise. `ignore.image` is consumed later (`tasks/feeds.py` meta loop), not here.
   - `skip.url_contains` → `url_filtered`; `skip.shorts` → `/shorts/` URL check; `skip.livestreams` → livestream check.
 - `skip.shorts` drops unseen entries whose link contains `/shorts/` (YouTube surfaces Shorts as `/shorts/<id>` links; regular videos are `/watch?v=`). Cheap URL check, no fetch — self-gates to YouTube.
 - `skip.livestreams` drops livestreams (live, upcoming, or VODs of past streams). The feed carries no live flag, so `_is_livestream` fetches each new `/watch` page directly via the shared aiohttp session (browser UA) and checks `"isLiveContent":true` — vascod can't serve this since it routes YouTube URLs to its transcript adapter. Runs **last and only on survivors** of the url/shorts filters (`_live_url_set`, concurrent — non-`/watch` URLs are skipped, so it self-gates to YouTube), since it costs one fetch per entry. **Fail-open**: a fetch error or non-200 keeps the entry. One fetch per video ever (the entry is then marked seen).
@@ -24,23 +24,24 @@ A `youtube` pull item is **not** a separate source — `config.get_feeds` expand
 
 ## `research.py` — agentic research over vasco
 
-`run_research_task(task_cfg, instructions, model, *, adapter, reasoning, trace)` runs a bounded agentic loop: each turn the LLM emits a `ResearchAction` (`search` / `read` / `finish`) via `complete_structured`; claudinho executes it against vascod (`_vasco.search` for a real DDG/Tavily SERP, `_vasco.extract` for query-ranked page passages), accumulates sources in `ResearchState`, then synthesizes a final cited answer via `complete`. Bounded by `max_steps` / `max_searches` / `max_reads` (termination guarantees, not cost tracking). Never raises — a vascod `None` is treated as "no results", an LLM `None` ends the loop early and we synthesize from what was gathered. Replaces the old provider-`web_search` search source; retrieval now comes from vasco (cache, escalation, quality scoring). `tasks._process_research_task` wraps it into the pull→push flow.
+`run_research_task(task_cfg, instructions, model, *, adapter, reasoning, trace)` runs a bounded agentic loop: each turn the LLM emits a `ResearchAction` (`search` / `read` / `finish`) via `complete_structured`; claudinho executes it against vascod (`_vasco.search` for a real DDG/Tavily SERP, `_vasco.extract` for query-ranked page passages), accumulates sources in `ResearchState`, then synthesizes a final cited answer via `complete`. Bounded by `max_steps` / `max_searches` / `max_reads` (termination guarantees, not cost tracking). Never raises — a vascod `None` is treated as "no results", an LLM `None` ends the loop early and we synthesize from what was gathered. Replaces the old provider-`web_search` search source; retrieval now comes from vasco (cache, escalation, quality scoring). `tasks/research.py:process_research_task` wraps it into the pull→push flow.
 
 ## `realestate.py` — structured real-estate listings via vasco
 
 - `pull_realestate(realestate_cfgs, seen_per_url)` fetches each configured `url` concurrently via vasco's `realestate` adapter (`fetch_listings` in `process/_vasco.py`), which returns an envelope with normalized listing dicts in `quality.listings`. Returns `dict[url, PullResult | None]`; `None` means that source failed (missing url, fetch error, or vasco didn't route it to the realestate adapter) — caller must preserve its prior state.
 - All parsing lives in vasco now: it picks the per-portal parser by domain (vivareal / corretorromildobinda / barretoimobiliaria), handles transport (HTTP-first, browser escalation, SQLite cache, per-domain strategy), and emits normalized fields (`price`, `area`, `bedrooms`, `images`, …). claudinho only maps listings → `Item` (`_to_item`) and applies policy. `_to_item` absolutizes relative image URLs via `_abs_url` (`urljoin(listing["url"], img)`) — some portals (corretorromildobinda) emit `../imoveis/x.jpeg`, which Discord rejects as a non-absolute embed image URL (HTTP 400). Ideally vasco's parser would emit absolute URLs; this is claudinho's boundary-layer backstop.
-- `_get_realestate_cfgs(task_cfg)` returns the list of `realestate:` items from `pull:`.
 - Policy helpers: `_passes_area_per_room` (drops cramped layouts when `min_area_per_room` is set; unknown area/bedrooms pass through), `_passes_neighborhood` (block-list when `exclude_neighborhoods` is set; drops listings matching an excluded entry via case/accent-insensitive substring match (`_normalize`); listings with no `neighborhood` field pass through), `_format_body`/`_title` (Discord rendering), `max_items` cap on new items per run.
 
-## `weather.py` — Open-Meteo forecast
+## `weather/` — Open-Meteo forecast
 
-`WeatherSource(Source)` fetches forecast JSON (no auth), formats text into `Item.body`, returns a single `Item`. The URL passes `past_days=7` so each response includes the last 7 days of actuals — the smart-mode practical baseline rides on the same HTTP call as the forecast.
+`WeatherSource(Source)` (`weather/__init__.py`, with `build_url`) fetches forecast JSON (no auth), formats text into `Item.body`, returns a single `Item`. The URL passes `past_days=7` so each response includes the last 7 days of actuals — the smart-mode practical baseline rides on the same HTTP call as the forecast.
+
+Package layout: `common.py` (shared helpers + `get_json`), `verbose.py` (default formatter), `smart.py` (signal-only formatter + anomaly machinery + its thresholds), `climate.py` (Archive-API normals).
 
 Two formatter branches by `cfg["kind"]`:
 
-- **Verbose (default)** — `_format_message` → `_format_today` (header + daily summary + hourly rows at 5/7/9…23h) + `_format_forecast` (one compact line per upcoming day).
-- **Smart (`kind: smart`)** — `_format_smart_message` → `_format_smart_today` (header + apparent min/max + conditional UV window + conditional rain window + conditional comfort windows via `_comfort_windows`) + `_format_smart_forecast`. Each upcoming day fires only if rain crosses thresholds OR an apparent-temp / humidity anomaly fires.
+- **Verbose (default)** — `verbose.format_message` → `_format_today` (header + daily summary + hourly rows at 5/7/9…23h) + `_format_forecast` (one compact line per upcoming day).
+- **Smart (`kind: smart`)** — `smart.format_smart_message` → `_format_smart_today` (header + apparent min/max + conditional UV window + conditional rain window + conditional comfort windows via `_comfort_windows` + golden-hour line) + `_format_smart_forecast`. Each upcoming day fires only if rain crosses thresholds OR an apparent-temp / humidity anomaly fires.
 
 ### Anomaly detection
 
@@ -57,27 +58,27 @@ Two formatter branches by `cfg["kind"]`:
 
 ### Climate fetch
 
-- `fetch_climate_normals(cfg, session)` hits the Open-Meteo Archive (5-year ERA5 window for the current calendar month), stores both μ and σ for each metric.
-- `_climate_cache_fresh(cache, now_local)` requires `cache["month"]` to match the current local month **and** `apparent_max_std` to be present — old σ-less caches are silently treated as stale.
+- `climate.fetch_climate_normals(cfg, session)` hits the Open-Meteo Archive (5-year ERA5 window for the current calendar month), stores both μ and σ for each metric.
+- `climate.climate_cache_fresh(cache, now_local)` requires `cache["month"]` to match the current local month **and** `apparent_max_std` to be present — old σ-less caches are silently treated as stale.
 
-### Shared helpers
+### Shared helpers (`common.py`)
 
-`_uv_window`, `_rain_window` (scans all 24h for tighter resolution), `_daily_humidity_mean`, `_wmo_emoji`, `_uv_label`, `_pick_apparent_anomaly` (renders the apparent_max or apparent_min with the largest combined σ-magnitude — `_decision_magnitude`), `_build_url`.
+`uv_window` / `rain_window` (both over `_hourly_window`; rain scans all 24h for tighter resolution), `daily_humidity_mean`, `wmo_emoji`, `uv_label`, `weekday_pt`, `header_line`, `day_value`, `find_today_idx`, `find_hourly_index`, `get_json`. Smart-only: `_pick_apparent_anomaly` (renders the apparent_max or apparent_min with the largest combined σ-magnitude — `_decision_magnitude`).
 
-### Threshold constants
+### Threshold constants (`smart.py`)
 
-Module-level, not config-exposed: `RAIN_TODAY_PROB_MIN`, `RAIN_TODAY_MM_MIN`, `RAIN_NEXT_PROB_MIN`, `RAIN_NEXT_MM_MIN`, `SIGMA_HIST` (2.0), `SIGMA_RECENT` (1.0), `SIGMA_FLOOR` (0.1, avoids divide-by-near-zero), `RECENT_MIN_SAMPLES` (4), `CLIMATE_NORMAL_YEARS` (5).
+Module-level, not config-exposed: `RAIN_TODAY_PROB_MIN`, `RAIN_TODAY_MM_MIN`, `RAIN_NEXT_PROB_MIN`, `RAIN_NEXT_MM_MIN`, `SIGMA_HIST` (3.0), `SIGMA_RECENT` (2.0), `SIGMA_FLOOR` (0.1, avoids divide-by-near-zero), `RECENT_MIN_SAMPLES` (4), comfort/golden-hour knobs; `CLIMATE_NORMAL_YEARS` (5) lives in `climate.py`.
 
 ### State cache
 
-`tasks.py:_process_weather_task` reads `state["tasks"][name]["climate"]` and passes it via `cfg["_climate_normals"]`. Stale cache triggers a fresh fetch that's included in the returned task state slice. Uses `zoneinfo.ZoneInfo` (stdlib); no new dependencies.
+`tasks/weather.py:process_weather_task` reads `state["tasks"][name]["climate"]` and passes it via `cfg["_climate_normals"]`. Stale cache triggers a fresh fetch that's included in the returned task state slice. Uses `zoneinfo.ZoneInfo` (stdlib); no new dependencies.
 
 ## `finance.py` — yfinance quotes
 
 `FinanceSource(Source)`. yfinance is sync — calls run via `asyncio.to_thread`. Cfg sub-key picks the mode:
 
 - **`report`** — `_fetch_quote_with_history` (1y daily history → last close, 5-trading-days-ago close, 52w `High.max` / `Low.min`) per ticker. Renders `### TICKER` H3 followed by a `$price | ±N.N% wk | 52w: $low _(−X%)_ – $high _(+Y%)_` line under a `## 📊 Report — <date>` H2. `$` is prefixed unconditionally (no per-ticker currency lookup); % deltas are italicized.
-- **`monitor`** — `_fetch_quote_fast` (fast_info: last_price). Compares current price against `state["tasks"][name]["tickers"][<t>]["last_price"]` for delta alerts and `band_side` for crossing alerts. Returns zero or one batched `Item` rendered by `_format_monitor` in the same H2/H3 shape as report. Delta + level firing together collapse into one section joined by `|`. State threads bidirectionally through cfg: `_state_tickers` (input), `_new_state_tickers` (output mutated onto cfg, read by `tasks.py:_process_finance_task`).
+- **`monitor`** — `_fetch_quote_fast` (fast_info: last_price). Compares current price against `state["tasks"][name]["tickers"][<t>]["last_price"]` for delta alerts and `band_side` for crossing alerts. Returns zero or one batched `Item` rendered by `_format_monitor` in the same H2/H3 shape as report. Delta + level firing together collapse into one section joined by `|`. State threads bidirectionally through cfg: `_state_tickers` (input), `_new_state_tickers` (output mutated onto cfg, read by `tasks/finance.py:process_finance_task`).
 
 ### Market-hours gating
 

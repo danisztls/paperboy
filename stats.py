@@ -14,7 +14,7 @@ _KIND_STYLES = {
 }
 
 
-def _humanize_minutes(mins: int) -> str:
+def humanize_minutes(mins: int) -> str:
     if mins < 60:
         return f"{mins}m"
     if mins < 1440:
@@ -30,7 +30,7 @@ def _humanize_delta(seconds: float) -> str:
     if abs(seconds) < 30:
         return "now"
     mins = max(1, int(abs(seconds) // 60))
-    label = _humanize_minutes(mins)
+    label = humanize_minutes(mins)
     return f"in {label}" if seconds > 0 else f"{label} ago"
 
 

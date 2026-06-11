@@ -1,11 +1,11 @@
-"""Period parsing + _is_due semantics across duration and calendar units."""
+"""Period parsing + is_due semantics across duration and calendar units."""
 
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from config import Period, parse_period
-from tasks import _is_due
+from tasks import is_due
 
 # --- parse_period ---
 
@@ -57,81 +57,81 @@ def test_period_as_timedelta_only_for_duration():
         parse_period("1d").as_timedelta()
 
 
-# --- _is_due: duration units (unchanged behavior) ---
+# --- is_due: duration units (unchanged behavior) ---
 
 
-def test_is_due_duration_no_last_run():
-    assert _is_due({}, Period(30, "m"), datetime.now(UTC))
+def testis_due_duration_no_last_run():
+    assert is_due({}, Period(30, "m"), datetime.now(UTC))
 
 
-def test_is_due_duration_not_yet_due():
+def testis_due_duration_not_yet_due():
     now = datetime(2026, 5, 17, 12, 0, tzinfo=UTC)
     last = (now - timedelta(minutes=10)).isoformat()
-    assert not _is_due({"last_run": last}, Period(30, "m"), now)
+    assert not is_due({"last_run": last}, Period(30, "m"), now)
 
 
-def test_is_due_duration_is_due():
+def testis_due_durationis_due():
     now = datetime(2026, 5, 17, 12, 0, tzinfo=UTC)
     last = (now - timedelta(minutes=31)).isoformat()
-    assert _is_due({"last_run": last}, Period(30, "m"), now)
+    assert is_due({"last_run": last}, Period(30, "m"), now)
 
 
-def test_is_due_duration_grace_window():
+def testis_due_duration_grace_window():
     # 30m period, 29min59s elapsed — within the 60s grace, should fire
     now = datetime(2026, 5, 17, 12, 0, tzinfo=UTC)
     last = (now - timedelta(seconds=29 * 60 + 59)).isoformat()
-    assert _is_due({"last_run": last}, Period(30, "m"), now)
+    assert is_due({"last_run": last}, Period(30, "m"), now)
 
 
-# --- _is_due: calendar day ---
+# --- is_due: calendar day ---
 
 
-def test_is_due_calendar_day_same_local_date_not_due():
+def testis_due_calendar_day_same_local_date_not_due():
     # last run earlier today (local) — same calendar day, not due
     now = datetime(2026, 5, 17, 23, 0, tzinfo=UTC).astimezone()
     last = (now - timedelta(hours=6)).isoformat()
-    assert not _is_due({"last_run": last}, Period(1, "d"), now)
+    assert not is_due({"last_run": last}, Period(1, "d"), now)
 
 
-def test_is_due_calendar_day_yesterday_is_due():
+def testis_due_calendar_day_yesterdayis_due():
     now = datetime(2026, 5, 17, 6, 0, tzinfo=UTC).astimezone()
     last = (now - timedelta(days=1)).isoformat()
-    assert _is_due({"last_run": last}, Period(1, "d"), now)
+    assert is_due({"last_run": last}, Period(1, "d"), now)
 
 
-def test_is_due_calendar_day_just_after_midnight_is_due():
+def testis_due_calendar_day_just_after_midnightis_due():
     # 30 minutes after local midnight — even though wall-clock elapsed < 24h,
     # the local date has advanced, so 1d fires.
     now_local = datetime(2026, 5, 17, 0, 30).astimezone()
     last_local = datetime(2026, 5, 16, 23, 30).astimezone()
-    assert _is_due({"last_run": last_local.isoformat()}, Period(1, "d"), now_local)
+    assert is_due({"last_run": last_local.isoformat()}, Period(1, "d"), now_local)
 
 
-def test_is_due_calendar_2d_one_day_gap_not_due():
+def testis_due_calendar_2d_one_day_gap_not_due():
     now = datetime(2026, 5, 17, 6, 0, tzinfo=UTC).astimezone()
     last = (now - timedelta(days=1)).isoformat()
-    assert not _is_due({"last_run": last}, Period(2, "d"), now)
+    assert not is_due({"last_run": last}, Period(2, "d"), now)
 
 
-def test_is_due_calendar_2d_two_day_gap_is_due():
+def testis_due_calendar_2d_two_day_gapis_due():
     now = datetime(2026, 5, 17, 6, 0, tzinfo=UTC).astimezone()
     last = (now - timedelta(days=2)).isoformat()
-    assert _is_due({"last_run": last}, Period(2, "d"), now)
+    assert is_due({"last_run": last}, Period(2, "d"), now)
 
 
-# --- _is_due: calendar week (ISO, Monday-anchored) ---
+# --- is_due: calendar week (ISO, Monday-anchored) ---
 
 
-def test_is_due_calendar_week_same_iso_week_not_due():
+def testis_due_calendar_week_same_iso_week_not_due():
     # 2026-05-17 is a Sunday; 2026-05-11 is the Monday of that ISO week.
     # last run on Monday, now on Sunday — same week, not due.
     now = datetime(2026, 5, 17, 6, 0, tzinfo=UTC).astimezone()
     last = datetime(2026, 5, 11, 6, 0, tzinfo=UTC).isoformat()
-    assert not _is_due({"last_run": last}, Period(1, "w"), now)
+    assert not is_due({"last_run": last}, Period(1, "w"), now)
 
 
-def test_is_due_calendar_week_previous_week_is_due():
+def testis_due_calendar_week_previous_weekis_due():
     # last run in the previous ISO week — due.
     now = datetime(2026, 5, 18, 6, 0, tzinfo=UTC).astimezone()  # Monday of next week
     last = datetime(2026, 5, 17, 23, 0, tzinfo=UTC).isoformat()  # Sunday of prior week
-    assert _is_due({"last_run": last}, Period(1, "w"), now)
+    assert is_due({"last_run": last}, Period(1, "w"), now)
