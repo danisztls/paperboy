@@ -51,8 +51,8 @@ class PullResult:
 
 
 @dataclass
-class FilterResult:
-    """Output of the LLM filter step."""
+class CurateResult:
+    """Output of the LLM curate step."""
 
     items: list[Item]  # all input items with filter_pass/filter_reason set
     memory: list[MemoryParagraph] | None  # new memory briefing (for digest targets)

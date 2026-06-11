@@ -4,8 +4,8 @@ import json
 
 import aiohttp
 
-from tasks import _process_feed_task
-from tests.conftest import load_fixture, make_curate_cfg
+from tasks import process_feed_task
+from tests.conftest import load_fixture, make_ctx, make_curate_cfg
 
 FEED_URL = "https://feed.example/rss"
 WEBHOOK_URL = "https://discord.example/webhook"
@@ -46,8 +46,8 @@ async def test_digest_cite_map(mock_http, fake_adapter, tmp_path):
     )
 
     async with aiohttp.ClientSession() as session:
-        result = await _process_feed_task(
-            cfg, {"tasks": {}}, session, curate_adapter=fake_adapter, summarize_adapter=fake_adapter
+        result = await process_feed_task(
+            cfg, {"tasks": {}}, make_ctx(session, curate=fake_adapter, summarize=fake_adapter)
         )
 
     body = out_file.read_text()
@@ -106,12 +106,10 @@ async def test_digest_sections(mock_http, fake_adapter, tmp_path):
     )
 
     async with aiohttp.ClientSession() as session:
-        await _process_feed_task(
+        await process_feed_task(
             cfg,
             {"tasks": {}},
-            session,
-            curate_adapter=fake_adapter,
-            summarize_adapter=fake_adapter,
+            make_ctx(session, curate=fake_adapter, summarize=fake_adapter),
         )
 
     # File: section headings render as ### markdown headings.

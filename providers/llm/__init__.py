@@ -3,7 +3,7 @@ from typing import TypeVar
 
 from pydantic import BaseModel
 
-from providers.llm.base import LLMAdapter, LLMResponse
+from providers.llm.base import LLMAdapter, LLMResponse, ModelHandle
 
 log = logging.getLogger(__name__)
 
@@ -108,4 +108,28 @@ def get_adapter(provider: str | None = None, api_key: str | None = None) -> LLMA
     return DeepSeekAdapter(api_key=api_key)
 
 
-__all__ = ["FallbackAdapter", "LLMAdapter", "LLMResponse", "get_adapter"]
+def build_model_handle(specs: list, api_keys: dict | None) -> ModelHandle | None:
+    """Build a ModelHandle from a list of `ModelSpec`, or None when the list is empty.
+
+    A single spec yields the adapter plus its model name and reasoning level.
+    Multiple specs yield a FallbackAdapter whose entries each carry their own
+    model/reasoning; the handle's own model/reasoning stay None.
+    """
+    keys = api_keys or {}
+    if not specs:
+        return None
+    if len(specs) == 1:
+        s = specs[0]
+        return ModelHandle(get_adapter(s.provider, keys.get(s.provider)), s.name, s.reasoning)
+    entries = [(get_adapter(s.provider, keys.get(s.provider)), s.name, s.reasoning) for s in specs]
+    return ModelHandle(FallbackAdapter(entries))
+
+
+__all__ = [
+    "FallbackAdapter",
+    "LLMAdapter",
+    "LLMResponse",
+    "ModelHandle",
+    "build_model_handle",
+    "get_adapter",
+]

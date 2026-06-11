@@ -1,6 +1,6 @@
 """Layered config resolution: merge global → task → feed config blocks.
 
-Several config blocks (`filter`, `image`, `discord`, `youtube`) can be set at more
+Several config blocks (`ignore`, `skip`, `description`, `title`, `discord`) can be set at more
 than one scope — globally, per task, and per feed — with the more specific scope
 overriding the broader one per leaf key. `layer_dict` is the single primitive for
 that resolution: pass the already-extracted blocks in low→high precedence order and
@@ -31,3 +31,19 @@ def layer_dict(*blocks: dict | None) -> dict:
         if isinstance(block, dict):
             merged.update(block)
     return merged
+
+
+def resolve_scoped(
+    key: str, global_cfg: dict, task_cfg: dict, feed_cfg: dict, *, youtube: bool
+) -> dict:
+    """layer_dict a scoped block (global→task→feed) by `key`. When `youtube` is True (feed is a
+    YouTube feed), interleave the global/task `youtube.<key>` contributions at the matching scope,
+    so a global `youtube.ignore.description` is overridable per task/feed."""
+    blocks: list = [global_cfg.get(key)]
+    if youtube:
+        blocks.append((global_cfg.get("youtube") or {}).get(key))
+    blocks.append(task_cfg.get(key))
+    if youtube:
+        blocks.append((task_cfg.get("youtube") or {}).get(key))
+    blocks.append(feed_cfg.get(key))
+    return layer_dict(*blocks)

@@ -1,7 +1,7 @@
 import os
 import time
 
-from main import _prune_old_files
+from main import prune_old_files
 
 
 def _touch(path, age_days):
@@ -11,13 +11,13 @@ def _touch(path, age_days):
     os.utime(path, (mt, mt))
 
 
-def test_prune_old_files_removes_files_past_cutoff(tmp_path):
+def testprune_old_files_removes_files_past_cutoff(tmp_path):
     _touch(tmp_path / "fresh.log", age_days=1)
     _touch(tmp_path / "old.log", age_days=45)
     _touch(tmp_path / "task-a" / "old.jsonl", age_days=60)
     _touch(tmp_path / "task-a" / "fresh.jsonl", age_days=5)
 
-    removed = _prune_old_files(tmp_path, days=30)
+    removed = prune_old_files(tmp_path, days=30)
 
     assert removed == 2
     assert (tmp_path / "fresh.log").exists()
@@ -26,11 +26,11 @@ def test_prune_old_files_removes_files_past_cutoff(tmp_path):
     assert not (tmp_path / "task-a" / "old.jsonl").exists()
 
 
-def test_prune_old_files_zero_days_disables(tmp_path):
+def testprune_old_files_zero_days_disables(tmp_path):
     _touch(tmp_path / "old.log", age_days=400)
-    assert _prune_old_files(tmp_path, days=0) == 0
+    assert prune_old_files(tmp_path, days=0) == 0
     assert (tmp_path / "old.log").exists()
 
 
-def test_prune_old_files_missing_dir(tmp_path):
-    assert _prune_old_files(tmp_path / "nonexistent", days=30) == 0
+def testprune_old_files_missing_dir(tmp_path):
+    assert prune_old_files(tmp_path / "nonexistent", days=30) == 0

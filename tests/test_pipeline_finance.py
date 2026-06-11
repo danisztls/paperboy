@@ -14,8 +14,8 @@ import pytest
 
 import pull.finance as finance
 from pull.finance import Quote, _infer_exchange, _is_market_open
-from tasks import _process_finance_task
-from tests.conftest import WEBHOOK_URL
+from tasks import process_finance_task
+from tests.conftest import WEBHOOK_URL, make_ctx
 
 
 def _quote(ticker, price, *, week_ago=None, low=None, high=None):
@@ -78,7 +78,7 @@ async def test_report_happy_path(monkeypatch, mock_http):
 
     cfg = _report_cfg(stocks=["AAPL", "MSFT"])
     async with aiohttp.ClientSession() as session:
-        result = await _process_finance_task(cfg, {}, session)
+        result = await process_finance_task(cfg, {}, make_ctx(session))
 
     assert "test-finance-report" in result
     assert result["test-finance-report"]["last_run"]
@@ -112,7 +112,7 @@ async def test_report_missing_data_renders_dash(monkeypatch, mock_http):
 
     cfg = _report_cfg(stocks=["AAPL", "BROKEN"])
     async with aiohttp.ClientSession() as session:
-        result = await _process_finance_task(cfg, {}, session)
+        result = await process_finance_task(cfg, {}, make_ctx(session))
 
     assert "test-finance-report" in result
     body = _get_posted_body(mock_http)
@@ -126,7 +126,7 @@ async def test_report_all_fetches_failed_no_post(monkeypatch, mock_http):
 
     cfg = _report_cfg(stocks=["AAPL", "MSFT"])
     async with aiohttp.ClientSession() as session:
-        result = await _process_finance_task(cfg, {}, session)
+        result = await process_finance_task(cfg, {}, make_ctx(session))
 
     assert result == {}
     posts = [c for c in mock_http.requests if c[0] == "POST"]
@@ -149,7 +149,7 @@ async def test_monitor_first_run_silent_records_baseline(monkeypatch, mock_http,
         ]
     )
     async with aiohttp.ClientSession() as session:
-        result = await _process_finance_task(cfg, {}, session)
+        result = await process_finance_task(cfg, {}, make_ctx(session))
 
     # First run: no previous baseline → no alerts, state populated, no Discord post.
     posts = [c for c in mock_http.requests if c[0] == "POST"]
@@ -176,7 +176,7 @@ async def test_monitor_delta_fires_after_baseline(monkeypatch, mock_http, market
         }
     }
     async with aiohttp.ClientSession() as session:
-        result = await _process_finance_task(cfg, state, session)
+        result = await process_finance_task(cfg, state, make_ctx(session))
 
     body = _get_posted_body(mock_http)
     assert "## 🚨 " in body  # H2 with emoji + date — no task name
@@ -202,7 +202,7 @@ async def test_monitor_delta_below_threshold_silent(monkeypatch, mock_http, mark
         }
     }
     async with aiohttp.ClientSession() as session:
-        result = await _process_finance_task(cfg, state, session)
+        result = await process_finance_task(cfg, state, make_ctx(session))
 
     posts = [c for c in mock_http.requests if c[0] == "POST"]
     assert len(posts) == 0
@@ -227,7 +227,7 @@ async def test_monitor_band_crossing_fires_once(monkeypatch, mock_http, market_o
         }
     }
     async with aiohttp.ClientSession() as session:
-        r1 = await _process_finance_task(cfg, state, session)
+        r1 = await process_finance_task(cfg, state, make_ctx(session))
 
     body1 = _get_posted_body(mock_http)
     assert "### NVDA" in body1
@@ -239,7 +239,7 @@ async def test_monitor_band_crossing_fires_once(monkeypatch, mock_http, market_o
     _patch_fast(monkeypatch, {"NVDA": _quote("NVDA", 960.10)})
     state2 = {"tasks": {"test-finance-monitor": r1["test-finance-monitor"]}}
     async with aiohttp.ClientSession() as session:
-        r2 = await _process_finance_task(cfg, state2, session)
+        r2 = await process_finance_task(cfg, state2, make_ctx(session))
 
     # Only one POST happened total
     posts = [c for c in mock_http.requests if c[0] == "POST"]
@@ -333,7 +333,7 @@ async def test_monitor_skips_closed_market(monkeypatch, mock_http):
         }
     }
     async with aiohttp.ClientSession() as session:
-        result = await _process_finance_task(cfg, state, session)
+        result = await process_finance_task(cfg, state, make_ctx(session))
 
     # Only BTC-USD was fetched; AAPL skipped entirely.
     assert fetch_calls == ["BTC-USD"]

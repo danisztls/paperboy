@@ -3,6 +3,7 @@ import logging
 import pathlib
 from datetime import UTC, datetime
 
+from config import get_feeds, get_realestate_cfgs
 from state.migrate import CURRENT_VERSION
 
 log = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ def save_state(path: pathlib.Path, state: dict) -> None:
     tmp.replace(path)  # atomic on POSIX
 
 
-def _auto_clean(state: dict) -> None:
+def auto_clean(state: dict) -> None:
     """Remove malformed entries from state. Run manually via --clean."""
     removed = 0
     for task_name, task_state in state.get("tasks", {}).items():
@@ -85,17 +86,22 @@ def _auto_clean(state: dict) -> None:
     log.info("Clean: removed %d malformed entries", removed)
 
 
-def _remove_unknown(
-    state: dict,
-    known_tasks: set,
-    known_feeds: dict,
-    known_realestate_urls: dict | None = None,
-) -> None:
+def remove_unknown(state: dict, config: dict) -> None:
     """Remove state for tasks/feeds/real-estate sources no longer present in config.
 
-    `known_realestate_urls` maps task_name → set of real-estate urls; the `__legacy__`
-    bucket is always preserved (it has no config representation by design).
+    The real-estate `__legacy__` bucket is always preserved (it has no config
+    representation by design).
     """
+    named = [t for t in config.get("tasks", []) if t.get("name")]
+    known_tasks = {t["name"] for t in named}
+    known_feeds = {
+        t["name"]: {f["url"] for f in get_feeds(t) if f.get("url")} for t in named if t.get("pull")
+    }
+    known_realestate_urls = {
+        t["name"]: {sc["url"] for sc in get_realestate_cfgs(t) if sc.get("url")}
+        for t in named
+        if t.get("pull")
+    }
     tasks_state = state.get("tasks", {})
 
     stale_tasks = [name for name in list(tasks_state) if name not in known_tasks]
@@ -110,7 +116,7 @@ def _remove_unknown(
             log.warning("Clean: removing state for unknown feed %s in task %r", url[:80], task_name)
             del feeds_state[url]
 
-    for task_name, urls in (known_realestate_urls or {}).items():
+    for task_name, urls in known_realestate_urls.items():
         realestate_state = tasks_state.get(task_name, {}).get("realestate", {})
         stale = [u for u in list(realestate_state) if u != "__legacy__" and u not in urls]
         for url in stale:

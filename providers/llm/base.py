@@ -84,3 +84,24 @@ class LLMAdapter(ABC):
         Returns None on provider failure or validation failure.
         """
         ...
+
+
+@dataclass(frozen=True)
+class ModelHandle:
+    """A ready-to-call (adapter, model, default reasoning) bundle.
+
+    Built once per config section (curate/summarize/research) by
+    `providers.llm.build_model_handle` and passed around instead of three
+    loose parameters. `model`/`reasoning` are None for a fallback chain —
+    each chain entry carries its own.
+    """
+
+    adapter: LLMAdapter
+    model: str | None = None
+    reasoning: str | bool | dict | None = None
+
+    def reasoning_for(self, analysis: bool) -> bool | str | dict:
+        """`--analysis` forces reasoning on; otherwise honor the per-spec default."""
+        if analysis:
+            return True
+        return self.reasoning or False

@@ -15,12 +15,42 @@ from aioresponses import aioresponses
 from pydantic import BaseModel
 
 from process.curate import CurateParagraph, FilterDecisions, FilterItem
-from providers.llm.base import LLMAdapter, LLMResponse
+from providers.llm.base import LLMAdapter, LLMResponse, ModelHandle
+from tasks import LLMHandles, RunContext
 
 WEBHOOK_URL = "https://discord.example/webhook"
 _FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
 T = TypeVar("T", bound=BaseModel)
+
+
+def make_ctx(
+    session,
+    *,
+    curate: LLMAdapter | None = None,
+    summarize: LLMAdapter | None = None,
+    research: LLMAdapter | None = None,
+    curate_reasoning=None,
+    config: dict | None = None,
+    analysis: bool = False,
+    collector=None,
+) -> RunContext:
+    """Build a RunContext for direct process_*_task calls, wrapping fake adapters."""
+
+    def _handle(adapter, reasoning=None):
+        return ModelHandle(adapter, reasoning=reasoning) if adapter is not None else None
+
+    return RunContext(
+        session=session,
+        config=config or {},
+        llm=LLMHandles(
+            curate=_handle(curate, curate_reasoning),
+            summarize=_handle(summarize),
+            research=_handle(research),
+        ),
+        collector=collector,
+        analysis=analysis,
+    )
 
 
 def load_fixture(name: str) -> bytes:

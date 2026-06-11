@@ -48,27 +48,27 @@ def test_layer_dict_does_not_mutate_inputs():
 
 
 def test_resolve_scoped_youtube_gate_applies_only_to_youtube_feeds():
-    from tasks import _resolve_scoped
+    from config.scope import resolve_scoped
 
     g = {"ignore": {"image": True}, "youtube": {"ignore": {"description": True}}}
     yt_fc = {"url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCx"}
     other_fc = {"url": "https://example.com/rss"}
     # YouTube feed: the global youtube.ignore.description merges in alongside the plain ignore.image
-    assert _resolve_scoped("ignore", g, {}, yt_fc, youtube=True) == {
+    assert resolve_scoped("ignore", g, {}, yt_fc, youtube=True) == {
         "image": True,
         "description": True,
     }
     # Non-YouTube feed: the youtube scope is not applied
-    assert _resolve_scoped("ignore", g, {}, other_fc, youtube=False) == {"image": True}
+    assert resolve_scoped("ignore", g, {}, other_fc, youtube=False) == {"image": True}
 
 
 def test_resolve_scoped_feed_overrides_youtube_scope():
     """A per-channel `ignore.description: false` opts out of a global youtube lever."""
-    from tasks import _resolve_scoped
+    from config.scope import resolve_scoped
 
     g = {"youtube": {"ignore": {"description": True}}}
     fc = {
         "url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCx",
         "ignore": {"description": False},
     }
-    assert _resolve_scoped("ignore", g, {}, fc, youtube=True) == {"description": False}
+    assert resolve_scoped("ignore", g, {}, fc, youtube=True) == {"description": False}

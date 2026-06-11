@@ -5,9 +5,9 @@ from datetime import date
 
 import aiohttp
 
-from pull.weather import _build_url
-from tasks import _process_weather_task
-from tests.conftest import WEBHOOK_URL
+from pull.weather import build_url
+from tasks import process_weather_task
+from tests.conftest import WEBHOOK_URL, make_ctx
 
 TIMEZONE = "America/Sao_Paulo"
 
@@ -88,13 +88,13 @@ async def test_weather_happy_path(mock_http):
     today_str = date.today().isoformat()
     cfg = make_weather_cfg()
     weather_cfg = cfg["pull"][0]["weather"]
-    url = _build_url(weather_cfg)
+    url = build_url(weather_cfg)
 
     mock_http.get(url, payload=make_payload(today_str), status=200)
     mock_http.post(WEBHOOK_URL, status=204)
 
     async with aiohttp.ClientSession() as session:
-        result = await _process_weather_task(cfg, {}, session)
+        result = await process_weather_task(cfg, {}, make_ctx(session))
 
     assert "test-weather" in result
     assert result["test-weather"]["last_run"]
@@ -115,12 +115,12 @@ async def test_weather_happy_path(mock_http):
 
 async def test_weather_api_failure(mock_http):
     cfg = make_weather_cfg()
-    url = _build_url(cfg["pull"][0]["weather"])
+    url = build_url(cfg["pull"][0]["weather"])
 
     mock_http.get(url, status=500)
 
     async with aiohttp.ClientSession() as session:
-        result = await _process_weather_task(cfg, {}, session)
+        result = await process_weather_task(cfg, {}, make_ctx(session))
 
     assert result == {}
     posts = [c for c in mock_http.requests if c[0] == "POST"]
@@ -131,29 +131,29 @@ async def test_weather_post_failure(mock_http):
     """Discord 400 is logged but does not prevent state from being saved (matches search task behavior)."""
     today_str = date.today().isoformat()
     cfg = make_weather_cfg()
-    url = _build_url(cfg["pull"][0]["weather"])
+    url = build_url(cfg["pull"][0]["weather"])
 
     mock_http.get(url, payload=make_payload(today_str), status=200)
     mock_http.post(WEBHOOK_URL, status=400)
 
     async with aiohttp.ClientSession() as session:
-        result = await _process_weather_task(cfg, {}, session)
+        result = await process_weather_task(cfg, {}, make_ctx(session))
 
     # DiscordTextTarget.push() handles errors internally (logs, returns failed set, does not raise)
-    # so the task saves last_run — consistent with how _process_research_task behaves
+    # so the task saves last_run — consistent with how process_research_task behaves
     assert "test-weather" in result
 
 
 async def test_weather_uv_below_threshold(mock_http):
     today_str = date.today().isoformat()
     cfg = make_weather_cfg(uv_warn_threshold=6)
-    url = _build_url(cfg["pull"][0]["weather"])
+    url = build_url(cfg["pull"][0]["weather"])
 
     mock_http.get(url, payload=make_payload(today_str, uv_at_noon=2.0), status=200)
     mock_http.post(WEBHOOK_URL, status=204)
 
     async with aiohttp.ClientSession() as session:
-        await _process_weather_task(cfg, {}, session)
+        await process_weather_task(cfg, {}, make_ctx(session))
 
     body = _get_posted_body(mock_http)
     assert "🔆 UV" not in body
@@ -163,12 +163,12 @@ async def test_weather_uv_below_threshold(mock_http):
 async def test_weather_analysis_dry_run(mock_http):
     today_str = date.today().isoformat()
     cfg = make_weather_cfg()
-    url = _build_url(cfg["pull"][0]["weather"])
+    url = build_url(cfg["pull"][0]["weather"])
 
     mock_http.get(url, payload=make_payload(today_str), status=200)
 
     async with aiohttp.ClientSession() as session:
-        result = await _process_weather_task(cfg, {}, session, analysis=True)
+        result = await process_weather_task(cfg, {}, make_ctx(session, analysis=True))
 
     assert result == {}
     posts = [c for c in mock_http.requests if c[0] == "POST"]
@@ -178,7 +178,7 @@ async def test_weather_analysis_dry_run(mock_http):
 async def test_weather_missing_hourly_slot(mock_http):
     today_str = date.today().isoformat()
     cfg = make_weather_cfg()
-    url = _build_url(cfg["pull"][0]["weather"])
+    url = build_url(cfg["pull"][0]["weather"])
 
     payload = make_payload(today_str)
     # Remove the 9h slot from today's hourly data
@@ -191,7 +191,7 @@ async def test_weather_missing_hourly_slot(mock_http):
     mock_http.post(WEBHOOK_URL, status=204)
 
     async with aiohttp.ClientSession() as session:
-        await _process_weather_task(cfg, {}, session)
+        await process_weather_task(cfg, {}, make_ctx(session))
 
     body = _get_posted_body(mock_http)
     assert "**07h**:" in body
@@ -203,13 +203,13 @@ async def test_weather_forecast_truncation(mock_http):
     """forecast_days=10 but API only returns 3 days — should not crash."""
     today_str = date.today().isoformat()
     cfg = make_weather_cfg(forecast_days=10)
-    url = _build_url(cfg["pull"][0]["weather"])
+    url = build_url(cfg["pull"][0]["weather"])
 
     mock_http.get(url, payload=make_payload(today_str, forecast_days=3), status=200)
     mock_http.post(WEBHOOK_URL, status=204)
 
     async with aiohttp.ClientSession() as session:
-        result = await _process_weather_task(cfg, {}, session)
+        result = await process_weather_task(cfg, {}, make_ctx(session))
 
     assert "test-weather" in result
 
@@ -218,7 +218,7 @@ async def test_weather_precip_hidden(mock_http):
     """Precipitation is hidden when both probability and volume are below threshold."""
     today_str = date.today().isoformat()
     cfg = make_weather_cfg()
-    url = _build_url(cfg["pull"][0]["weather"])
+    url = build_url(cfg["pull"][0]["weather"])
 
     payload = make_payload(today_str)
     # Set precip below both thresholds in daily
@@ -232,7 +232,7 @@ async def test_weather_precip_hidden(mock_http):
     mock_http.post(WEBHOOK_URL, status=204)
 
     async with aiohttp.ClientSession() as session:
-        await _process_weather_task(cfg, {}, session)
+        await process_weather_task(cfg, {}, make_ctx(session))
 
     body = _get_posted_body(mock_http)
     lines = body.split("\n")
