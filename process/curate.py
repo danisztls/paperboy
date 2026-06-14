@@ -95,6 +95,7 @@ async def curate_entries(
 
         **Step 2 — Deduplicate.**
         - Compare each item against the already-published digests above. Fail any item whose core story was already sent to readers and that does not introduce a significant new development (new facts, updated numbers, meaningful consequence). Use reason: 'already covered'. The goal is that readers never see the same story twice without a genuine update.
+        - Escalating-trajectory bar: the more times a trajectory has ALREADY appeared across the digests above, the higher the bar for sending another instalment. For a trajectory seen once, a concrete update may pass; for one covered repeatedly, mere incremental movement — another number, another routine step, another day of the same trend — is 'more of the same' and should fail with reason: 'trajectory already covered'. Pass it only when the new development changes the reader's picture: a reversal, a resolution, a turning point, a newly-realised consequence, or a structural rupture. Judge the trajectory by what the reader already knows from prior digests, not by whether any single number moved.
         - Within this batch, if multiple items cover the same event, keep only the one(s) that contribute the most relevant information; fail the rest with reason: 'duplicate within batch'.
 
         **Step 3 — Write memory.** Populate the `memory` array with a factual news briefing in {language}, one object per story. Each object has:
