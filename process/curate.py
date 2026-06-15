@@ -287,14 +287,13 @@ async def curate_entries_agentic(
                 step,
             )
             break
-        steps_log.append(
-            {
-                "step": step,
-                "kind": action.kind,
-                "rationale": action.rationale,
-                "queries": list(action.queries),
-            }
-        )
+        step_rec = {
+            "step": step,
+            "kind": action.kind,
+            "rationale": action.rationale,
+            "queries": list(action.queries),
+        }
+        steps_log.append(step_rec)
         log.debug("[%s] curate step %d: %s — %s", task_name, step, action.kind, action.rationale)
         if action.kind == "finish":
             break
@@ -311,6 +310,20 @@ async def curate_entries_agentic(
             results = await asyncio.gather(
                 *[_vasco.search(q, max_results=max_results) for q in todo]
             )
+            step_rec["results"] = [
+                {
+                    "query": q,
+                    "hits": [
+                        {
+                            "title": (r.get("title") or "")[:120],
+                            "snippet": (r.get("snippet") or "")[:160],
+                            "url": r.get("url") or "",
+                        }
+                        for r in (res or [])
+                    ],
+                }
+                for q, res in zip(todo, results)
+            ]
             blocks = [_format_search_results(q, r) for q, r in zip(todo, results)]
             convo.append({"role": "user", "content": "\n\n".join(blocks) + f"\n\n{research_nudge}"})
         else:

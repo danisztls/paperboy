@@ -85,6 +85,7 @@ def _render_summarize(console, call: LLMCall) -> None:
 
 def _render_filter(console, call: LLMCall) -> None:
     from rich import box
+    from rich.console import Group
     from rich.markup import escape
     from rich.panel import Panel
     from rich.table import Table
@@ -115,7 +116,44 @@ def _render_filter(console, call: LLMCall) -> None:
             Text(str(item.get("reason", ""))[:200]),
         )
 
+    # Corroboration trajectory (agentic path only): what it searched and saw.
+    body_parts: list = []
+    if call.steps:
+        traj = Text()
+        traj.append("corroboration\n", style="bold cyan")
+        for s in call.steps:
+            if s.get("kind") == "search":
+                results = s.get("results") or []
+                if not results:
+                    traj.append(
+                        f"  🔎 {', '.join(s.get('queries', []))}  (no results)\n", style="dim"
+                    )
+                for res in results:
+                    hits = res.get("hits") or []
+                    traj.append("  🔎 ", style="cyan")
+                    traj.append(f"{res.get('query', '')}", style="cyan")
+                    traj.append(f"  ({len(hits)} hits)\n", style="dim")
+                    for h in hits[:3]:
+                        traj.append(f"      • {str(h.get('title', ''))[:72]}\n", style="dim")
+            else:
+                traj.append(
+                    f"  ⏹ {s.get('kind', '?')}: {str(s.get('rationale', ''))[:80]}\n", style="dim"
+                )
+        body_parts.append(traj)
+    body_parts.append(table if parsed else Text("(no items)", style="dim"))
+    body = Group(*body_parts) if len(body_parts) > 1 else body_parts[0]
+
+    title = f"[bold]LLM Filter[/bold]  [dim]model={escape(str(call.model or ''))}  items={n_items}"
+    if call.cache_hit_tokens is not None:
+        hit = call.cache_hit_tokens or 0
+        total = hit + (call.cache_miss_tokens or 0)
+        if total:
+            title += f"  cache={hit}/{total} ({100 * hit // total}%)"
+    title += "[/dim]"
+
     footer_lines: list[str] = []
+    if call.reasoning:
+        footer_lines.append(f"[dim]reasoning: {len(call.reasoning)} chars[/dim]")
     if call.instructions:
         footer_lines.append(f"[dim]instructions:[/dim] {escape(str(call.instructions)[:200])}")
     if call.memory:
@@ -123,11 +161,8 @@ def _render_filter(console, call: LLMCall) -> None:
 
     console.print(
         Panel(
-            table if parsed else Text("(no items)", style="dim"),
-            title=(
-                f"[bold]LLM Filter[/bold]  "
-                f"[dim]model={escape(str(call.model or ''))}  items={n_items}[/dim]"
-            ),
+            body,
+            title=title,
             subtitle="\n".join(footer_lines) if footer_lines else None,
             border_style="yellow",
             expand=False,
