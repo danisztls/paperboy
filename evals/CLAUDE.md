@@ -16,7 +16,7 @@ Reads a JSONL produced by `RunCapture` and re-issues each captured call against 
 
 **Common keys:** `task`, `call_type` (`filter` | `summarize` | `research`), `ts`, `model_used`, `instructions`, `response`, `input_tokens`, `output_tokens`, `latency_s`, `reasoning`. (`research` records carry only the trajectory — no tokens/latency/cost.)
 
-**`filter` adds:** `payload` (list of source groups with items, each item has `id`, `title`, `url`, optional `description`), `parsed` (per-item `id`, `source`, `title`, `url`, `pass`, `reason`), `memory`, `source_groups_count`, `items_count`, `passing_count`, `model` (configured spec).
+**`filter` adds:** `payload` (list of source groups with items, each item has `id`, `title`, `url`, optional `description`), `parsed` (per-item `id`, `source`, `title`, `url`, `pass`, `reason`), `memory`, `source_groups_count`, `items_count`, `passing_count`, `model` (configured spec), `steps` (the corroboration trajectory when `curate.corroborate` is on — per-step `kind`/`rationale`/`queries`; empty otherwise). Common keys `cache_hit_tokens`/`cache_miss_tokens` report prompt-cache prefix reuse (populated on the agentic path, where the `[criteria+items]` prefix is reused across turns).
 
 **`summarize` adds:** `input` (text sent to the LLM), `item_id`, `item_title`, `item_url`, `fetched_body`.
 
