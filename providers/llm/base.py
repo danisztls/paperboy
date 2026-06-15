@@ -89,6 +89,7 @@ class LLMAdapter(ABC):
         *,
         model: str | None = None,
         instructions: str | None = None,
+        messages: list[dict] | None = None,
         reasoning: bool | str | dict = False,
         trace: dict | None = None,
     ) -> T | None:

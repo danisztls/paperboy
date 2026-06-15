@@ -137,6 +137,7 @@ class FakeLLMAdapter(LLMAdapter):
         *,
         model: str | None = None,
         instructions: str | None = None,
+        messages: list[dict] | None = None,
         reasoning: bool | dict = False,
         trace: dict | None = None,
     ) -> T | None:
@@ -146,6 +147,7 @@ class FakeLLMAdapter(LLMAdapter):
                 "response_model": response_model,
                 "model": model,
                 "instructions": instructions,
+                "messages": messages,
                 "reasoning": reasoning,
             }
         )

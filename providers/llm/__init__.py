@@ -74,6 +74,7 @@ class FallbackAdapter(LLMAdapter):
         *,
         model: str | None = None,
         instructions: str | None = None,
+        messages: list[dict] | None = None,
         reasoning: bool | str | dict = False,
         trace: dict | None = None,
     ) -> T | None:
@@ -84,6 +85,7 @@ class FallbackAdapter(LLMAdapter):
                 response_model,
                 model=effective_model,
                 instructions=instructions,
+                messages=messages,
                 reasoning=self._resolve_reasoning(reasoning, entry_reasoning),
                 trace=trace,
             )

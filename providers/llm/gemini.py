@@ -29,6 +29,25 @@ def _thinking_config(reasoning: bool | str | dict):
     return types.ThinkingConfig(**kwargs)
 
 
+def _messages_to_contents(messages: list[dict], instructions: str | None):
+    """Map a {role, content} conversation to (system_instruction, contents).
+
+    Gemini has no system content role: system turns fold into system_instruction;
+    user/assistant map to user/model contents.
+    """
+    sys_parts = [m["content"] for m in messages if m.get("role") == "system"]
+    sys_text = "\n\n".join(sys_parts) if sys_parts else instructions
+    contents = [
+        {
+            "role": "model" if m.get("role") == "assistant" else "user",
+            "parts": [{"text": m["content"]}],
+        }
+        for m in messages
+        if m.get("role") != "system"
+    ]
+    return sys_text, contents
+
+
 class GeminiAdapter(LLMAdapter):
     def __init__(self, api_key: str | None = None) -> None:
         try:
@@ -53,18 +72,7 @@ class GeminiAdapter(LLMAdapter):
         _model = model or DEFAULT_MODEL
         config_kwargs: dict = {}
         if messages is not None:
-            # Gemini has no "system" content role: system turns fold into
-            # system_instruction, the rest map to contents (assistant → model).
-            sys_parts = [m["content"] for m in messages if m.get("role") == "system"]
-            sys_text = "\n\n".join(sys_parts) if sys_parts else instructions
-            contents = [
-                {
-                    "role": "model" if m.get("role") == "assistant" else "user",
-                    "parts": [{"text": m["content"]}],
-                }
-                for m in messages
-                if m.get("role") != "system"
-            ]
+            sys_text, contents = _messages_to_contents(messages, instructions)
         else:
             sys_text = instructions
             contents = prompt
@@ -124,6 +132,7 @@ class GeminiAdapter(LLMAdapter):
         *,
         model: str | None = None,
         instructions: str | None = None,
+        messages: list[dict] | None = None,
         reasoning: bool | str | dict = False,
         trace: dict | None = None,
     ) -> T | None:
@@ -134,8 +143,13 @@ class GeminiAdapter(LLMAdapter):
             "response_mime_type": "application/json",
             "response_schema": response_model,
         }
-        if instructions:
-            config_kwargs["system_instruction"] = instructions
+        if messages is not None:
+            sys_text, contents = _messages_to_contents(messages, instructions)
+        else:
+            sys_text = instructions
+            contents = prompt
+        if sys_text:
+            config_kwargs["system_instruction"] = sys_text
         thinking_cfg = _thinking_config(reasoning)
         if thinking_cfg is not None:
             config_kwargs["thinking_config"] = thinking_cfg
@@ -145,7 +159,7 @@ class GeminiAdapter(LLMAdapter):
             "Gemini",
             lambda: self._client.aio.models.generate_content(
                 model=_model,
-                contents=prompt,
+                contents=contents,
                 config=config,
             ),
         )
@@ -165,4 +179,5 @@ class GeminiAdapter(LLMAdapter):
             if usage:
                 trace["input_tokens"] = getattr(usage, "prompt_token_count", None)
                 trace["output_tokens"] = getattr(usage, "candidates_token_count", None)
+                trace["cache_hit_tokens"] = getattr(usage, "cached_content_token_count", None)
         return parsed
