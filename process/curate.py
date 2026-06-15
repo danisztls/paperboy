@@ -4,20 +4,39 @@ import logging
 import textwrap
 from dataclasses import replace as dc_replace
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from pipeline import Citation, CurateResult, Item, MemoryParagraph
+from process.decision import clamp_axes, decide, rule_from_cfg
 from providers.llm.base import LLMAdapter, ModelHandle
 
 log = logging.getLogger(__name__)
 
 
 class FilterItem(BaseModel):
-    """One item's filter verdict. `passes` is the JSON field `pass` for LLM compatibility."""
+    """One item's filter verdict plus 0-3 newsworthiness axis scores.
+
+    `passes` is the JSON field `pass` for LLM compatibility. The axes are the
+    legible signal logged to evals and (when `curate.decision.mode: scored`)
+    fed to `process.decision.decide` in place of the holistic `passes`.
+    """
 
     id: int
     passes: bool
     reason: str
+    magnitude: int = Field(0, description="0-3: scale and systemic reach of the bare event")
+    dissonance: int = Field(
+        0, description="0-3: structural surprisal — a named prior arrangement breaks"
+    )
+    credibility: int = Field(
+        0, description="0-3: confirmed event (3) down to speculation/rumor (0)"
+    )
+    redundancy: int = Field(
+        0, description="0-3: overlap with already-published digests (high = more of the same)"
+    )
+    relevance: int = Field(
+        0, description="0-3: proximity to the reader's stated interests and region"
+    )
 
 
 class CurateParagraph(BaseModel):
@@ -91,7 +110,13 @@ async def curate_entries(
 
         ## Steps
 
-        **Step 1 — Filter.** For each item, decide whether it matches the filter criteria above. Mark it passes: true if it does, passes: false otherwise.
+        **Step 1 — Score, then filter.** For each item, first rate these axes on a 0-3 scale (0 none, 1 weak, 2 clear, 3 strong), judging the bare underlying fact stripped of framing:
+        - magnitude: scale and systemic reach — how many people, institutions, or economies the event actually affects.
+        - dissonance: structural surprisal — does the event break a SPECIFIC prior arrangement (an alliance, a norm, a body assumed unified, who holds power)? Mere rarity or shock is not dissonance; if you cannot name the arrangement that broke, this is 0-1.
+        - credibility: confirmed event (3), official action or decision (2), attributed claim or forecast (1), speculation or rumor (0).
+        - redundancy: overlap with the already-published digests above and with well-known ongoing trends — HIGH means 'more of the same' the reader already has; a fresh, picture-changing development is low.
+        - relevance: proximity to the reader's stated interests and region as expressed in the filter criteria.
+        Then decide whether the item matches the filter criteria: mark it passes: true if it does, passes: false otherwise. Always record the scores, whether the item passes or fails.
 
         **Step 2 — Deduplicate.**
         - Compare each item against the already-published digests above. Fail any item whose core story was already sent to readers and that does not introduce a significant new development (new facts, updated numbers, meaningful consequence). Use reason: 'already covered'. The goal is that readers never see the same story twice without a genuine update.
@@ -145,7 +170,12 @@ async def curate_entries(
         trace["raw_response"] = decisions.model_dump_json()
 
     parsed = {
-        str(item.id): {"pass": item.passes, "reason": item.reason} for item in decisions.items
+        str(item.id): {
+            "pass": item.passes,
+            "reason": item.reason,
+            "axes": clamp_axes(item.model_dump()),
+        }
+        for item in decisions.items
     }
     paragraphs = [
         MemoryParagraph(text=p.text, citations=p.citations, section=p.section)
@@ -265,6 +295,14 @@ async def curate_items(
 
     raw_results, memory_paragraphs = llm_return
 
+    # Opt-in transparent decision: recompute pass from the axis scores. Off by
+    # default (mode != "scored"), in which case the LLM's holistic pass stands.
+    rule = rule_from_cfg(effective_cfg)
+    if rule is not None:
+        for v in raw_results.values():
+            v["llm_pass"] = v["pass"]
+            v["pass"] = decide(v.get("axes") or {}, rule)
+
     if collector and trace is not None:
         parsed_list = []
         for gid_str, v in raw_results.items():
@@ -272,16 +310,18 @@ async def curate_items(
                 it = id_map.get(int(gid_str))
             except ValueError:
                 it = None
-            parsed_list.append(
-                {
-                    "id": gid_str,
-                    "source": it.source if it else "?",
-                    "title": it.title if it else "?",
-                    "url": it.url if it else None,
-                    "pass": v["pass"],
-                    "reason": v["reason"],
-                }
-            )
+            entry = {
+                "id": gid_str,
+                "source": it.source if it else "?",
+                "title": it.title if it else "?",
+                "url": it.url if it else None,
+                "pass": v["pass"],
+                "reason": v["reason"],
+                "axes": v.get("axes"),
+            }
+            if "llm_pass" in v:  # present only when the scored rule overrode the LLM
+                entry["llm_pass"] = v["llm_pass"]
+            parsed_list.append(entry)
         memory_for_trace = (
             "\n\n".join(p.text for p in memory_paragraphs) if memory_paragraphs else None
         )

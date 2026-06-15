@@ -121,6 +121,57 @@ async def test_curate_dedup(mock_http, fake_adapter, tmp_path):
     assert not any("access_date" in it for it in items)
 
 
+async def test_curate_scored_decision_overrides_llm(mock_http, fake_adapter, tmp_path):
+    """`decision.mode: scored` recomputes pass from axes: the LLM passes both
+    items, but the redundancy veto drops the one it scored as 'more of the same'."""
+    mock_http.get(FEED_URL, body=load_fixture("feed_basic.xml"))
+    mock_http.post(WEBHOOK_URL, status=204)
+
+    # id=1 = cats (posts/1), id=0 = quantum (posts/2). LLM passes BOTH; only the
+    # scored rule differs: quantum has redundancy=2 → vetoed.
+    fake_adapter.queue_filter(
+        items=[
+            {
+                "id": 0,
+                "pass": True,
+                "reason": "ok",
+                "credibility": 3,
+                "magnitude": 3,
+                "redundancy": 2,
+            },
+            {
+                "id": 1,
+                "pass": True,
+                "reason": "ok",
+                "credibility": 3,
+                "magnitude": 2,
+                "redundancy": 0,
+            },
+        ],
+        memory=[{"text": "Cat news today.", "citations": [1]}],
+    )
+
+    out_file = tmp_path / "out.md"
+    cfg = make_curate_cfg(
+        feeds=[{"url": FEED_URL, "name": "Example"}],
+        file_path=str(out_file),
+        llm_filter={"criteria": "pass anything", "decision": {"mode": "scored"}},
+    )
+
+    async with aiohttp.ClientSession() as session:
+        result = await process_feed_task(
+            cfg, {"tasks": {}}, make_ctx(session, curate=fake_adapter, summarize=fake_adapter)
+        )
+
+    by_url = {it["url"]: it for it in result["test-curate"]["feeds"][FEED_URL]["items"]}
+    assert by_url["https://example.com/posts/1"]["filter_pass"] is True
+    assert by_url["https://example.com/posts/2"]["filter_pass"] is False  # vetoed despite LLM pass
+
+    body = out_file.read_text()
+    assert "First Item About Cats" in body
+    assert "Second Item About Quantum Physics" not in body
+
+
 async def test_curate_pull_failure(mock_http, fake_adapter, tmp_path):
     """One feed returning HTTP error must NOT update its state; the other proceeds."""
     mock_http.get(FEED_URL, status=500)

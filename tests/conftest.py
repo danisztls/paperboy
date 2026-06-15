@@ -97,10 +97,17 @@ class FakeLLMAdapter(LLMAdapter):
             )
             for p in (memory or [])
         ]
+        axis_keys = ("magnitude", "dissonance", "credibility", "redundancy", "relevance")
         self.queue_structured(
             FilterDecisions(
                 items=[
-                    FilterItem(id=it["id"], passes=it["pass"], reason=it["reason"]) for it in items
+                    FilterItem(
+                        id=it["id"],
+                        passes=it["pass"],
+                        reason=it["reason"],
+                        **{ax: it[ax] for ax in axis_keys if ax in it},
+                    )
+                    for it in items
                 ],
                 memory=paragraphs,
             )
