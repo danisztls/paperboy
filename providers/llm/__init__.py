@@ -45,6 +45,7 @@ class FallbackAdapter(LLMAdapter):
         *,
         model: str | None = None,
         instructions: str | None = None,
+        messages: list[dict] | None = None,
         reasoning: bool | str | dict = False,
     ) -> LLMResponse | None:
         entries = self._effective_entries(model)
@@ -53,6 +54,7 @@ class FallbackAdapter(LLMAdapter):
                 prompt,
                 model=effective_model,
                 instructions=instructions,
+                messages=messages,
                 reasoning=self._resolve_reasoning(reasoning, entry_reasoning),
             )
             if result is not None:

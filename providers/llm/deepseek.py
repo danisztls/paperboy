@@ -15,6 +15,23 @@ log = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
 
+def _cache_tokens(usage) -> tuple[int | None, int | None]:
+    """Pull DeepSeek's prompt-cache hit/miss counts off the usage object.
+
+    DeepSeek returns ``prompt_cache_hit_tokens`` / ``prompt_cache_miss_tokens``
+    as fields the OpenAI SDK doesn't declare, so they land in ``model_extra``.
+    """
+    if usage is None:
+        return None, None
+    hit = getattr(usage, "prompt_cache_hit_tokens", None)
+    miss = getattr(usage, "prompt_cache_miss_tokens", None)
+    if hit is None and miss is None:
+        extra = getattr(usage, "model_extra", None) or {}
+        hit = extra.get("prompt_cache_hit_tokens")
+        miss = extra.get("prompt_cache_miss_tokens")
+    return hit, miss
+
+
 class DeepSeekAdapter(LLMAdapter):
     def __init__(self, api_key: str | None = None) -> None:
         key = api_key or os.environ.get("DEEPSEEK_API_KEY")
@@ -26,13 +43,17 @@ class DeepSeekAdapter(LLMAdapter):
         *,
         model: str | None = None,
         instructions: str | None = None,
+        messages: list[dict] | None = None,
         reasoning: bool | str | dict = False,
     ) -> LLMResponse | None:
         _model = model or DEFAULT_MODEL
-        messages = []
-        if instructions:
-            messages.append({"role": "system", "content": instructions})
-        messages.append({"role": "user", "content": prompt})
+        if messages is not None:
+            req_messages = messages
+        else:
+            req_messages = []
+            if instructions:
+                req_messages.append({"role": "system", "content": instructions})
+            req_messages.append({"role": "user", "content": prompt})
         thinking_on = reasoning_level(reasoning) is not None
         thinking_cfg: dict = {"type": "enabled" if thinking_on else "disabled"}
         if isinstance(reasoning, dict):
@@ -42,7 +63,7 @@ class DeepSeekAdapter(LLMAdapter):
             "DeepSeek",
             lambda: self._client.chat.completions.create(
                 model=_model,
-                messages=messages,
+                messages=req_messages,
                 extra_body={"thinking": thinking_cfg},
             ),
         )
@@ -54,6 +75,7 @@ class DeepSeekAdapter(LLMAdapter):
             return None
         reasoning_text = (getattr(message, "reasoning_content", None) or "").strip() or None
         usage = getattr(response, "usage", None)
+        cache_hit, cache_miss = _cache_tokens(usage)
         return LLMResponse(
             text=text,
             model=_model,
@@ -62,6 +84,8 @@ class DeepSeekAdapter(LLMAdapter):
             latency_s=latency,
             reasoning=reasoning_text,
             finish_reason=getattr(response.choices[0], "finish_reason", None),
+            cache_hit_tokens=cache_hit,
+            cache_miss_tokens=cache_miss,
         )
 
     async def complete_structured(

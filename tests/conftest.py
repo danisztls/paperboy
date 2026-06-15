@@ -112,6 +112,7 @@ class FakeLLMAdapter(LLMAdapter):
         *,
         model: str | None = None,
         instructions: str | None = None,
+        messages: list[dict] | None = None,
         reasoning: bool | dict = False,
     ) -> LLMResponse | None:
         self.calls.append(
@@ -119,6 +120,7 @@ class FakeLLMAdapter(LLMAdapter):
                 "prompt": prompt,
                 "model": model,
                 "instructions": instructions,
+                "messages": messages,
                 "reasoning": reasoning,
             }
         )
