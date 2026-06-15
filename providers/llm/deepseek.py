@@ -103,6 +103,7 @@ class DeepSeekAdapter(LLMAdapter):
                 trace["model_used"] = resp.model
                 trace["input_tokens"] = resp.input_tokens
                 trace["output_tokens"] = resp.output_tokens
+                trace["reasoning"] = resp.reasoning
             return parsed
 
         messages = [
