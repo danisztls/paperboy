@@ -7,7 +7,6 @@ Between-pull-and-push processing stages.
 - `curate_items(all_items, curate_cfg, handle, ...)` — the full curate stage over `Item`s: builds the grouped payload (by source, monotonically increasing int IDs), calls `curate_entries`, retries once after 10s, decodes verdicts back onto the items (`filter_pass`/`filter_reason` via `dataclasses.replace`), and returns a `pipeline.CurateResult` (annotated items + memory paragraphs + cite_map). **Fail-open**: a second LLM failure returns all items as passing. Takes a `providers.llm.ModelHandle` and the always-on collector.
 - `curate_entries(items, curate_cfg, ...)` classifies the already-built payload via `adapter.complete_structured(payload, FilterDecisions, ...)` — each adapter calls the provider's native structured-output API and validates the returned JSON against the model.
 - `FilterDecisions(items: list[FilterItem], memory: list[CurateParagraph])` Pydantic schema for structured output.
-- `FilterItem` carries the `pass`/`reason` verdict plus five 0-3 newsworthiness axes (`magnitude`, `dissonance`, `credibility`, `redundancy`, `relevance`) the LLM scores in Step 1. Axes are clamped (`decision.clamp_axes`), logged into the evals `parsed` trace, and — when `curate.decision.mode: scored` — fed to `decision.decide` to recompute `pass` (the original LLM verdict is preserved as `llm_pass` in the trace). Default `mode: llm` leaves the holistic verdict untouched.
 - Filter criteria come from `curate_cfg["criteria"]`.
 - `curate_entries` returns `(results_dict, paragraphs) | None`:
   - `results_dict` maps `str(id) → {"pass": bool, "reason": str}` (the Pydantic `FilterItem.passes` field serializes as JSON `"pass"` for LLM-friendliness).
@@ -15,10 +14,6 @@ Between-pull-and-push processing stages.
 - `CurateParagraph` is the Pydantic model used for structured output; `MemoryParagraph` (NamedTuple from `pipeline.py`) is used everywhere else.
 - When `explain: true`, passing-item reasons are ELI5-style (2–3 sentences); `analysis` forces it.
 - Feed-level bypass: feeds with `curate.skip: true` are tagged in `tasks/feeds.py` via `item.meta["curate_skip"]` and skipped from the LLM payload (they always pass).
-
-## `decision.py` — transparent scored keep-rule
-
-Pure functions over the LLM's per-item axis scores; no LLM, no I/O. `clamp_axes(raw)` coerces the five axes to ints in `[0, 3]`. `decide(axes, rule)` keeps an item iff it is credible enough (`credibility >= min_credibility`), not redundant (`redundancy < redundancy_veto`), and at least one CARRIER axis (`magnitude`/`dissonance`/`relevance`) reaches `keep_floor` — the credibility gate is what stops high `dissonance` from carrying an unconfirmed rumor. `rule_from_cfg(curate_cfg)` returns a `DecisionRule` only when `curate.decision.mode: scored`, else `None` (LLM verdict stands). Keeping the rule in code (not the prompt) means the same axis vector can later feed a learned model without changing the scoring step.
 
 ## `filter_heuristic.py` — regex-based filters
 
