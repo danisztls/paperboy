@@ -93,11 +93,6 @@ tasks:
     #   instructions: "..."  # optional; extra instructions appended after the filter criteria
     #   web_search: true     # optional — let the LLM search for context / fact-check items (default: false)
     #   explain: true        # optional — use filter_reason as item body (default: false)
-    #   decision:            # optional — how the keep verdict is computed from the LLM's 0-3 axis scores
-    #     mode: scored       #   'llm' (default) keeps the LLM's holistic pass; 'scored' applies the rule below
-    #     keep_floor: 2      #   a carrier axis (magnitude/dissonance/relevance) at/above this can keep the item
-    #     redundancy_veto: 2 #   redundancy at/above this fails regardless (set 4 to disable the veto)
-    #     min_credibility: 1 #   below this, fail regardless (claims, rumors)
     # ignore:                # optional — omit a FIELD (overrides global; feeds override this)
     #   image: true          #   skip image fetching for all feeds in this task
     #   description: true     #   drop the description for all feeds in this task

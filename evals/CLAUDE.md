@@ -16,7 +16,7 @@ Reads a JSONL produced by `RunCapture` and re-issues each captured call against 
 
 **Common keys:** `task`, `call_type` (`filter` | `summarize` | `research`), `ts`, `model_used`, `instructions`, `response`, `input_tokens`, `output_tokens`, `latency_s`, `reasoning`, `web_search`. (`research` records carry only the trajectory — no tokens/latency/cost.)
 
-**`filter` adds:** `payload` (list of source groups with items, each item has `id`, `title`, `url`, optional `description`), `parsed` (per-item `id`, `source`, `title`, `url`, `pass`, `reason`, `axes` = the 0-3 `{magnitude, dissonance, credibility, redundancy, relevance}` scores, plus `llm_pass` only when a `decision.mode: scored` rule overrode the LLM's verdict), `memory`, `source_groups_count`, `items_count`, `passing_count`, `model` (configured spec).
+**`filter` adds:** `payload` (list of source groups with items, each item has `id`, `title`, `url`, optional `description`), `parsed` (per-item `id`, `source`, `title`, `url`, `pass`, `reason`), `memory`, `source_groups_count`, `items_count`, `passing_count`, `model` (configured spec).
 
 **`summarize` adds:** `input` (text sent to the LLM), `item_id`, `item_title`, `item_url`, `fetched_body`.
 
