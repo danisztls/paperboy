@@ -39,7 +39,6 @@ class LLMCall:
     output_tokens: int | None = None
     latency_s: float | None = None
     reasoning: str | None = None
-    web_search: bool = False
 
     # filter-specific
     model: str | None = None  # configured spec
@@ -72,7 +71,6 @@ class LLMCall:
             "output_tokens": self.output_tokens,
             "latency_s": self.latency_s,
             "reasoning": self.reasoning,
-            "web_search": self.web_search,
         }
         if self.call_type == "filter":
             payload = self.payload or []
@@ -171,7 +169,6 @@ class RunCapture:
         output_tokens: int | None = None,
         latency_s: float | None = None,
         reasoning: str | None = None,
-        web_search: bool = False,
     ) -> None:
         if self._current is None:
             return
@@ -187,7 +184,6 @@ class RunCapture:
                 output_tokens=output_tokens,
                 latency_s=latency_s,
                 reasoning=reasoning,
-                web_search=web_search,
                 model=model,
                 payload=payload,
                 parsed=parsed,

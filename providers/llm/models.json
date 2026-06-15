@@ -1,17 +1,17 @@
 {
   "gemini": {
-    "gemini-3.1-pro-preview": {"thinking": true, "web_search": true},
-    "gemini-3-flash-preview": {"thinking": true, "web_search": true},
-    "gemini-3.1-flash-lite": {"thinking": true, "web_search": true},
-    "gemini-3.1-flash-lite-preview": {"thinking": true, "web_search": true},
-    "gemini-2.5-pro": {"thinking": true, "web_search": true},
-    "gemini-2.5-flash": {"thinking": true, "web_search": true},
-    "gemini-2.5-flash-lite": {"thinking": true, "web_search": true}
+    "gemini-3.1-pro-preview": {"thinking": true},
+    "gemini-3-flash-preview": {"thinking": true},
+    "gemini-3.1-flash-lite": {"thinking": true},
+    "gemini-3.1-flash-lite-preview": {"thinking": true},
+    "gemini-2.5-pro": {"thinking": true},
+    "gemini-2.5-flash": {"thinking": true},
+    "gemini-2.5-flash-lite": {"thinking": true}
   },
   "deepseek": {
-    "deepseek-v4-pro": {"thinking": true, "web_search": false},
-    "deepseek-v4-flash": {"thinking": true, "web_search": false},
-    "deepseek-chat": {"thinking": false, "web_search": false, "deprecated": true},
-    "deepseek-reasoner": {"thinking": true, "web_search": false, "deprecated": true}
+    "deepseek-v4-pro": {"thinking": true},
+    "deepseek-v4-flash": {"thinking": true},
+    "deepseek-chat": {"thinking": false, "deprecated": true},
+    "deepseek-reasoner": {"thinking": true, "deprecated": true}
   }
 }

@@ -215,7 +215,6 @@ curate:
     name: deepseek-v4-flash
     reasoning: low # optional: off|low|medium|high (only for thinking-capable models)
   language: "PT-BR" # optional; language for memory briefings
-  web_search: true # optional; let the LLM search for context
   explain: true # optional; use filter_reason as item body
 ```
 

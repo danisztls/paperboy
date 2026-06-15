@@ -64,7 +64,6 @@ class LLMAdapter(ABC):
         *,
         model: str | None = None,
         instructions: str | None = None,
-        web_search: bool | dict = False,
         reasoning: bool | str | dict = False,
     ) -> LLMResponse | None: ...
 

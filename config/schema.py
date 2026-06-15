@@ -397,7 +397,6 @@ class _TaskCurate(BaseModel):
     model: ModelSpec | None = None
     language: str | None = None
     instructions: str | None = None
-    web_search: bool | dict | None = None
     explain: bool | None = None
 
 
