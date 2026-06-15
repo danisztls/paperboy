@@ -26,12 +26,9 @@ class DeepSeekAdapter(LLMAdapter):
         *,
         model: str | None = None,
         instructions: str | None = None,
-        web_search: bool | dict = False,
         reasoning: bool | str | dict = False,
     ) -> LLMResponse | None:
         _model = model or DEFAULT_MODEL
-        if web_search:
-            log.warning("DeepSeek adapter does not support web_search — ignoring")
         messages = []
         if instructions:
             messages.append({"role": "system", "content": instructions})

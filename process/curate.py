@@ -123,7 +123,6 @@ async def curate_entries(
     if trace is not None:
         trace["instructions"] = instructions
         trace["payload"] = items
-        trace["web_search"] = bool(filter_cfg.get("web_search"))
 
     total = sum(len(g.get("items", [])) for g in items)
     log.debug("Filtering %d entries with LLM (model=%s)", total, model)
@@ -185,7 +184,6 @@ def _record_trace(
         output_tokens=trace.get("output_tokens"),
         latency_s=trace.get("latency_s"),
         reasoning=trace.get("reasoning"),
-        web_search=trace.get("web_search", False),
     )
 
 

@@ -45,7 +45,6 @@ class GeminiAdapter(LLMAdapter):
         *,
         model: str | None = None,
         instructions: str | None = None,
-        web_search: bool | dict = False,
         reasoning: bool | str | dict = False,
     ) -> LLMResponse | None:
         from google.genai import types
@@ -54,8 +53,6 @@ class GeminiAdapter(LLMAdapter):
         config_kwargs: dict = {}
         if instructions:
             config_kwargs["system_instruction"] = instructions
-        if web_search:
-            config_kwargs["tools"] = [types.Tool(google_search=types.GoogleSearch())]
         thinking_cfg = _thinking_config(reasoning)
         if thinking_cfg is not None:
             config_kwargs["thinking_config"] = thinking_cfg

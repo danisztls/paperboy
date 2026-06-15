@@ -91,7 +91,6 @@ tasks:
     #     reasoning: low     # optional
     #   language: "PT-BR"    # optional; language for memory briefings; falls back to curate.language then EN-US
     #   instructions: "..."  # optional; extra instructions appended after the filter criteria
-    #   web_search: true     # optional — let the LLM search for context / fact-check items (default: false)
     #   explain: true        # optional — use filter_reason as item body (default: false)
     # ignore:                # optional — omit a FIELD (overrides global; feeds override this)
     #   image: true          #   skip image fetching for all feeds in this task

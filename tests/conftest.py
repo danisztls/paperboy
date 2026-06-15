@@ -112,7 +112,6 @@ class FakeLLMAdapter(LLMAdapter):
         *,
         model: str | None = None,
         instructions: str | None = None,
-        web_search: bool | dict = False,
         reasoning: bool | dict = False,
     ) -> LLMResponse | None:
         self.calls.append(
@@ -120,7 +119,6 @@ class FakeLLMAdapter(LLMAdapter):
                 "prompt": prompt,
                 "model": model,
                 "instructions": instructions,
-                "web_search": web_search,
                 "reasoning": reasoning,
             }
         )

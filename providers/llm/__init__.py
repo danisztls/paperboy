@@ -45,7 +45,6 @@ class FallbackAdapter(LLMAdapter):
         *,
         model: str | None = None,
         instructions: str | None = None,
-        web_search: bool | dict = False,
         reasoning: bool | str | dict = False,
     ) -> LLMResponse | None:
         entries = self._effective_entries(model)
@@ -54,7 +53,6 @@ class FallbackAdapter(LLMAdapter):
                 prompt,
                 model=effective_model,
                 instructions=instructions,
-                web_search=web_search,
                 reasoning=self._resolve_reasoning(reasoning, entry_reasoning),
             )
             if result is not None:

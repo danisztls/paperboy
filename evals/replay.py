@@ -37,7 +37,6 @@ def _input_for(call_type: str, record: dict) -> str:
 async def _replay_one(provider: str, model: str, record: dict, api_key_cfg) -> dict:
     call_type = record["call_type"]
     instructions = record.get("instructions")
-    web_search = bool(record.get("web_search", False))
     input_text = _input_for(call_type, record)
     adapter = get_adapter(provider, get_api_key_for_provider(api_key_cfg, provider))
     try:
@@ -45,7 +44,6 @@ async def _replay_one(provider: str, model: str, record: dict, api_key_cfg) -> d
             input_text,
             model=model,
             instructions=instructions,
-            web_search=web_search,
         )
     except Exception as exc:
         return {"model": f"{provider}:{model}", "error": str(exc)}
@@ -82,7 +80,6 @@ async def _replay_record(record: dict, models: list[tuple[str, str]], api_key_cf
         "call_type": record["call_type"],
         "task": record.get("task"),
         "ts": record.get("ts"),
-        "web_search": bool(record.get("web_search", False)),
         "item_id": record.get("item_id"),
         "item_title": record.get("item_title"),
         "results": out_results,
