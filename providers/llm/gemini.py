@@ -45,14 +45,31 @@ class GeminiAdapter(LLMAdapter):
         *,
         model: str | None = None,
         instructions: str | None = None,
+        messages: list[dict] | None = None,
         reasoning: bool | str | dict = False,
     ) -> LLMResponse | None:
         from google.genai import types
 
         _model = model or DEFAULT_MODEL
         config_kwargs: dict = {}
-        if instructions:
-            config_kwargs["system_instruction"] = instructions
+        if messages is not None:
+            # Gemini has no "system" content role: system turns fold into
+            # system_instruction, the rest map to contents (assistant → model).
+            sys_parts = [m["content"] for m in messages if m.get("role") == "system"]
+            sys_text = "\n\n".join(sys_parts) if sys_parts else instructions
+            contents = [
+                {
+                    "role": "model" if m.get("role") == "assistant" else "user",
+                    "parts": [{"text": m["content"]}],
+                }
+                for m in messages
+                if m.get("role") != "system"
+            ]
+        else:
+            sys_text = instructions
+            contents = prompt
+        if sys_text:
+            config_kwargs["system_instruction"] = sys_text
         thinking_cfg = _thinking_config(reasoning)
         if thinking_cfg is not None:
             config_kwargs["thinking_config"] = thinking_cfg
@@ -62,7 +79,7 @@ class GeminiAdapter(LLMAdapter):
             "Gemini",
             lambda: self._client.aio.models.generate_content(
                 model=_model,
-                contents=prompt,
+                contents=contents,
                 **({"config": config} if config else {}),
             ),
         )
@@ -72,6 +89,11 @@ class GeminiAdapter(LLMAdapter):
         if not text:
             return None
         usage = getattr(response, "usage_metadata", None)
+        cache_hit = getattr(usage, "cached_content_token_count", None) if usage else None
+        prompt_tok = getattr(usage, "prompt_token_count", None) if usage else None
+        cache_miss = (
+            prompt_tok - cache_hit if (prompt_tok is not None and cache_hit is not None) else None
+        )
         reasoning_text: str | None = None
         if thinking_cfg is not None:
             thoughts: list[str] = []
@@ -87,10 +109,12 @@ class GeminiAdapter(LLMAdapter):
         return LLMResponse(
             text=text,
             model=_model,
-            input_tokens=getattr(usage, "prompt_token_count", None) if usage else None,
+            input_tokens=prompt_tok,
             output_tokens=getattr(usage, "candidates_token_count", None) if usage else None,
             latency_s=latency,
             reasoning=reasoning_text,
+            cache_hit_tokens=cache_hit,
+            cache_miss_tokens=cache_miss,
         )
 
     async def complete_structured(

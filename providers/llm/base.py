@@ -19,6 +19,9 @@ class LLMResponse:
     latency_s: float
     reasoning: str | None = None
     finish_reason: str | None = None
+    # Prompt-cache accounting (prefix reuse across turns); provider-dependent.
+    cache_hit_tokens: int | None = None
+    cache_miss_tokens: int | None = None
 
 
 async def timed_call[T](
@@ -64,8 +67,19 @@ class LLMAdapter(ABC):
         *,
         model: str | None = None,
         instructions: str | None = None,
+        messages: list[dict] | None = None,
         reasoning: bool | str | dict = False,
-    ) -> LLMResponse | None: ...
+    ) -> LLMResponse | None:
+        """Free-form completion.
+
+        When ``messages`` is given it is the complete conversation (a list of
+        ``{"role": "system"|"user"|"assistant", "content": str}``) sent verbatim,
+        and ``prompt``/``instructions`` are ignored — this is the multi-turn path
+        that keeps a stable leading prefix so providers can reuse their prompt
+        cache across turns. Otherwise the single-shot ``instructions``+``prompt``
+        pair is used.
+        """
+        ...
 
     @abstractmethod
     async def complete_structured(
