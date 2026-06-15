@@ -95,23 +95,29 @@ class DeepSeekAdapter(LLMAdapter):
         *,
         model: str | None = None,
         instructions: str | None = None,
+        messages: list[dict] | None = None,
         reasoning: bool | str | dict = False,
         trace: dict | None = None,
     ) -> T | None:
         _model = model or DEFAULT_MODEL
         schema = json.dumps(response_model.model_json_schema(), ensure_ascii=False)
         schema_note = f"\n\nRespond with JSON matching this schema:\n{schema}"
-        sys_content = (instructions or "") + schema_note
 
         if reasoning_level(reasoning) is not None:
             # Thinking mode is incompatible with json_object / tool_choice on
             # DeepSeek, so delegate to complete() which supports it natively.
-            resp = await self.complete(
-                prompt,
-                model=_model,
-                instructions=sys_content,
-                reasoning=reasoning,
-            )
+            if messages is not None:
+                # Keep the caller's conversation as a cache-stable prefix; append
+                # the schema ask as a trailing turn so the prefix stays identical.
+                convo = list(messages) + [{"role": "user", "content": schema_note}]
+                resp = await self.complete("", messages=convo, model=_model, reasoning=reasoning)
+            else:
+                resp = await self.complete(
+                    prompt,
+                    model=_model,
+                    instructions=(instructions or "") + schema_note,
+                    reasoning=reasoning,
+                )
             if resp is None:
                 return None
             try:
@@ -125,18 +131,23 @@ class DeepSeekAdapter(LLMAdapter):
                 trace["input_tokens"] = resp.input_tokens
                 trace["output_tokens"] = resp.output_tokens
                 trace["reasoning"] = resp.reasoning
+                trace["cache_hit_tokens"] = resp.cache_hit_tokens
+                trace["cache_miss_tokens"] = resp.cache_miss_tokens
             return parsed
 
-        messages = [
-            {"role": "system", "content": sys_content},
-            {"role": "user", "content": prompt},
-        ]
+        if messages is not None:
+            req_messages = list(messages) + [{"role": "user", "content": schema_note}]
+        else:
+            req_messages = [
+                {"role": "system", "content": (instructions or "") + schema_note},
+                {"role": "user", "content": prompt},
+            ]
         response, latency = await timed_call(
             log,
             "DeepSeek",
             lambda: self._client.chat.completions.create(
                 model=_model,
-                messages=messages,
+                messages=req_messages,
                 response_format={"type": "json_object"},
                 extra_body={"thinking": {"type": "disabled"}},
             ),
@@ -156,4 +167,7 @@ class DeepSeekAdapter(LLMAdapter):
             if usage:
                 trace["input_tokens"] = getattr(usage, "prompt_tokens", None)
                 trace["output_tokens"] = getattr(usage, "completion_tokens", None)
+                hit, miss = _cache_tokens(usage)
+                trace["cache_hit_tokens"] = hit
+                trace["cache_miss_tokens"] = miss
         return parsed
