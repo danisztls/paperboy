@@ -3,8 +3,9 @@ import json
 import logging
 import textwrap
 from dataclasses import replace as dc_replace
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from pipeline import Citation, CurateResult, Item, MemoryParagraph
 from providers.llm.base import LLMAdapter, ModelHandle
@@ -35,35 +36,52 @@ class FilterDecisions(BaseModel):
     memory: list[CurateParagraph] = []
 
 
-async def curate_entries(
-    items: list[dict],
-    filter_cfg: dict,
-    global_model: str | None = None,
-    *,
-    language: str = "EN-US",
-    memory_history: list[tuple[str, str]] | None = None,
-    adapter: LLMAdapter,
-    extra_instructions: str | None = None,
-    reasoning: bool | str | dict = False,
-    trace: dict | None = None,
-    task_name: str | None = None,
-) -> tuple[dict[str, dict], list[MemoryParagraph] | None] | None:
-    """Filter feed entries through LLM and optionally update memory.
+class CurateAction(BaseModel):
+    """One turn of the agentic corroboration loop: search the web, or finish."""
 
-    Returns (results, memory_text) where results maps item ID → {"pass": bool, "reason": str}
-    and memory_text is the new memory entry (or None if the LLM didn't produce one).
-    Returns None on failure (caller should fail-open: treat all entries as passing).
-    memory_history: chronological list of prior memory entries (oldest first) passed as
-    context so the model can build continuity across runs.
-    """
-    prefix_tag = f"[{task_name}] " if task_name else ""
+    kind: Literal["search", "finish"]
+    rationale: str
+    queries: list[str] = Field(
+        default_factory=list, description="Queries to run when kind='search'."
+    )
+
+
+_SEARCH_PREAMBLE = textwrap.dedent("""\
+    ## Corroboration tool
+
+    Before delivering verdicts you may search the web to check facts you are unsure
+    about. Your training is months out of date, so use search to:
+    - verify whether a claim is corroborated by independent reporting (credibility), and
+    - check the CURRENT state of an arrangement before judging whether an event breaks
+      it (structural dissonance).
+
+    Each turn, respond with a CurateAction: `kind='search'` with a list of `queries`
+    (only for the few items you are genuinely uncertain about — do not search items you
+    can already judge), or `kind='finish'` when you have enough to decide. Your search
+    budget is limited. After you finish you will be asked for the final verdicts over
+    ALL items.
+    """)
+
+
+def _resolve_model_reasoning(filter_cfg, global_model, reasoning):
+    """Resolve the effective model name + reasoning (per-task curate.model override)."""
     raw_model = filter_cfg.get("model")
     model = (raw_model.get("name") if isinstance(raw_model, dict) else None) or global_model or None
     if not reasoning and isinstance(raw_model, dict) and raw_model.get("reasoning"):
         reasoning = raw_model["reasoning"]
-    explain = filter_cfg.get("explain", False)
-    criteria = filter_cfg.get("criteria", "")
+    return model, reasoning
 
+
+def _build_curate_instructions(
+    filter_cfg: dict,
+    *,
+    language: str,
+    memory_history: list[tuple[str, str]] | None,
+    extra_instructions: str | None,
+    explain: bool,
+) -> str:
+    """Build the full curate instructions (criteria + memory context + Step 1/2/3 body)."""
+    criteria = filter_cfg.get("criteria", "")
     prefix = f"## Filter criteria\n{criteria}\n\n"
     if extra_instructions:
         prefix += f"## Additional instructions\n{extra_instructions}\n\n"
@@ -117,8 +135,69 @@ async def curate_entries(
 
         {reason_format}
     """)
+    return prefix + body
 
-    instructions = prefix + body
+
+def _parse_decisions(decisions, prefix_tag, total, trace):
+    """Decode a FilterDecisions into (results_dict, paragraphs) and log the pass count."""
+    if trace is not None:
+        trace["raw_response"] = decisions.model_dump_json()
+    parsed = {
+        str(item.id): {"pass": item.passes, "reason": item.reason} for item in decisions.items
+    }
+    paragraphs = [
+        MemoryParagraph(text=p.text, citations=p.citations, section=p.section)
+        for p in decisions.memory
+    ]
+    passed = sum(1 for v in parsed.values() if v["pass"])
+    log.info("%sFilter: %d/%d items passed", prefix_tag, passed, total)
+    return parsed, paragraphs or None
+
+
+def _format_search_results(query: str, results: list[dict] | None) -> str:
+    """Render a SERP into compact text for the conversation."""
+    if not results:
+        return f"Search '{query}': no results."
+    lines = [f"Search '{query}':"]
+    for r in results:
+        title = (r.get("title") or "").strip()
+        snippet = (r.get("snippet") or "").strip()
+        url = (r.get("url") or "").strip()
+        lines.append(f"- {title} — {snippet} ({url})")
+    return "\n".join(lines)
+
+
+async def curate_entries(
+    items: list[dict],
+    filter_cfg: dict,
+    global_model: str | None = None,
+    *,
+    language: str = "EN-US",
+    memory_history: list[tuple[str, str]] | None = None,
+    adapter: LLMAdapter,
+    extra_instructions: str | None = None,
+    reasoning: bool | str | dict = False,
+    trace: dict | None = None,
+    task_name: str | None = None,
+) -> tuple[dict[str, dict], list[MemoryParagraph] | None] | None:
+    """Filter feed entries through LLM and optionally update memory.
+
+    Returns (results, memory_text) where results maps item ID → {"pass": bool, "reason": str}
+    and memory_text is the new memory entry (or None if the LLM didn't produce one).
+    Returns None on failure (caller should fail-open: treat all entries as passing).
+    memory_history: chronological list of prior memory entries (oldest first) passed as
+    context so the model can build continuity across runs.
+    """
+    prefix_tag = f"[{task_name}] " if task_name else ""
+    model, reasoning = _resolve_model_reasoning(filter_cfg, global_model, reasoning)
+    explain = filter_cfg.get("explain", False)
+    instructions = _build_curate_instructions(
+        filter_cfg,
+        language=language,
+        memory_history=memory_history,
+        extra_instructions=extra_instructions,
+        explain=explain,
+    )
     payload = json.dumps(items, ensure_ascii=False)
     if trace is not None:
         trace["instructions"] = instructions
@@ -126,7 +205,6 @@ async def curate_entries(
 
     total = sum(len(g.get("items", [])) for g in items)
     log.debug("Filtering %d entries with LLM (model=%s)", total, model)
-    log.debug("Filter criteria: %s", criteria)
 
     decisions = await adapter.complete_structured(
         payload,
@@ -139,20 +217,116 @@ async def curate_entries(
     if decisions is None:
         log.error("%sLLM filter returned no parseable response", prefix_tag)
         return None
+    return _parse_decisions(decisions, prefix_tag, total, trace)
 
-    if trace is not None:
-        trace["raw_response"] = decisions.model_dump_json()
 
-    parsed = {
-        str(item.id): {"pass": item.passes, "reason": item.reason} for item in decisions.items
-    }
-    paragraphs = [
-        MemoryParagraph(text=p.text, citations=p.citations, section=p.section)
-        for p in decisions.memory
+async def curate_entries_agentic(
+    items: list[dict],
+    filter_cfg: dict,
+    global_model: str | None = None,
+    *,
+    language: str = "EN-US",
+    memory_history: list[tuple[str, str]] | None = None,
+    adapter: LLMAdapter,
+    extra_instructions: str | None = None,
+    reasoning: bool | str | dict = False,
+    trace: dict | None = None,
+    task_name: str | None = None,
+    corroborate_cfg: dict | None = None,
+) -> tuple[dict[str, dict], list[MemoryParagraph] | None] | None:
+    """Curate via a bounded agentic loop that corroborates with web search.
+
+    One conversation seeded with [criteria+items] (a cache-stable prefix); each turn
+    the LLM emits a CurateAction — `search` (queries fanned out concurrently to
+    vascod) or `finish` — then the final verdict is produced over the same warm
+    conversation. Action turns run without thinking (cheap); the final FilterDecisions
+    uses the configured reasoning. Fail-open: a vascod `None` is treated as "no
+    results"; an LLM `None` returns None so the caller fails open.
+    """
+    from process import _vasco
+
+    prefix_tag = f"[{task_name}] " if task_name else ""
+    model, reasoning = _resolve_model_reasoning(filter_cfg, global_model, reasoning)
+    explain = filter_cfg.get("explain", False)
+    judge_instructions = _build_curate_instructions(
+        filter_cfg,
+        language=language,
+        memory_history=memory_history,
+        extra_instructions=extra_instructions,
+        explain=explain,
+    )
+    system = judge_instructions + "\n\n" + _SEARCH_PREAMBLE
+    payload = json.dumps(items, ensure_ascii=False)
+    convo: list[dict] = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": f"Items to curate:\n{payload}"},
     ]
-    passed = sum(1 for v in parsed.values() if v["pass"])
-    log.info("%sFilter: %d/%d items passed", prefix_tag, passed, total)
-    return parsed, paragraphs or None
+
+    cfg = corroborate_cfg or {}
+    max_steps = int(cfg.get("max_steps", 3))
+    max_searches = int(cfg.get("max_searches", 8))
+    max_results = int(cfg.get("max_results", 5))
+    searched: set[str] = set()
+    searches_done = 0
+    steps_log: list[dict] = []
+
+    for step in range(max_steps):
+        action = await adapter.complete_structured(
+            "", CurateAction, model=model, messages=convo, reasoning=False
+        )
+        if action is None:
+            break
+        steps_log.append(
+            {
+                "step": step,
+                "kind": action.kind,
+                "rationale": action.rationale,
+                "queries": list(action.queries),
+            }
+        )
+        log.debug("[%s] curate step %d: %s — %s", task_name, step, action.kind, action.rationale)
+        if action.kind == "finish":
+            break
+        todo = []
+        for q in action.queries:
+            q = (q or "").strip()
+            if not q or q in searched or searches_done >= max_searches:
+                continue
+            searched.add(q)
+            searches_done += 1
+            todo.append(q)
+        convo.append({"role": "assistant", "content": f"SEARCH: {', '.join(todo) or '(none)'}"})
+        if todo:
+            results = await asyncio.gather(
+                *[_vasco.search(q, max_results=max_results) for q in todo]
+            )
+            blocks = [_format_search_results(q, r) for q, r in zip(todo, results)]
+            convo.append({"role": "user", "content": "\n\n".join(blocks)})
+        else:
+            convo.append({"role": "user", "content": "No new searches issued."})
+        if searches_done >= max_searches:
+            break
+
+    convo.append(
+        {
+            "role": "user",
+            "content": "Now produce the final FilterDecisions for ALL items: per-item verdicts and the memory briefing.",
+        }
+    )
+    if trace is not None:
+        trace["instructions"] = system
+        trace["payload"] = items
+        trace["steps"] = steps_log
+
+    total = sum(len(g.get("items", [])) for g in items)
+    log.debug("[%s] agentic curate: %d items, %d searches", task_name, total, searches_done)
+    decisions = await adapter.complete_structured(
+        "", FilterDecisions, model=model, messages=convo, reasoning=reasoning, trace=trace
+    )
+    if decisions is None:
+        log.error("%sLLM agentic filter returned no parseable response", prefix_tag)
+        return None
+    return _parse_decisions(decisions, prefix_tag, total, trace)
 
 
 def _decode_results(raw_results: dict[str, dict], id_map: dict[int, Item]) -> dict[str, dict]:
@@ -184,6 +358,9 @@ def _record_trace(
         output_tokens=trace.get("output_tokens"),
         latency_s=trace.get("latency_s"),
         reasoning=trace.get("reasoning"),
+        cache_hit_tokens=trace.get("cache_hit_tokens"),
+        cache_miss_tokens=trace.get("cache_miss_tokens"),
+        steps=trace.get("steps"),
     )
 
 
@@ -250,11 +427,27 @@ async def curate_items(
         trace=trace,
         task_name=task_name,
     )
-    llm_return = await curate_entries(payload_groups, effective_cfg, handle.model, **kwargs)
+    corroborate_cfg = curate_cfg.get("corroborate") or {}
+    if corroborate_cfg.get("enabled"):
+
+        async def _run():
+            return await curate_entries_agentic(
+                payload_groups,
+                effective_cfg,
+                handle.model,
+                corroborate_cfg=corroborate_cfg,
+                **kwargs,
+            )
+    else:
+
+        async def _run():
+            return await curate_entries(payload_groups, effective_cfg, handle.model, **kwargs)
+
+    llm_return = await _run()
     if llm_return is None:
         log.warning("[%s] Filter failed, retrying in 10s", task_name or "?")
         await asyncio.sleep(10)
-        llm_return = await curate_entries(payload_groups, effective_cfg, handle.model, **kwargs)
+        llm_return = await _run()
     if llm_return is None:
         if collector and trace is not None:
             _record_trace(collector, trace, model=handle.model, parsed=[], memory=None)

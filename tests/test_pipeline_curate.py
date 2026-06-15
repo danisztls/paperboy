@@ -257,3 +257,56 @@ async def test_analysis_forces_reasoning_over_spec(mock_http, fake_adapter, tmp_
         )
 
     assert fake_adapter.structured_calls[-1]["reasoning"] is True
+
+
+async def test_curate_agentic_corroborates(fake_adapter, monkeypatch):
+    """Corroborate mode: the loop issues a search, finishes, then judges over a
+    warm multi-turn conversation. Verdicts decode onto items as usual."""
+    from pipeline import Item
+    from process.curate import CurateAction, curate_items
+    from providers.llm.base import ModelHandle
+
+    searched: list[str] = []
+
+    async def fake_search(query, *, max_results=10, region=None, site=None):
+        searched.append(query)
+        return [{"title": "Reuters", "snippet": "independently confirmed", "url": "https://r.com"}]
+
+    monkeypatch.setattr("process._vasco.search", fake_search)
+
+    items = [
+        Item(id="u1", title="Major treaty signed", source="AP", url="https://a.com", body="x"),
+        Item(id="u2", title="Local fair opens", source="AP", url="https://b.com", body="y"),
+    ]
+    # Loop sequence: search → finish → final FilterDecisions.
+    fake_adapter.queue_structured(
+        CurateAction(kind="search", queries=["treaty signed today"], rationale="verify")
+    )
+    fake_adapter.queue_structured(CurateAction(kind="finish", rationale="enough context"))
+    fake_adapter.queue_filter(
+        items=[
+            {"id": 0, "pass": True, "reason": "Corroborated, globally significant."},
+            {"id": 1, "pass": False, "reason": "Local human interest."},
+        ],
+        memory=[{"text": "A major treaty was signed.", "citations": [0]}],
+    )
+
+    cfg = {
+        "criteria": "keep globally significant events",
+        "corroborate": {"enabled": True, "max_steps": 3, "max_searches": 4},
+    }
+    handle = ModelHandle(fake_adapter, reasoning="off")
+
+    result = await curate_items(items, cfg, handle, task_name="t")
+
+    assert searched == ["treaty signed today"], "the loop's query reached vascod"
+    by_url = {it.url: it for it in result.items}
+    assert by_url["https://a.com"].filter_pass is True
+    assert by_url["https://b.com"].filter_pass is False
+    assert result.memory and "treaty" in result.memory[0].text
+    # 2 action turns + 1 final verdict.
+    assert len(fake_adapter.structured_calls) == 3
+    # The final verdict was issued over a multi-turn conversation (warm prefix),
+    # not a single prompt string.
+    assert fake_adapter.structured_calls[-1]["messages"] is not None
+    assert fake_adapter.structured_calls[-1]["prompt"] == ""

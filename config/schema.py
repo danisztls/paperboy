@@ -391,6 +391,14 @@ class _PushItem(BaseModel):
 # --- Tasks ---
 
 
+class _CurateCorroborate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool | None = None
+    max_steps: int | None = None
+    max_searches: int | None = None
+    max_results: int | None = None
+
+
 class _TaskCurate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     criteria: str
@@ -398,6 +406,7 @@ class _TaskCurate(BaseModel):
     language: str | None = None
     instructions: str | None = None
     explain: bool | None = None
+    corroborate: _CurateCorroborate | None = None
 
 
 class _Task(BaseModel):

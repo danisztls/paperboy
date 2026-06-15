@@ -92,6 +92,11 @@ tasks:
     #   language: "PT-BR"    # optional; language for memory briefings; falls back to curate.language then EN-US
     #   instructions: "..."  # optional; extra instructions appended after the filter criteria
     #   explain: true        # optional — use filter_reason as item body (default: false)
+    #   corroborate:         # optional — agentic loop that web-searches (via vasco) to verify
+    #     enabled: true      #   claims (credibility) and check current state (dissonance) before judging
+    #     max_steps: 3       #   max decision turns (default 3)
+    #     max_searches: 8    #   total search budget across the run (default 8)
+    #     max_results: 5     #   results per query (default 5)
     # ignore:                # optional — omit a FIELD (overrides global; feeds override this)
     #   image: true          #   skip image fetching for all feeds in this task
     #   description: true     #   drop the description for all feeds in this task

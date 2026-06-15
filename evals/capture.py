@@ -39,6 +39,8 @@ class LLMCall:
     output_tokens: int | None = None
     latency_s: float | None = None
     reasoning: str | None = None
+    cache_hit_tokens: int | None = None
+    cache_miss_tokens: int | None = None
 
     # filter-specific
     model: str | None = None  # configured spec
@@ -71,6 +73,8 @@ class LLMCall:
             "output_tokens": self.output_tokens,
             "latency_s": self.latency_s,
             "reasoning": self.reasoning,
+            "cache_hit_tokens": self.cache_hit_tokens,
+            "cache_miss_tokens": self.cache_miss_tokens,
         }
         if self.call_type == "filter":
             payload = self.payload or []
@@ -81,6 +85,7 @@ class LLMCall:
                 "payload": payload,
                 "parsed": parsed,
                 "memory": self.memory,
+                "steps": self.steps or [],
                 "source_groups_count": len(payload),
                 "items_count": sum(len(g.get("items", [])) for g in payload),
                 "passing_count": sum(1 for p in parsed if p.get("pass")),
@@ -169,6 +174,9 @@ class RunCapture:
         output_tokens: int | None = None,
         latency_s: float | None = None,
         reasoning: str | None = None,
+        cache_hit_tokens: int | None = None,
+        cache_miss_tokens: int | None = None,
+        steps: list | None = None,
     ) -> None:
         if self._current is None:
             return
@@ -184,6 +192,9 @@ class RunCapture:
                 output_tokens=output_tokens,
                 latency_s=latency_s,
                 reasoning=reasoning,
+                cache_hit_tokens=cache_hit_tokens,
+                cache_miss_tokens=cache_miss_tokens,
+                steps=steps,
                 model=model,
                 payload=payload,
                 parsed=parsed,
