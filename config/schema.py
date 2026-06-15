@@ -391,6 +391,20 @@ class _PushItem(BaseModel):
 # --- Tasks ---
 
 
+class _CurateDecision(BaseModel):
+    """How the keep verdict is computed from the LLM's per-item axis scores.
+
+    `mode: llm` (default) uses the LLM's holistic `pass`; `mode: scored` applies
+    `process.decision.decide` over the 0-3 axes with the thresholds below.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["llm", "scored"] = "llm"
+    keep_floor: int = Field(2, ge=0, le=3)
+    redundancy_veto: int = Field(2, ge=1, le=4)
+    min_credibility: int = Field(1, ge=0, le=3)
+
+
 class _TaskCurate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     criteria: str
@@ -399,6 +413,7 @@ class _TaskCurate(BaseModel):
     instructions: str | None = None
     web_search: bool | dict | None = None
     explain: bool | None = None
+    decision: _CurateDecision | None = None
 
 
 class _Task(BaseModel):
