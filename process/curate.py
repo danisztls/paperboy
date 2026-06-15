@@ -257,9 +257,14 @@ async def curate_entries_agentic(
     )
     system = judge_instructions + "\n\n" + _SEARCH_PREAMBLE
     payload = json.dumps(items, ensure_ascii=False)
+    research_nudge = (
+        "RESEARCH PHASE — respond with a CurateAction ONLY (kind='search' with `queries`, "
+        "or kind='finish'). Do NOT produce verdicts or the briefing yet; that comes after "
+        "you finish."
+    )
     convo: list[dict] = [
         {"role": "system", "content": system},
-        {"role": "user", "content": f"Items to curate:\n{payload}"},
+        {"role": "user", "content": f"Items to curate:\n{payload}\n\n{research_nudge}"},
     ]
 
     cfg = corroborate_cfg or {}
@@ -275,6 +280,12 @@ async def curate_entries_agentic(
             "", CurateAction, model=model, messages=convo, reasoning=False
         )
         if action is None:
+            log.warning(
+                "[%s] curate: action turn %d returned no parseable CurateAction — "
+                "ending research, proceeding to verdict",
+                task_name,
+                step,
+            )
             break
         steps_log.append(
             {
@@ -301,16 +312,18 @@ async def curate_entries_agentic(
                 *[_vasco.search(q, max_results=max_results) for q in todo]
             )
             blocks = [_format_search_results(q, r) for q, r in zip(todo, results)]
-            convo.append({"role": "user", "content": "\n\n".join(blocks)})
+            convo.append({"role": "user", "content": "\n\n".join(blocks) + f"\n\n{research_nudge}"})
         else:
-            convo.append({"role": "user", "content": "No new searches issued."})
+            convo.append(
+                {"role": "user", "content": f"No new searches issued.\n\n{research_nudge}"}
+            )
         if searches_done >= max_searches:
             break
 
     convo.append(
         {
             "role": "user",
-            "content": "Now produce the final FilterDecisions for ALL items: per-item verdicts and the memory briefing.",
+            "content": "VERDICT PHASE — now produce the final FilterDecisions for ALL items: per-item verdicts and the memory briefing.",
         }
     )
     if trace is not None:
