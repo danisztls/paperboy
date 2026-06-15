@@ -298,18 +298,6 @@ def _mode_stats(args: argparse.Namespace) -> None:
     print_stats(load_config(config_path), load_state(state_path))
 
 
-def _mode_replay(args: argparse.Namespace) -> None:
-    if not args.models:
-        log.error("--replay requires --models")
-        sys.exit(1)
-    from evals.replay import replay
-
-    config_path, state_path = resolve_paths(args)
-    jsonl_path = pathlib.Path(args.replay).expanduser().resolve()
-    model_specs = [s.strip() for s in args.models.split(",") if s.strip()]
-    asyncio.run(replay(jsonl_path, model_specs, args.call, state_path.parent, config_path))
-
-
 def _mode_summarize(args: argparse.Namespace) -> None:
     config_path, _ = resolve_paths(args)
     config = load_config(config_path)
@@ -389,21 +377,6 @@ def main():
         dest="get_content",
         help="Fetch article text or YouTube transcript and print to stdout (no LLM)",
     )
-    mode.add_argument(
-        "--replay",
-        metavar="JSONL",
-        help="Replay captured LLM calls in JSONL against alternative models (requires --models)",
-    )
-    parser.add_argument(
-        "--models",
-        metavar="LIST",
-        help="Comma-separated provider:model pairs to replay against, e.g. deepseek:deepseek-chat,gemini:gemini-2.5-flash",
-    )
-    parser.add_argument(
-        "--call",
-        choices=["filter", "summarize", "search"],
-        help="With --replay: only re-issue calls of this type (default: all)",
-    )
     parser.add_argument(
         "--analysis",
         action="store_true",
@@ -436,8 +409,6 @@ def main():
         _mode_validate(args)
     elif args.stats:
         _mode_stats(args)
-    elif args.replay:
-        _mode_replay(args)
     elif args.summarize:
         _mode_summarize(args)
     elif args.get_content:

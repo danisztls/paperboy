@@ -25,8 +25,7 @@ class LLMCall:
     """One LLM round-trip captured during a task run.
 
     Fields irrelevant to a given call_type are left None and dropped at
-    serialization time, so JSONL records keep the call-type-specific shape
-    that replay.py expects.
+    serialization time, so JSONL records keep the call-type-specific shape.
     """
 
     task: str

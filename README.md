@@ -40,7 +40,6 @@ uv run main.py --clean                 # remove stale state entries, then exit
 uv run main.py --stats                 # rich-formatted summary of state.json (per-task/per-source last_run, next_run, item counts)
 uv run main.py --summarize <url>       # fetch YouTube transcript and print summary
 uv run main.py --analysis --task <t>   # inspection mode: LLM reasoning + ELI5 reasons, dry-run, render to stdout (extra tokens)
-uv run main.py --replay <jsonl> --models deepseek:deepseek-v4-flash,gemini:gemini-2.5-flash --call filter
 uv run main.py --verbose               # verbose output
 ```
 
@@ -53,15 +52,7 @@ Both paths can be overridden with `--config` and `--state`.
 
 ## Eval data
 
-Every run writes a JSONL of its LLM calls (prompts, responses, tokens, latency, optional reasoning trace) under `<state_dir>/evals/<task>/<run_iso>.jsonl`. Use these to spot-check what the LLM saw and said on any past run, or feed them to `--replay` to compare against alternative models. The replay command re-issues each captured call against the listed `provider:model` pairs using the exact same instructions and input, so the only variable is the model:
-
-```sh
-uv run main.py --replay ~/.local/share/claudinho/evals/world-news/2026-05-13T08-00-00.jsonl \
-  --models deepseek:deepseek-v4-flash,gemini:gemini-2.5-flash \
-  --call filter
-```
-
-Output is written to `<state_dir>/evals/replays/<basename>__replay_<ts>.json` with the original captured response included as the reference.
+Every run writes a JSONL of its LLM calls (prompts, responses, tokens, latency, optional reasoning trace) under `<state_dir>/evals/<task>/<run_iso>.jsonl`. Use these to spot-check what the LLM saw and said on any past run — for a curate call that includes the per-item verdicts and reasons, the memory briefing, and (when `curate.corroborate` is on) the search trajectory and prompt-cache hit/miss counts.
 
 ## Cron example
 

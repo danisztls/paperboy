@@ -40,7 +40,6 @@ The project uses `uv` (see `uv.lock`, `.python-version` pinning Python 3.14).
   - `--analysis-limit-items N` (default 7, 0 = unlimited): cap entries per feed
   - `--analysis-limit-feeds N` (default 7, 0 = unlimited): cap feeds per task
   - `--human`: render rich/human-readable output to stdout instead of JSON
-- Replay captured LLM calls against alternative models: `uv run main.py --replay <state_dir>/evals/<task>/<run_iso>.jsonl --models deepseek:deepseek-v4-flash,gemini:gemini-2.5-flash --call filter`
 
 After any implementation, run format then lint before finishing.
 
@@ -48,7 +47,7 @@ Config is read from `$XDG_CONFIG_HOME/claudinho/config.yaml` (default `~/.config
 
 Logs are written to `<state_dir>/logs/<timestamp>.log` on every run.
 
-Eval traces (every LLM call's prompt, response, tokens, latency, optional reasoning) are written to `<state_dir>/evals/<task_name>/<run_iso>.jsonl` on every run — one record per LLM call. Replay output goes to `<state_dir>/evals/replays/<basename>__replay_<ts>.json`. No rotation policy ships yet; clean up manually if disk pressure becomes an issue.
+Eval traces (every LLM call's prompt, response, tokens, latency, optional reasoning) are written to `<state_dir>/evals/<task_name>/<run_iso>.jsonl` on every run — one record per LLM call. No rotation policy ships yet; clean up manually if disk pressure becomes an issue.
 
 ## Architecture
 
@@ -60,7 +59,7 @@ Source.pull()  →  process.summarize_items() + process.curate_items()  →  Tar
 
 ### Root modules
 
-- `main.py` — CLI entry point. Parses args, then dispatches: one-shot modes (`--validate`, `--stats`, `--replay`, `--summarize`, `--get-content`) or `_async_main` (lock file, config+state load, auto-migration, retention pruning, `--clean`/`--migrate`/`--regenerate-state`, or the normal run-due-tasks-in-parallel path). Builds one `RunContext` (shared `aiohttp.ClientSession`, full config, `LLMHandles`, always-on `RunCapture` collector, `analysis` flag) and hands every due task to `tasks.processor_for(kind)`. After tasks finish, captured LLM calls are flushed to `<state_dir>/evals/<task>/<run_iso>.jsonl`. `--analysis` reshapes the run into "expensive inspection mode" (reasoning on, ELI5 filter reasons, item/feed truncation, dry-run, render to stdout). Public helpers (tested): `merge_task_results`, `prune_old_files`.
+- `main.py` — CLI entry point. Parses args, then dispatches: one-shot modes (`--validate`, `--stats`, `--summarize`, `--get-content`) or `_async_main` (lock file, config+state load, auto-migration, retention pruning, `--clean`/`--migrate`/`--regenerate-state`, or the normal run-due-tasks-in-parallel path). Builds one `RunContext` (shared `aiohttp.ClientSession`, full config, `LLMHandles`, always-on `RunCapture` collector, `analysis` flag) and hands every due task to `tasks.processor_for(kind)`. After tasks finish, captured LLM calls are flushed to `<state_dir>/evals/<task>/<run_iso>.jsonl`. `--analysis` reshapes the run into "expensive inspection mode" (reasoning on, ELI5 filter reasons, item/feed truncation, dry-run, render to stdout). Public helpers (tested): `merge_task_results`, `prune_old_files`.
 - `logsetup.py` — logging configuration: journald / rich-tty / plain handlers picked by environment (`setup(verbose=)`), per-run DEBUG file log (`add_file_handler`), `APP_LOGGERS`, third-party noise silencing.
 - `pipeline.py` — `Source` / `Target` ABCs and data types: `Item`, `PullResult` (with optional `name`), `CurateResult`, `MemoryParagraph` (`text` + `citations: list[int]`), `PushContext`. To add a source (e.g. Reddit, YouTube), implement `Source`. To add a target (Telegram, email), implement `Target` — no changes to task orchestration needed.
 - `stats.py` — `print_stats(config, state)` builds a Rich table of per-task and per-source state (kind, period, last_run, estimated next_run, item counts) for `--stats` mode. Pure read-only: no network, no LLM, no state writes. `humanize_minutes` lives here (also used by `main._log_not_due`).
@@ -78,7 +77,7 @@ Each has its own `CLAUDE.md` with details:
 - [`providers/llm/CLAUDE.md`](providers/llm/CLAUDE.md) — provider adapters, `ModelHandle`, `ModelSpec` capability registry
 - [`state/CLAUDE.md`](state/CLAUDE.md) — state I/O and schema migrations
 - [`config/CLAUDE.md`](config/CLAUDE.md) — config loading and validation
-- [`evals/CLAUDE.md`](evals/CLAUDE.md) — captured LLM-call traces and replay
+- [`evals/CLAUDE.md`](evals/CLAUDE.md) — captured LLM-call traces
 - [`tests/CLAUDE.md`](tests/CLAUDE.md) — test approach, fixtures, and what's covered
 - [`benchmark/CLAUDE.md`](benchmark/CLAUDE.md) — standalone benchmark script
 
