@@ -2,6 +2,7 @@
 
 import logging
 import re
+import unicodedata
 from datetime import UTC, datetime, timedelta
 
 from pipeline import CoverageUpdate, Item
@@ -16,7 +17,11 @@ ROLLUP_MAX_PER_PERIOD = 15  # top topics kept per month bucket (by frequency)
 
 
 def _slugify(label: str) -> str:
-    s = re.sub(r"[^a-z0-9]+", "-", (label or "").lower()).strip("-")
+    # Transliterate accents to ASCII (ç→c, ã→a) before dropping non-alphanumerics,
+    # so "Eleição" slugifies to "eleicao", not "elei-o".
+    nfkd = unicodedata.normalize("NFKD", label or "")
+    ascii_ = "".join(c for c in nfkd if not unicodedata.combining(c)).casefold()
+    s = re.sub(r"[^a-z0-9]+", "-", ascii_).strip("-")
     return s[:48] or "topic"
 
 

@@ -29,6 +29,11 @@ def test_new_topic_seeded_with_frequency_one():
     assert cov["rollups"] == []
 
 
+def test_slug_transliterates_accents():
+    cov = apply_coverage({}, [_cu(None, "Eleição presidencial no Peru 2026", "x")], NOW)
+    assert cov["ledger"][0]["id"] == "eleicao-presidencial-no-peru-2026"
+
+
 def test_continuation_bumps_frequency_preserves_first_seen():
     prev = [
         {
