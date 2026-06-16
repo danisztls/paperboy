@@ -105,6 +105,10 @@ def get_adapter(provider: str | None = None, api_key: str | None = None) -> LLMA
         from providers.llm.gemini import GeminiAdapter
 
         return GeminiAdapter(api_key=api_key)
+    if provider == "claude_cli":
+        from providers.llm.claude_cli import ClaudeCliAdapter
+
+        return ClaudeCliAdapter(api_key=api_key)
     from providers.llm.deepseek import DeepSeekAdapter
 
     return DeepSeekAdapter(api_key=api_key)

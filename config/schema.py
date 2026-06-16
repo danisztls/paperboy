@@ -43,7 +43,7 @@ _Period = Annotated[str | None, AfterValidator(_period_validator)]
 
 # --- Model capability registry ---
 
-Provider = Literal["deepseek", "gemini"]
+Provider = Literal["deepseek", "gemini", "claude_cli"]
 ReasoningLevel = Literal["off", "low", "medium", "high"]
 
 
@@ -139,6 +139,9 @@ class _ApiKeys(BaseModel):
     model_config = ConfigDict(extra="forbid")
     deepseek: str | None = None
     gemini: str | None = None
+    # Optional: setting this opts into direct Anthropic API billing for the claude_cli
+    # provider. Omit to reuse the existing Claude Code login (subscription OAuth).
+    claude_cli: str | None = None
 
 
 class _GlobalLLM(BaseModel):

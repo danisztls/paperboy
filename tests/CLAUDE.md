@@ -22,13 +22,14 @@ Fixtures live in `tests/fixtures/` (`feed_basic.xml`, `feed_b.xml`, `article_bas
 - `config.scope.layer_dict` (global→task→feed block merging: precedence, partial overrides, non-dict/None blocks skipped, inputs not mutated).
 - `main.merge_task_results` orchestrator invariant — empty / exception task results leave state untouched.
 - `main.prune_old_files` retention sweep.
+- `claude_cli` adapter (`test_claude_cli_adapter.py`): the subprocess boundary is faked (`shutil.which` stubbed + `asyncio.create_subprocess_exec` → `_FakeProc`), asserting argv construction (hermetic flags, `--system-prompt`/`--effort` conditionals, no `--json-schema`), the `messages`→system+body render, structured parse + trace keys, env auth-stripping, prompt-over-stdin, and fail-open paths. No real `claude` call.
 
 ## Not covered
 
 - Real-estate task (vasco realestate adapter).
 - `asyncio.gather(..., return_exceptions=True)` isolation at the `_async_main` level.
 
-The only `monkeypatch` in the suite is `asyncio.sleep` in the fail-open test (to skip the 10s curate retry delay) — stdlib, not a production class.
+Production-class `monkeypatch` is confined to two spots: `asyncio.sleep` in the fail-open test (to skip the 10s curate retry delay — stdlib), and the `claude_cli` adapter test (which stubs `shutil.which` + `asyncio.create_subprocess_exec` to fake the `claude` subprocess). The rest of the suite fakes only the LLM-adapter and aiohttp boundaries.
 
 ## Gotcha
 

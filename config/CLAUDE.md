@@ -17,7 +17,7 @@ Config loading, primitives/accessors, and validation. `__init__.py` only re-expo
 
 - `validate_config(config)` — validates the full config against `_Config`, returns a list of error strings.
 - Global LLM config is split into four top-level sections: `llm` (API keys only, under `llm.api_key`) and `curate` / `research` / `summarize` (each can carry its own `model` spec). Task/feed-level `curate.model` etc. override the matching global section.
-- Model specs are verbose dicts: `{provider, name, reasoning?}` where provider ∈ `{deepseek, gemini}` and reasoning ∈ `{off, low, medium, high}` (absent = off).
+- Model specs are verbose dicts: `{provider, name, reasoning?}` where provider ∈ `{deepseek, gemini, claude_cli}` and reasoning ∈ `{off, low, medium, high}` (absent = off). `claude_cli` shells out to the local `claude` CLI (Claude Code) and reuses its login by default — set `llm.api_key.claude_cli` only to opt into direct API billing.
 - The Pydantic `ModelSpec` model validates each entry against `providers/llm/models.json` — unknown model names log a warning; setting `reasoning: low|medium|high` on a model whose registry entry has `thinking: false` is a hard error.
 - `resolve_model_specs(spec)` returns `list[ModelSpec]` from either a single dict or a list (list = fallback chain, tried in order).
 

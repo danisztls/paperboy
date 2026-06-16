@@ -20,6 +20,13 @@ def test_modelspec_reasoning_optional():
     assert s.reasoning is None
 
 
+def test_modelspec_accepts_claude_cli():
+    s = ModelSpec.model_validate({"provider": "claude_cli", "name": "sonnet", "reasoning": "high"})
+    assert s.provider == "claude_cli"
+    assert s.name == "sonnet"
+    assert s.reasoning == "high"
+
+
 def test_modelspec_rejects_unknown_provider():
     with pytest.raises(ValidationError):
         ModelSpec.model_validate({"provider": "cohere", "name": "command-r"})
