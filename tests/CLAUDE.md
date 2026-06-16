@@ -15,7 +15,7 @@ Fixtures live in `tests/fixtures/` (`feed_basic.xml`, `feed_b.xml`, `article_bas
 
 - Curate happy path, already-seen dedup, single-feed pull failure (`None` from `Source.pull()` must not update `last_run`), filter-fails-twice fail-open.
 - Digest with `cite_map` resolution (structured `MemoryParagraph.citations` IDs → `[Source](url)` in `FileDigestTarget` and `[[Source](<url>)]` in `DiscordDigestTarget`; the stored `coverage.ledger` topic states are plain text, no markers to strip).
-- Coverage-ledger merge (`test_coverage_ledger.py`): new-topic seeding (freq 1), continuation (freq++, state refresh, `first_seen` preserved), slug-collision merge, age-based eviction.
+- Coverage merge (`test_coverage_ledger.py`): new-topic seeding (freq 1), continuation (freq++, state refresh, `first_seen` preserved), slug-collision merge, dormant eviction folding into a month rollup bucket (freq preserved), and rollups carrying forward across runs.
 - Research task happy path + loop limits (`max_steps`/`max_reads`), query/URL dedup, vascod-failure and decision-`None` resilience.
 - Agentic corroboration curate (`curate.corroborate`): the search → finish → verdict loop over a warm conversation, with `process._vasco.search` faked; verdicts decode onto items and the final call carries a multi-turn `messages` conversation.
 - `--analysis` filter render (`test_render.py`): the corroboration trajectory (searched queries + top hits) and cache hit ratio show on the agentic path, and are omitted on the standard path.

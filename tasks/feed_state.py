@@ -9,8 +9,10 @@ from util import utc_now_iso
 
 log = logging.getLogger(__name__)
 
-LEDGER_ACTIVE_DAYS = 21  # evict topics not covered within this window
-LEDGER_MAX_TOPICS = 60  # hard cap on ledger size (most-recently-seen kept)
+LEDGER_ACTIVE_DAYS = 21  # topics dormant longer than this leave the active ledger
+LEDGER_MAX_TOPICS = 60  # hard cap on the active ledger (most-recently-seen kept)
+ROLLUP_MAX_MONTHS = 6  # months of aged backdrop retained
+ROLLUP_MAX_PER_PERIOD = 15  # top topics kept per month bucket (by frequency)
 
 
 def _slugify(label: str) -> str:
@@ -19,17 +21,19 @@ def _slugify(label: str) -> str:
 
 
 def apply_coverage(
-    prev_ledger: list[dict], coverage: list[CoverageUpdate] | None, now_iso: str
-) -> list[dict]:
-    """Upsert this run's coverage updates into the topic ledger.
+    prev_coverage: dict, coverage: list[CoverageUpdate] | None, now_iso: str
+) -> dict:
+    """Update the coverage state: an active topic ledger + aged month rollups.
 
-    Each update either continues an existing topic (bumping `frequency`, refreshing
-    `state`/`last_seen`) or creates one (id = slug of the label; a colliding slug merges
-    into the existing topic). Topics not seen within LEDGER_ACTIVE_DAYS are evicted and
-    the ledger is capped at LEDGER_MAX_TOPICS (most-recently-seen kept). Code owns
-    frequency/timestamps so the trajectory bar reads a real count, not an LLM guess.
+    This run's updates upsert into the active ledger — each continues an existing topic
+    (bumping `frequency`, refreshing `state`/`last_seen`) or creates one (id = slug of the
+    label; a colliding slug merges in). Code owns frequency/timestamps so the trajectory
+    bar reads a real count. Topics dormant past LEDGER_ACTIVE_DAYS leave the active ledger
+    and fold into per-month `rollups` buckets (the long-horizon, cutoff-gap backdrop):
+    each bucket keeps the top ROLLUP_MAX_PER_PERIOD topics by frequency, and the most
+    recent ROLLUP_MAX_MONTHS buckets are retained. Returns ``{"ledger": [...], "rollups": [...]}``.
     """
-    by_id = {e["id"]: dict(e) for e in prev_ledger}
+    by_id = {e["id"]: dict(e) for e in prev_coverage.get("ledger", [])}
     for u in coverage or []:
         tid = u.continues if (u.continues and u.continues in by_id) else _slugify(u.label)
         entry = by_id.get(tid)
@@ -49,9 +53,38 @@ def apply_coverage(
         except ValueError:
             return datetime.now(UTC)
 
-    ledger = [e for e in by_id.values() if _seen(e) >= cutoff]
-    ledger.sort(key=lambda e: e.get("last_seen", ""), reverse=True)
-    return ledger[:LEDGER_MAX_TOPICS]
+    active, dormant = [], []
+    for e in by_id.values():
+        (active if _seen(e) >= cutoff else dormant).append(e)
+
+    # Fold dormant topics into per-month rollup buckets.
+    rollups = {
+        r["period"]: {"period": r["period"], "topics": list(r.get("topics", []))}
+        for r in prev_coverage.get("rollups", [])
+    }
+    for e in dormant:
+        period = str(e.get("last_seen", ""))[:7] or "unknown"
+        bucket = rollups.setdefault(period, {"period": period, "topics": []})
+        topic = {
+            "id": e["id"],
+            "label": e.get("label", e["id"]),
+            "state": e.get("state", ""),
+            "frequency": int(e.get("frequency", 1)),
+        }
+        existing = next((t for t in bucket["topics"] if t.get("id") == e["id"]), None)
+        if existing:
+            existing.update(topic)
+        else:
+            bucket["topics"].append(topic)
+    for b in rollups.values():
+        b["topics"].sort(key=lambda t: t.get("frequency", 1), reverse=True)
+        b["topics"] = b["topics"][:ROLLUP_MAX_PER_PERIOD]
+    rollup_list = sorted(rollups.values(), key=lambda r: r["period"], reverse=True)[
+        :ROLLUP_MAX_MONTHS
+    ]
+
+    active.sort(key=lambda e: e.get("last_seen", ""), reverse=True)
+    return {"ledger": active[:LEDGER_MAX_TOPICS], "rollups": rollup_list}
 
 
 def merge_feed_state(
@@ -103,7 +136,7 @@ def build_feed_task_state(
     all_annotated: list[Item],
     has_curate: bool,
     failed_ids: set[str],
-    prev_ledger: list[dict],
+    prev_coverage: dict,
     coverage: list[CoverageUpdate] | None,
     task_name: str,
 ) -> dict:
@@ -132,13 +165,14 @@ def build_feed_task_state(
 
     new_task_state: dict = {"feeds": new_feeds_state}
     if has_curate:
-        ledger = apply_coverage(prev_ledger, coverage, now_iso)
-        new_task_state["coverage"] = {"ledger": ledger}
+        cov = apply_coverage(prev_coverage, coverage, now_iso)
+        new_task_state["coverage"] = cov
         if coverage:
             log.info(
-                "[%s] Coverage ledger: %d topics (%d touched this run)",
+                "[%s] Coverage: %d active topics, %d rollup months (%d touched this run)",
                 task_name,
-                len(ledger),
+                len(cov["ledger"]),
+                len(cov["rollups"]),
                 len(coverage),
             )
     return new_task_state
