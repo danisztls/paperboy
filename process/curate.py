@@ -89,11 +89,21 @@ def _format_ledger(ledger: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _format_rollups(rollups: list[dict]) -> str:
+    """Render aged month rollups as compact background lines (period → top topic labels)."""
+    lines = []
+    for r in rollups:
+        topics = "; ".join(t.get("label", "") for t in r.get("topics", []) if t.get("label"))
+        lines.append(f"- {r.get('period', '?')}: {topics}")
+    return "\n".join(lines)
+
+
 def _build_curate_instructions(
     filter_cfg: dict,
     *,
     language: str,
     ledger: list[dict] | None,
+    rollups: list[dict] | None = None,
     extra_instructions: str | None,
     explain: bool,
 ) -> str:
@@ -110,6 +120,15 @@ def _build_curate_instructions(
             "its latest known state. Use the ledger for Step 2 (dedup + escalating-trajectory) and "
             "Step 3 (continuing vs new topics). Never cite a ledger topic as a source.\n\n"
             + _format_ledger(ledger)
+            + "\n\n"
+        )
+    if rollups:
+        prefix += (
+            "## Background — older coverage (context only, NOT for dedup)\n"
+            "Major topics your feeds covered in earlier months (most recent first). Use this "
+            "only as background for judging significance and for recognising a long-dormant "
+            "topic that resurfaces — do NOT dedup or apply the trajectory bar against it.\n\n"
+            + _format_rollups(rollups)
             + "\n\n"
         )
 
@@ -197,6 +216,7 @@ async def curate_entries(
     *,
     language: str = "EN-US",
     ledger: list[dict] | None = None,
+    rollups: list[dict] | None = None,
     adapter: LLMAdapter,
     extra_instructions: str | None = None,
     reasoning: bool | str | dict = False,
@@ -218,6 +238,7 @@ async def curate_entries(
         filter_cfg,
         language=language,
         ledger=ledger,
+        rollups=rollups,
         extra_instructions=extra_instructions,
         explain=explain,
     )
@@ -250,6 +271,7 @@ async def curate_entries_agentic(
     *,
     language: str = "EN-US",
     ledger: list[dict] | None = None,
+    rollups: list[dict] | None = None,
     adapter: LLMAdapter,
     extra_instructions: str | None = None,
     reasoning: bool | str | dict = False,
@@ -275,6 +297,7 @@ async def curate_entries_agentic(
         filter_cfg,
         language=language,
         ledger=ledger,
+        rollups=rollups,
         extra_instructions=extra_instructions,
         explain=explain,
     )
@@ -420,6 +443,7 @@ async def curate_items(
     *,
     language: str = "EN-US",
     ledger: list[dict] | None = None,
+    rollups: list[dict] | None = None,
     collector=None,
     analysis: bool = False,
     task_name: str | None = None,
@@ -470,6 +494,7 @@ async def curate_items(
     kwargs = dict(
         language=language,
         ledger=ledger,
+        rollups=rollups,
         adapter=handle.adapter,
         extra_instructions=effective_cfg.get("instructions") or None,
         reasoning=handle.reasoning_for(analysis),

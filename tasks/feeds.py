@@ -286,7 +286,7 @@ async def process_feed_task(task_cfg: dict, state: dict, ctx: RunContext) -> dic
         task_state = state.get("tasks", {}).get(task_name, {})
         feeds_state = task_state.get("feeds", {})
 
-        prev_ledger = task_state.get("coverage", {}).get("ledger", []) if curate_cfg else []
+        prev_coverage = task_state.get("coverage", {}) if curate_cfg else {}
 
         # --- Pull ---
         source = RSSSource(ctx.max_age_seconds)
@@ -311,7 +311,8 @@ async def process_feed_task(task_cfg: dict, state: dict, ctx: RunContext) -> dic
                 curate_cfg,
                 ctx.llm.curate,
                 language=curate_cfg.get("language") or ctx.language,
-                ledger=prev_ledger or None,
+                ledger=prev_coverage.get("ledger") or None,
+                rollups=prev_coverage.get("rollups") or None,
                 collector=ctx.collector,
                 analysis=ctx.analysis,
                 task_name=task_name,
@@ -347,7 +348,7 @@ async def process_feed_task(task_cfg: dict, state: dict, ctx: RunContext) -> dic
                 all_annotated=all_annotated,
                 has_curate=bool(curate_cfg),
                 failed_ids=failed_ids,
-                prev_ledger=prev_ledger,
+                prev_coverage=prev_coverage,
                 coverage=coverage,
                 task_name=task_name,
             )
