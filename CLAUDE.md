@@ -61,7 +61,7 @@ Source.pull()  →  process.summarize_items() + process.curate_items()  →  Tar
 
 - `main.py` — CLI entry point. Parses args, then dispatches: one-shot modes (`--validate`, `--stats`, `--summarize`, `--get-content`) or `_async_main` (lock file, config+state load, auto-migration, retention pruning, `--clean`/`--migrate`/`--regenerate-state`, or the normal run-due-tasks-in-parallel path). Builds one `RunContext` (shared `aiohttp.ClientSession`, full config, `LLMHandles`, always-on `RunCapture` collector, `analysis` flag) and hands every due task to `tasks.processor_for(kind)`. After tasks finish, captured LLM calls are flushed to `<state_dir>/evals/<task>/<run_iso>.jsonl`. `--analysis` reshapes the run into "expensive inspection mode" (reasoning on, ELI5 filter reasons, item/feed truncation, dry-run, render to stdout). Public helpers (tested): `merge_task_results`, `prune_old_files`.
 - `logsetup.py` — logging configuration: journald / rich-tty / plain handlers picked by environment (`setup(verbose=)`), per-run DEBUG file log (`add_file_handler`), `APP_LOGGERS`, third-party noise silencing.
-- `pipeline.py` — `Source` / `Target` ABCs and data types: `Item`, `PullResult` (with optional `name`), `CurateResult`, `MemoryParagraph` (`text` + `citations: list[int]`), `PushContext`. To add a source (e.g. Reddit, YouTube), implement `Source`. To add a target (Telegram, email), implement `Target` — no changes to task orchestration needed.
+- `pipeline.py` — `Source` / `Target` ABCs and data types: `Item`, `PullResult` (with optional `name`), `CurateResult` (carries `coverage`), `CoverageUpdate` (topic ledger update + digest paragraph), `MemoryParagraph` (`text` + `citations: list[int]`, the digest-render type), `PushContext`. To add a source (e.g. Reddit, YouTube), implement `Source`. To add a target (Telegram, email), implement `Target` — no changes to task orchestration needed.
 - `stats.py` — `print_stats(config, state)` builds a Rich table of per-task and per-source state (kind, period, last_run, estimated next_run, item counts) for `--stats` mode. Pure read-only: no network, no LLM, no state writes. `humanize_minutes` lives here (also used by `main._log_not_due`).
 - `util.py` — `utc_now_iso()` (the second-precision ISO timestamp used throughout state).
 - `constants.py` — `USER_AGENT`.
@@ -87,7 +87,7 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
 
 ```json
 {
-  "_version": 4,
+  "_version": 7,
   "_last_run": "<iso8601 utc>",
   "_last_clean": "<iso8601 utc>",
   "tasks": {
@@ -101,8 +101,10 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
           "last_run": "<iso8601 utc>"
         }
       },
-      "memory": {
-        "2026-05-01T12:00:00Z": "Recurring themes this week include..."
+      "coverage": {
+        "ledger": [
+          {"id": "us-iran-war", "label": "US–Iran war & ceasefire", "state": "Latest factual state…", "first_seen": "<iso8601 utc>", "last_seen": "<iso8601 utc>", "frequency": 7}
+        ]
       }
     },
     "world-news": {"last_run": "<iso8601 utc>"},
@@ -135,7 +137,7 @@ State is keyed by task name under a top-level `"tasks"` key. Meta keys live at t
 ```
 
 - `feeds` — per-URL state. `name` resolved from cfg → feed `<title>` → url. `items` is replaced on each successful fetch (bounded by feed length). `first_seen` stamped when an item is first seen and carried forward; `source_date` is the entry's original pubDate. `filter_pass` / `filter_reason` only present on items from tasks with a `curate` key.
-- `memory` — only on curated RSS/digest tasks. Each run appends one entry keyed by ISO8601 timestamp; history capped at 20 entries (oldest evicted). The LLM receives the last 5 entries as context on each run.
+- `coverage` — only on curated tasks (digest and non-digest alike; curation is identical, only presentation differs). `coverage.ledger` is a **topic-keyed** list: each entry is a topic the curator has covered, with `state` (latest factual state — also the digest paragraph when the topic is touched), `frequency` (times covered, code-maintained), and `first_seen`/`last_seen`. Step 3 of curate emits one `CoverageUpdate` per passing topic (continue an existing `id` or start a new one); `feed_state.apply_coverage` upserts them, bumps `frequency`, evicts topics dormant past 21 days, and caps at 60. The whole active ledger is fed back as Step-2 dedup + escalating-trajectory context (the bar reads `frequency` directly). Replaces the old prose `memory` log (v7 migration drops it).
 - `climate` — only on `kind: smart` weather tasks. Monthly cache (μ + σ for apparent max/min and daily-mean humidity over the current calendar month across the last `CLIMATE_NORMAL_YEARS` years). Refreshed on month rollover. Pre-σ caches (written before the σ rollout) are silently treated as stale (`apparent_max_std` absent) and force a single refetch.
 - `tickers` — only on finance `monitor` tasks. Per-ticker `last_price` is the baseline for the next tick's delta check; `band_side` (`"in" | "above" | "below"`) is present only when the rule sets a `price:` band and gates band-crossing dedup. First-ever run for a ticker only records the baseline — no alert fires until the next tick. Report-mode finance tasks store only `last_run`.
 - `realestate` — only on real-estate tasks (named `scrapers` in v4/v5; renamed in v6). Keyed by source `url` → `{items, last_run}`. Each successful source pull replaces its own `items` (bounded by listings on the page) and stamps its own `last_run`. Task-level `last_run` is the latest among sources. The `__legacy__` bucket (from the v3→v4 migration) contributes URLs to every source's `seen` set for dedup but is never written to; preserved by `--clean` so it can shrink only as URLs cycle out of other sources' coverage.

@@ -59,10 +59,10 @@ async def test_curate_happy(mock_http, fake_adapter, tmp_path):
     posts = [c for c in mock_http.requests if c[0] == "POST"]
     assert len(posts) == 1, f"expected 1 Discord POST, got {len(posts)}"
 
-    memory_log = result["test-curate"]["memory"]
-    assert len(memory_log) == 1
-    entry = next(iter(memory_log.values()))
-    assert "Cat news today" in entry
+    ledger = result["test-curate"]["coverage"]["ledger"]
+    assert len(ledger) == 1
+    assert "Cat news today" in ledger[0]["state"]
+    assert ledger[0]["frequency"] == 1
 
 
 async def test_curate_dedup(mock_http, fake_adapter, tmp_path):
@@ -303,7 +303,7 @@ async def test_curate_agentic_corroborates(fake_adapter, monkeypatch):
     by_url = {it.url: it for it in result.items}
     assert by_url["https://a.com"].filter_pass is True
     assert by_url["https://b.com"].filter_pass is False
-    assert result.memory and "treaty" in result.memory[0].text
+    assert result.coverage and "treaty" in result.coverage[0].state
     # 2 action turns + 1 final verdict.
     assert len(fake_adapter.structured_calls) == 3
     # The final verdict was issued over a multi-turn conversation (warm prefix),

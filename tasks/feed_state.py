@@ -1,14 +1,57 @@
-"""State merging for RSS/digest tasks (per-feed items + memory log)."""
+"""State merging for RSS/digest tasks (per-feed items + the coverage ledger)."""
 
 import logging
+import re
+from datetime import UTC, datetime, timedelta
 
-from pipeline import Item, MemoryParagraph
+from pipeline import CoverageUpdate, Item
 from util import utc_now_iso
 
 log = logging.getLogger(__name__)
 
-MEMORY_MAX_ENTRIES = 20  # memory log cap; oldest evicted
-MEMORY_CONTEXT_ENTRIES = 5  # entries sent to the LLM as context each run
+LEDGER_ACTIVE_DAYS = 21  # evict topics not covered within this window
+LEDGER_MAX_TOPICS = 60  # hard cap on ledger size (most-recently-seen kept)
+
+
+def _slugify(label: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", (label or "").lower()).strip("-")
+    return s[:48] or "topic"
+
+
+def apply_coverage(
+    prev_ledger: list[dict], coverage: list[CoverageUpdate] | None, now_iso: str
+) -> list[dict]:
+    """Upsert this run's coverage updates into the topic ledger.
+
+    Each update either continues an existing topic (bumping `frequency`, refreshing
+    `state`/`last_seen`) or creates one (id = slug of the label; a colliding slug merges
+    into the existing topic). Topics not seen within LEDGER_ACTIVE_DAYS are evicted and
+    the ledger is capped at LEDGER_MAX_TOPICS (most-recently-seen kept). Code owns
+    frequency/timestamps so the trajectory bar reads a real count, not an LLM guess.
+    """
+    by_id = {e["id"]: dict(e) for e in prev_ledger}
+    for u in coverage or []:
+        tid = u.continues if (u.continues and u.continues in by_id) else _slugify(u.label)
+        entry = by_id.get(tid)
+        if entry is None:
+            entry = {"id": tid, "label": u.label, "first_seen": now_iso, "frequency": 0}
+            by_id[tid] = entry
+        entry["label"] = u.label or entry.get("label", tid)
+        entry["state"] = u.state
+        entry["last_seen"] = now_iso
+        entry["frequency"] = int(entry.get("frequency", 0)) + 1
+
+    cutoff = datetime.now(UTC) - timedelta(days=LEDGER_ACTIVE_DAYS)
+
+    def _seen(e: dict) -> datetime:
+        try:
+            return datetime.fromisoformat(e.get("last_seen", ""))
+        except ValueError:
+            return datetime.now(UTC)
+
+    ledger = [e for e in by_id.values() if _seen(e) >= cutoff]
+    ledger.sort(key=lambda e: e.get("last_seen", ""), reverse=True)
+    return ledger[:LEDGER_MAX_TOPICS]
 
 
 def merge_feed_state(
@@ -60,11 +103,11 @@ def build_feed_task_state(
     all_annotated: list[Item],
     has_curate: bool,
     failed_ids: set[str],
-    raw_history: dict,
-    memory_paragraphs: list[MemoryParagraph] | None,
+    prev_ledger: list[dict],
+    coverage: list[CoverageUpdate] | None,
     task_name: str,
 ) -> dict:
-    """Merge per-feed state, update memory log; returns the task_state dict."""
+    """Merge per-feed state, update the coverage ledger; returns the task_state dict."""
     now_iso = utc_now_iso()
     new_feeds_state = dict(feeds_state)
     annotated_by_link = {it.id: it for it in all_annotated}
@@ -89,15 +132,13 @@ def build_feed_task_state(
 
     new_task_state: dict = {"feeds": new_feeds_state}
     if has_curate:
-        history = dict(raw_history)
-        if memory_paragraphs is not None:
-            joined = "\n\n".join(p.text for p in memory_paragraphs)
-            history[now_iso] = " ".join(
-                line.strip() for line in joined.splitlines() if line.strip()
+        ledger = apply_coverage(prev_ledger, coverage, now_iso)
+        new_task_state["coverage"] = {"ledger": ledger}
+        if coverage:
+            log.info(
+                "[%s] Coverage ledger: %d topics (%d touched this run)",
+                task_name,
+                len(ledger),
+                len(coverage),
             )
-            if len(history) > MEMORY_MAX_ENTRIES:
-                for old_key in sorted(history)[: len(history) - MEMORY_MAX_ENTRIES]:
-                    del history[old_key]
-            log.info("[%s] Memory updated (%d chars)", task_name, len(joined))
-        new_task_state["memory"] = history
     return new_task_state

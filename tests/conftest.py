@@ -14,7 +14,7 @@ import pytest
 from aioresponses import aioresponses
 from pydantic import BaseModel
 
-from process.curate import CurateParagraph, FilterDecisions, FilterItem
+from process.curate import CoverageItem, FilterDecisions, FilterItem
 from providers.llm.base import LLMAdapter, LLMResponse, ModelHandle
 from tasks import LLMHandles, RunContext
 
@@ -87,22 +87,27 @@ class FakeLLMAdapter(LLMAdapter):
     ) -> None:
         """Convenience: queue a FilterDecisions for the next complete_structured call.
 
-        memory is a list of {"text": str, "citations": list[int]} dicts.
+        `memory` is a list of coverage dicts: {"text"|"state", "citations", "section"?,
+        "label"?, "continues"?}. `text` maps to the topic `state`; `label` defaults from it.
         """
-        paragraphs = [
-            CurateParagraph(
-                text=p["text"],
-                citations=p.get("citations", []),
-                section=p.get("section"),
+        coverage = []
+        for c in memory or []:
+            state = c.get("state", c.get("text", ""))
+            coverage.append(
+                CoverageItem(
+                    continues=c.get("continues"),
+                    label=c.get("label") or state[:40] or "topic",
+                    section=c.get("section"),
+                    state=state,
+                    citations=c.get("citations", []),
+                )
             )
-            for p in (memory or [])
-        ]
         self.queue_structured(
             FilterDecisions(
                 items=[
                     FilterItem(id=it["id"], passes=it["pass"], reason=it["reason"]) for it in items
                 ],
-                memory=paragraphs,
+                coverage=coverage,
             )
         )
 

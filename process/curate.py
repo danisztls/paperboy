@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from pipeline import Citation, CurateResult, Item, MemoryParagraph
+from pipeline import Citation, CoverageUpdate, CurateResult, Item
 from providers.llm.base import LLMAdapter, ModelHandle
 
 log = logging.getLogger(__name__)
@@ -21,11 +21,17 @@ class FilterItem(BaseModel):
     reason: str
 
 
-class CurateParagraph(BaseModel):
-    """One paragraph of the memory briefing with its supporting item IDs."""
+class CoverageItem(BaseModel):
+    """One topic the curator covered this run (structured-output shape).
 
+    `continues` ties it to an existing coverage-ledger topic (or null = new topic);
+    `state` is the latest factual state and doubles as the digest briefing paragraph.
+    """
+
+    continues: str | None = None
+    label: str
     section: str | None = None
-    text: str
+    state: str
     citations: list[int] = []
 
 
@@ -33,7 +39,7 @@ class FilterDecisions(BaseModel):
     """Structured-output shape produced by the LLM curate call."""
 
     items: list[FilterItem]
-    memory: list[CurateParagraph] = []
+    coverage: list[CoverageItem] = []
 
 
 class CurateAction(BaseModel):
@@ -72,27 +78,38 @@ def _resolve_model_reasoning(filter_cfg, global_model, reasoning):
     return model, reasoning
 
 
+def _format_ledger(ledger: list[dict]) -> str:
+    """Render the coverage ledger as compact lines the model can match + reference."""
+    lines = []
+    for e in ledger:
+        lines.append(
+            f"- id={e['id']} | freq={e.get('frequency', 1)} | last={str(e.get('last_seen', ''))[:10]} | {e.get('label', '')}\n"
+            f"    {e.get('state', '')}"
+        )
+    return "\n".join(lines)
+
+
 def _build_curate_instructions(
     filter_cfg: dict,
     *,
     language: str,
-    memory_history: list[tuple[str, str]] | None,
+    ledger: list[dict] | None,
     extra_instructions: str | None,
     explain: bool,
 ) -> str:
-    """Build the full curate instructions (criteria + memory context + Step 1/2/3 body)."""
+    """Build the full curate instructions (criteria + coverage ledger + Step 1/2/3 body)."""
     criteria = filter_cfg.get("criteria", "")
     prefix = f"## Filter criteria\n{criteria}\n\n"
     if extra_instructions:
         prefix += f"## Additional instructions\n{extra_instructions}\n\n"
-    if memory_history:
-        entries = "\n---\n".join(f"[{ts[:16]}] {text}" for ts, text in memory_history)
+    if ledger:
         prefix += (
-            "## Already-published digests (DO NOT re-report)\n"
-            "The following are summaries of content that was already sent to readers in previous digest runs (oldest → newest). "
-            "Use them ONLY to identify stories that have already been covered. "
-            "They are not sources to cite — never reference them with a citation marker or attribute a fact to them.\n\n"
-            + entries
+            "## Coverage ledger (topics already sent to readers — DO NOT re-report)\n"
+            "Each line is a topic already covered: `id` (reference it when continuing the topic), "
+            "`freq` (how many times it has been covered), `last` (date last covered), the label, and "
+            "its latest known state. Use the ledger for Step 2 (dedup + escalating-trajectory) and "
+            "Step 3 (continuing vs new topics). Never cite a ledger topic as a source.\n\n"
+            + _format_ledger(ledger)
             + "\n\n"
         )
 
@@ -111,27 +128,27 @@ def _build_curate_instructions(
 
         **Step 1 — Filter.** For each item, decide whether it matches the filter criteria above. Mark it passes: true if it does, passes: false otherwise.
 
-        **Step 2 — Deduplicate.**
-        - Compare each item against the already-published digests above. Fail any item whose core story was already sent to readers and that does not introduce a significant new development (new facts, updated numbers, meaningful consequence). Use reason: 'already covered'. The goal is that readers never see the same story twice without a genuine update.
-        - Escalating-trajectory bar: the more times a trajectory has ALREADY appeared across the digests above, the higher the bar for sending another instalment. For a trajectory seen once, a concrete update may pass; for one covered repeatedly, mere incremental movement — another number, another routine step, another day of the same trend — is 'more of the same' and should fail with reason: 'trajectory already covered'. Pass it only when the new development changes the reader's picture: a reversal, a resolution, a turning point, a newly-realised consequence, or a structural rupture. Judge the trajectory by what the reader already knows from prior digests, not by whether any single number moved.
+        **Step 2 — Deduplicate against the coverage ledger.**
+        - Match each item to a ledger topic by subject. Fail any item whose topic is already in the ledger and that does not ADVANCE that topic's state with a significant new development (new facts, updated numbers, a meaningful consequence). Use reason: 'already covered'. Readers must never see the same topic twice without a genuine update.
+        - Escalating-trajectory bar: read the topic's `freq` directly — the higher the `freq`, the higher the bar for another instalment. At freq 1 a concrete update may pass; at a high `freq`, mere incremental movement (another number, another routine step, another day of the same trend) is 'more of the same' and should fail with reason: 'trajectory already covered'. Pass only when the development changes the reader's picture: a reversal, a resolution, a turning point, a newly-realised consequence, or a structural rupture.
         - Within this batch, if multiple items cover the same event, keep only the one(s) that contribute the most relevant information; fail the rest with reason: 'duplicate within batch'.
 
-        **Step 3 — Write memory.** Populate the `memory` array with a factual news briefing in {language}, one object per story. Each object has:
-        - `section`: short thematic heading (e.g. "Brasil", "Geopolítica", "Economia"). Set ONLY on the first paragraph of a new thematic group; use `null` for all subsequent paragraphs in the same group. Never put section names inside `text`.
-        - `text`: 1–3 sentences of plain prose. Lead with the core fact; add only the most essential detail (key figure, number, date, place, or consequence). No citation markers, brackets, section names, or meta-commentary in the text.
-        - `citations`: list of integer IDs from this batch whose content directly supports the paragraph. Usually one ID; use multiple only when two items genuinely cover the same event. Never reference IDs from the already-published digests.
+        **Step 3 — Update coverage.** For EVERY passing item, emit one `coverage` entry for the topic it covers, in {language}. Each entry has:
+        - `continues`: the `id` of the ledger topic this item continues, or `null` if it introduces a NEW topic not in the ledger.
+        - `label`: a short, canonical topic label that stays STABLE across runs so future instalments can be matched to it (e.g. "US–Iran war & ceasefire", not the headline).
+        - `section`: short thematic heading (e.g. "Brasil", "Geopolítica", "Economia"). Set ONLY on the first entry of a new thematic group; `null` otherwise. Never put the section inside `state`.
+        - `state`: 1–3 sentences giving the latest factual state of the topic. Lead with the core fact; add only the most essential detail (key figure, number, date, place, consequence). This text is shown to readers — no citation markers, brackets, section names, or meta-commentary. When continuing a ledger topic, write what is NEW, not a restatement.
+        - `citations`: list of integer item IDs from THIS batch supporting the entry. Usually one; use multiple only when two items genuinely cover the same event.
 
-        Rules for the briefing as a whole:
-        - Include ALL passing items — do not omit any.
-        - One object per story; never mix two distinct topics in one object. Do not pad.
-        - Never use semicolons to chain unrelated events in the same sentence.
-        - Group by theme using the `section` field; within each group order by significance. Lead with the single most significant development overall.
-        - No meta-commentary about the filtering process, no mention of what was discarded, no hedging phrases.
-        - Include enough factual specificity (names, numbers, dates, places) that a follow-up story on the same event can be recognised as a continuation on the next run.
+        Rules:
+        - One entry per passing topic; if two passing items cover the same topic, merge into ONE entry citing both. Emit nothing for failing items.
+        - Group by theme via `section`; within each group order by significance; lead with the single most significant development overall.
+        - No meta-commentary about the filtering process, no mention of what was discarded, no hedging.
+        - Include enough specificity (names, numbers, dates, places) that the next run can recognise a continuation.
 
         ## Output
 
-        Include ALL input items in `items`, both passing and failing. Populate `memory` with the news briefing from Step 3.
+        Include ALL input items in `items`, both passing and failing. Populate `coverage` with one entry per passing topic per Step 3.
 
         {reason_format}
     """)
@@ -139,19 +156,25 @@ def _build_curate_instructions(
 
 
 def _parse_decisions(decisions, prefix_tag, total, trace):
-    """Decode a FilterDecisions into (results_dict, paragraphs) and log the pass count."""
+    """Decode a FilterDecisions into (results_dict, coverage) and log the pass count."""
     if trace is not None:
         trace["raw_response"] = decisions.model_dump_json()
     parsed = {
         str(item.id): {"pass": item.passes, "reason": item.reason} for item in decisions.items
     }
-    paragraphs = [
-        MemoryParagraph(text=p.text, citations=p.citations, section=p.section)
-        for p in decisions.memory
+    coverage = [
+        CoverageUpdate(
+            continues=c.continues,
+            label=c.label,
+            state=c.state,
+            citations=c.citations,
+            section=c.section,
+        )
+        for c in decisions.coverage
     ]
     passed = sum(1 for v in parsed.values() if v["pass"])
     log.info("%sFilter: %d/%d items passed", prefix_tag, passed, total)
-    return parsed, paragraphs or None
+    return parsed, coverage or None
 
 
 def _format_search_results(query: str, results: list[dict] | None) -> str:
@@ -173,20 +196,20 @@ async def curate_entries(
     global_model: str | None = None,
     *,
     language: str = "EN-US",
-    memory_history: list[tuple[str, str]] | None = None,
+    ledger: list[dict] | None = None,
     adapter: LLMAdapter,
     extra_instructions: str | None = None,
     reasoning: bool | str | dict = False,
     trace: dict | None = None,
     task_name: str | None = None,
-) -> tuple[dict[str, dict], list[MemoryParagraph] | None] | None:
-    """Filter feed entries through LLM and optionally update memory.
+) -> tuple[dict[str, dict], list[CoverageUpdate] | None] | None:
+    """Filter feed entries through LLM and emit coverage updates.
 
-    Returns (results, memory_text) where results maps item ID → {"pass": bool, "reason": str}
-    and memory_text is the new memory entry (or None if the LLM didn't produce one).
+    Returns (results, coverage) where results maps item ID → {"pass": bool, "reason": str}
+    and coverage is the list of topics touched this run (or None if the LLM produced none).
     Returns None on failure (caller should fail-open: treat all entries as passing).
-    memory_history: chronological list of prior memory entries (oldest first) passed as
-    context so the model can build continuity across runs.
+    `ledger`: the active coverage-ledger topics (most recent first) passed as context so the
+    model can dedup, apply the escalating-trajectory bar, and continue topics across runs.
     """
     prefix_tag = f"[{task_name}] " if task_name else ""
     model, reasoning = _resolve_model_reasoning(filter_cfg, global_model, reasoning)
@@ -194,7 +217,7 @@ async def curate_entries(
     instructions = _build_curate_instructions(
         filter_cfg,
         language=language,
-        memory_history=memory_history,
+        ledger=ledger,
         extra_instructions=extra_instructions,
         explain=explain,
     )
@@ -226,14 +249,14 @@ async def curate_entries_agentic(
     global_model: str | None = None,
     *,
     language: str = "EN-US",
-    memory_history: list[tuple[str, str]] | None = None,
+    ledger: list[dict] | None = None,
     adapter: LLMAdapter,
     extra_instructions: str | None = None,
     reasoning: bool | str | dict = False,
     trace: dict | None = None,
     task_name: str | None = None,
     corroborate_cfg: dict | None = None,
-) -> tuple[dict[str, dict], list[MemoryParagraph] | None] | None:
+) -> tuple[dict[str, dict], list[CoverageUpdate] | None] | None:
     """Curate via a bounded agentic loop that corroborates with web search.
 
     One conversation seeded with [criteria+items] (a cache-stable prefix); each turn
@@ -251,7 +274,7 @@ async def curate_entries_agentic(
     judge_instructions = _build_curate_instructions(
         filter_cfg,
         language=language,
-        memory_history=memory_history,
+        ledger=ledger,
         extra_instructions=extra_instructions,
         explain=explain,
     )
@@ -396,7 +419,7 @@ async def curate_items(
     handle: ModelHandle | None,
     *,
     language: str = "EN-US",
-    memory_history: list[tuple[str, str]] | None = None,
+    ledger: list[dict] | None = None,
     collector=None,
     analysis: bool = False,
     task_name: str | None = None,
@@ -436,17 +459,17 @@ async def curate_items(
     }
 
     if not payload_groups:
-        return CurateResult(items=all_items, memory=None, cite_map=cite_map)
+        return CurateResult(items=all_items, coverage=None, cite_map=cite_map)
 
     if handle is None:
         log.error("LLM curate skipped — curate.model is not configured")
-        return CurateResult(items=all_items, memory=None, cite_map=cite_map)
+        return CurateResult(items=all_items, coverage=None, cite_map=cite_map)
 
     trace: dict | None = {} if collector else None
     effective_cfg = {**curate_cfg, "explain": True} if analysis else curate_cfg
     kwargs = dict(
         language=language,
-        memory_history=memory_history,
+        ledger=ledger,
         adapter=handle.adapter,
         extra_instructions=effective_cfg.get("instructions") or None,
         reasoning=handle.reasoning_for(analysis),
@@ -478,9 +501,9 @@ async def curate_items(
         if collector and trace is not None:
             _record_trace(collector, trace, model=handle.model, parsed=[], memory=None)
         log.error("Filter failed twice — treating all items as passing")
-        return CurateResult(items=all_items, memory=None, cite_map=cite_map)
+        return CurateResult(items=all_items, coverage=None, cite_map=cite_map)
 
-    raw_results, memory_paragraphs = llm_return
+    raw_results, coverage = llm_return
 
     if collector and trace is not None:
         parsed_list = []
@@ -499,9 +522,7 @@ async def curate_items(
                     "reason": v["reason"],
                 }
             )
-        memory_for_trace = (
-            "\n\n".join(p.text for p in memory_paragraphs) if memory_paragraphs else None
-        )
+        memory_for_trace = "\n\n".join(c.state for c in coverage) if coverage else None
         _record_trace(
             collector, trace, model=handle.model, parsed=parsed_list, memory=memory_for_trace
         )
@@ -521,4 +542,4 @@ async def curate_items(
         for item in all_items
     ]
 
-    return CurateResult(items=annotated, memory=memory_paragraphs, cite_map=cite_map)
+    return CurateResult(items=annotated, coverage=coverage, cite_map=cite_map)
