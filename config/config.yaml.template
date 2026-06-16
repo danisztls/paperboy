@@ -52,7 +52,7 @@ curate:                     # optional — global defaults for LLM curation/filt
   #     reasoning: low
   #   - provider: gemini
   #     name: gemini-2.5-flash
-  language: "EN-US"         # language for filter memory briefings (default: EN-US; per-task 'language' overrides)
+  language: "EN-US"         # language for the curate coverage briefing (default: EN-US; per-task 'language' overrides)
 
 research:                   # optional — global defaults for agentic research tasks
   model:                    # model(s) driving the research loop. Array form = fallback chain;
@@ -89,7 +89,7 @@ tasks:
     #     provider: openai
     #     name: gpt-5.4-mini
     #     reasoning: low     # optional
-    #   language: "PT-BR"    # optional; language for memory briefings; falls back to curate.language then EN-US
+    #   language: "PT-BR"    # optional; language for the coverage briefing; falls back to curate.language then EN-US
     #   instructions: "..."  # optional; extra instructions appended after the filter criteria
     #   explain: true        # optional — use filter_reason as item body (default: false)
     #   corroborate:         # optional — agentic loop that web-searches (via vasco) to verify

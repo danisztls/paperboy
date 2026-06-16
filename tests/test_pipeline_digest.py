@@ -55,12 +55,12 @@ async def test_digest_cite_map(mock_http, fake_adapter, tmp_path):
     assert "[Example](https://example.com/posts/1)" in body
     assert "[Example](https://example.com/posts/2)" in body
 
-    # Stored memory contains only plain paragraph text — no citation markers.
-    memory_log = result["test-curate"]["memory"]
-    assert len(memory_log) == 1
-    entry = next(iter(memory_log.values()))
-    assert "Cat update" in entry
-    assert "Quantum advance" in entry
+    # Stored coverage ledger holds the topic states — plain text, no citation markers.
+    ledger = result["test-curate"]["coverage"]["ledger"]
+    states = " ".join(e["state"] for e in ledger)
+    assert "Cat update" in states
+    assert "Quantum advance" in states
+    assert all("[" not in e["state"] for e in ledger)
 
     # Real DiscordDigestTarget posted the digest chunk(s).
     post_calls = [

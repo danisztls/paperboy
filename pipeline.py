@@ -23,6 +23,17 @@ class MemoryParagraph(NamedTuple):
     section: str | None = None  # thematic heading; set only on the first para of a group
 
 
+class CoverageUpdate(NamedTuple):
+    """One topic touched this run: a coverage-ledger mutation, and (for digest tasks)
+    a briefing paragraph derived from it."""
+
+    continues: str | None  # existing ledger topic id this continues, or None for a new topic
+    label: str  # canonical short topic label
+    state: str  # latest factual state, 1-2 sentences (also the digest paragraph)
+    citations: list[int]  # supporting item ids this run
+    section: str | None = None  # thematic heading; set only on the first topic of a group
+
+
 @dataclass
 class Item:
     """Generic content item produced by a Source and consumed by a Target."""
@@ -55,7 +66,9 @@ class CurateResult:
     """Output of the LLM curate step."""
 
     items: list[Item]  # all input items with filter_pass/filter_reason set
-    memory: list[MemoryParagraph] | None  # new memory briefing (for digest targets)
+    coverage: (
+        list[CoverageUpdate] | None
+    )  # topics touched this run (ledger merge + digest briefing)
     cite_map: dict[int, Citation]  # LLM int ID → Citation(source, url)
 
 

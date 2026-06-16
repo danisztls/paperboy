@@ -1,5 +1,5 @@
 {
-  "_version": 4,
+  "_version": 7,
   "_last_run": "2026-05-04T12:00:00+00:00",
   "_last_clean": "2026-05-04T12:00:00+00:00",
   "tasks": {
@@ -20,8 +20,17 @@
           "last_run": "2026-05-04T12:00:00+00:00"
         }
       },
-      "memory": {
-        "2026-05-04T12:00:00+00:00": "Recurring themes this week include AI and machine learning."
+      "coverage": {
+        "ledger": [
+          {
+            "id": "ai-model-releases",
+            "label": "AI model releases",
+            "state": "Latest factual state of the topic shown to readers.",
+            "first_seen": "2026-05-01T12:00:00+00:00",
+            "last_seen": "2026-05-04T12:00:00+00:00",
+            "frequency": 4
+          }
+        ]
       }
     },
     "world-news": {

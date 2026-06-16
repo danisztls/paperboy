@@ -13,7 +13,7 @@ from config import (
     task_kind,
 )
 from config.scope import layer_dict, resolve_scoped
-from pipeline import Citation, CurateResult, Item, MemoryParagraph, PushContext
+from pipeline import Citation, CoverageUpdate, CurateResult, Item, MemoryParagraph, PushContext
 from process.curate import curate_items
 from process.summarize import summarize_items
 from pull.feed import RSSSource
@@ -24,7 +24,7 @@ from push.discord import (
 )
 from push.file import FileDigestTarget, FileItemTarget
 from tasks.context import RunContext
-from tasks.feed_state import MEMORY_CONTEXT_ENTRIES, build_feed_task_state
+from tasks.feed_state import build_feed_task_state
 from util import utc_now_iso
 
 log = logging.getLogger(__name__)
@@ -195,8 +195,16 @@ def _select_passing(
     all_new_items: list[Item],
     *,
     explain: bool,
-) -> tuple[list[Item], list[Item], list[MemoryParagraph] | None, dict[int, Citation]]:
-    """Pick items to post and substitute body text. Returns (passing, all_annotated, memory, cite_map)."""
+) -> tuple[
+    list[Item],
+    list[Item],
+    list[MemoryParagraph] | None,
+    dict[int, Citation],
+    list[CoverageUpdate] | None,
+]:
+    """Pick items to post and substitute body text. Returns
+    (passing, all_annotated, memory_paragraphs, cite_map, coverage). The digest briefing
+    (memory_paragraphs) is derived from this run's coverage updates."""
     if curate_result is not None:
         passing = [it for it in curate_result.items if it.filter_pass is not False]
         if explain:
@@ -205,9 +213,23 @@ def _select_passing(
             ]
         elif any(it.summary for it in passing):
             passing = [dc_replace(it, body=it.summary or it.body) for it in passing]
-        return passing, curate_result.items, curate_result.memory, curate_result.cite_map
+        memory_paragraphs = (
+            [
+                MemoryParagraph(text=c.state, citations=c.citations, section=c.section)
+                for c in curate_result.coverage
+            ]
+            if curate_result.coverage
+            else None
+        )
+        return (
+            passing,
+            curate_result.items,
+            memory_paragraphs,
+            curate_result.cite_map,
+            curate_result.coverage,
+        )
     passing = [dc_replace(it, body=it.summary or it.body) for it in all_new_items]
-    return passing, all_new_items, None, {}
+    return passing, all_new_items, None, {}, None
 
 
 async def _push_stage(
@@ -264,11 +286,7 @@ async def process_feed_task(task_cfg: dict, state: dict, ctx: RunContext) -> dic
         task_state = state.get("tasks", {}).get(task_name, {})
         feeds_state = task_state.get("feeds", {})
 
-        raw_history = task_state.get("memory", {}) if curate_cfg else {}
-        memory_history: list[tuple[str, str]] | None = None
-        if raw_history:
-            keys = sorted(raw_history)[-MEMORY_CONTEXT_ENTRIES:]
-            memory_history = [(k, raw_history[k]) for k in keys] or None
+        prev_ledger = task_state.get("coverage", {}).get("ledger", []) if curate_cfg else []
 
         # --- Pull ---
         source = RSSSource(ctx.max_age_seconds)
@@ -293,13 +311,13 @@ async def process_feed_task(task_cfg: dict, state: dict, ctx: RunContext) -> dic
                 curate_cfg,
                 ctx.llm.curate,
                 language=curate_cfg.get("language") or ctx.language,
-                memory_history=memory_history,
+                ledger=prev_ledger or None,
                 collector=ctx.collector,
                 analysis=ctx.analysis,
                 task_name=task_name,
             )
 
-        passing, all_annotated, memory_paragraphs, cite_map = _select_passing(
+        passing, all_annotated, memory_paragraphs, cite_map, coverage = _select_passing(
             curate_result, all_new_items, explain=explain
         )
 
@@ -329,8 +347,8 @@ async def process_feed_task(task_cfg: dict, state: dict, ctx: RunContext) -> dic
                 all_annotated=all_annotated,
                 has_curate=bool(curate_cfg),
                 failed_ids=failed_ids,
-                raw_history=raw_history,
-                memory_paragraphs=memory_paragraphs,
+                prev_ledger=prev_ledger,
+                coverage=coverage,
                 task_name=task_name,
             )
         }

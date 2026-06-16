@@ -1,6 +1,6 @@
 """State file schema migrations."""
 
-CURRENT_VERSION = 6
+CURRENT_VERSION = 7
 
 
 def needs_migration(state: dict) -> bool:
@@ -128,7 +128,21 @@ def _to_v6(state: dict, config: dict | None = None) -> dict:
     return state
 
 
-_STEPS = {0: _to_v2, 1: _to_v2, 2: _to_v3, 3: _to_v4, 4: _to_v5, 5: _to_v6}
+def _to_v7(state: dict, config: dict | None = None) -> dict:
+    """Drop the legacy prose ``memory`` log from each task (v6 → v7).
+
+    The per-run prose memory was replaced by a structured ``coverage.ledger``. The
+    ledger starts fresh — it repopulates within a few curate runs — so the old
+    ``memory`` blob is removed rather than converted.
+    """
+    for task_state in state.get("tasks", {}).values():
+        if isinstance(task_state, dict):
+            task_state.pop("memory", None)
+    state["_version"] = 7
+    return state
+
+
+_STEPS = {0: _to_v2, 1: _to_v2, 2: _to_v3, 3: _to_v4, 4: _to_v5, 5: _to_v6, 6: _to_v7}
 
 
 def migrate(state: dict, config: dict | None = None) -> dict:

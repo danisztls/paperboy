@@ -52,7 +52,7 @@ Both paths can be overridden with `--config` and `--state`.
 
 ## Eval data
 
-Every run writes a JSONL of its LLM calls (prompts, responses, tokens, latency, optional reasoning trace) under `<state_dir>/evals/<task>/<run_iso>.jsonl`. Use these to spot-check what the LLM saw and said on any past run — for a curate call that includes the per-item verdicts and reasons, the memory briefing, and (when `curate.corroborate` is on) the search trajectory and prompt-cache hit/miss counts.
+Every run writes a JSONL of its LLM calls (prompts, responses, tokens, latency, optional reasoning trace) under `<state_dir>/evals/<task>/<run_iso>.jsonl`. Use these to spot-check what the LLM saw and said on any past run — for a curate call that includes the per-item verdicts and reasons, the coverage briefing (topic states), and (when `curate.corroborate` is on) the search trajectory and prompt-cache hit/miss counts.
 
 ## Cron example
 
@@ -205,7 +205,7 @@ curate:
     provider: deepseek # one of: deepseek, gemini
     name: deepseek-v4-flash
     reasoning: low # optional: off|low|medium|high (only for thinking-capable models)
-  language: "PT-BR" # optional; language for memory briefings
+  language: "PT-BR" # optional; language for the coverage briefing (topic states)
   explain: true # optional; use filter_reason as item body
 ```
 
