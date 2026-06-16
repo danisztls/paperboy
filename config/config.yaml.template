@@ -34,15 +34,22 @@ youtube:                    # optional — YouTube-feeds-only scope: the same ig
 retention:                  # optional — disk retention for logs and eval traces
   # days: 30               # delete files under <state_dir>/{logs,evals}/ older than this (default: 30; 0 disables)
 
-llm:                        # optional — LLM provider credentials (DeepSeek + Gemini only)
+llm:                        # optional — LLM provider credentials / options
   api_key:                  # per-provider API keys (omit to read from $DEEPSEEK_API_KEY / $GEMINI_API_KEY env var)
     deepseek: !secret deepseek_api_key
     # gemini: !secret gemini_api_key
+    # claude_cli: !secret anthropic_api_key   # OPTIONAL and usually omitted. The claude_cli provider
+                            # reuses your existing Claude Code login (subscription OAuth) by default; set
+                            # this ONLY to bill the Anthropic API directly instead. NOTE: as of 2026-06-15
+                            # programmatic `claude -p` use draws from a separate monthly credit pool metered
+                            # at API rates ($20 Pro / $100 Max 5x / $200 Max 20x) — not the interactive limits.
 
 curate:                     # optional — global defaults for LLM curation/filter (RSS/digest tasks)
   model:                    # model used for filtering
-    provider: deepseek      # one of: deepseek, gemini
+    provider: deepseek      # one of: deepseek, gemini, claude_cli
     name: deepseek-v4-flash
+    # provider: claude_cli # reuses the local `claude` CLI login; name: opus|sonnet|haiku|fable (or full id)
+    # name: sonnet
     # reasoning: low        # optional — off|low|medium|high. Adapter ignores it on non-thinking models.
                             # Validator errors if set on a model the registry marks thinking:false.
                             # providers/llm/models.json lists known models + capabilities (unknown names = warning).
