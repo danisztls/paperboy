@@ -140,11 +140,59 @@ def uv_window(
     return _hourly_window(hourly, "uv_index", today_str, _DISPLAY_HOURS, uv_threshold)
 
 
-def rain_window(
-    hourly: dict, date_str: str, prob_threshold: int
-) -> tuple[int | None, int | None, float]:
-    """First contiguous hourly block where precipitation_probability >= threshold."""
-    return _hourly_window(hourly, "precipitation_probability", date_str, range(24), prob_threshold)
+def threshold_windows(
+    hourly: dict,
+    values_key: str,
+    date_str: str,
+    predicate,
+    *,
+    min_hours: int = 1,
+) -> list[tuple[int, int, float]]:
+    """All contiguous blocks over the full 24h where predicate(value) holds.
+
+    Scans hours 0..23 of `hourly[values_key]`. Returns a list of
+    (start_hour, end_hour, peak) tuples (end inclusive); `peak` is the max value
+    in the block. Blocks shorter than `min_hours` are dropped. A missing index or
+    a None reading breaks the current block.
+
+    The shared interval primitive for the smart formatter — hot/cold (apparent
+    temp), rain (precipitation probability), and UV all run through this so they
+    report every block, not just the first, with one min-window rule.
+    """
+    times: list[str] = hourly.get("time", [])
+    values: list = hourly.get(values_key, [])
+
+    windows: list[tuple[int, int, float]] = []
+    start: int | None = None
+    end: int | None = None
+    peak = 0.0
+
+    def _flush() -> None:
+        if start is not None and end is not None and end - start + 1 >= min_hours:
+            windows.append((start, end, peak))
+
+    for h in range(24):
+        idx = find_hourly_index(times, date_str, h)
+        if idx is None or idx >= len(values):
+            _flush()
+            start = None
+            end = None
+            continue
+        v = values[idx]
+        if v is not None and predicate(v):
+            if start is None:
+                start = h
+                peak = v
+            end = h
+            if v > peak:
+                peak = v
+        else:
+            _flush()
+            start = None
+            end = None
+
+    _flush()
+    return windows
 
 
 def daily_humidity_mean(hourly: dict, date_str: str) -> float | None:
