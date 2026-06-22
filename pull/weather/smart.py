@@ -16,12 +16,10 @@ from zoneinfo import ZoneInfo
 from pull.weather.common import (
     daily_humidity_mean,
     day_value,
-    find_hourly_index,
     find_today_idx,
     header_line,
-    rain_window,
+    threshold_windows,
     uv_label,
-    uv_window,
     weekday_pt,
 )
 
@@ -34,11 +32,9 @@ SIGMA_HIST = 3.0  # σ threshold vs climate-month mean (5-year window)
 SIGMA_RECENT = 2.0  # σ threshold vs past-7-days mean
 SIGMA_FLOOR = 0.1  # avoid divide-by-near-zero when years align
 RECENT_MIN_SAMPLES = 4  # skip practical trigger if past window has fewer days
-COMFORT_TEMP_MIN = 18  # °C apparent — below this you'd want a jacket
-COMFORT_TEMP_MAX = 27  # °C apparent — above this you start sweating
-COMFORT_DAY_START = 6  # earliest hour considered
-COMFORT_DAY_END = 22  # latest hour considered (inclusive)
-COMFORT_MIN_WINDOW_HOURS = 2  # skip blips shorter than this
+COMFORT_TEMP_MIN = 18  # °C apparent — below this it's "frio" (you'd want a jacket)
+COMFORT_TEMP_MAX = 27  # °C apparent — above this it's "quente" (you start sweating)
+MIN_WINDOW_HOURS = 2  # skip blips shorter than this (hot/cold/UV; rain keeps 1h resolution)
 # Golden hour: sun altitude span ~10° (extended definition, -4° to +6°). Sun's
 # altitude near horizon changes at ~15° × cos(lat) per hour, so duration ≈
 # 40 / cos(lat) min. Capped at 180 min for polar latitudes.
@@ -46,47 +42,9 @@ GOLDEN_HOUR_ARC_DEG = 10
 GOLDEN_HOUR_MAX_MINUTES = 180
 
 
-def _comfort_windows(hourly: dict, today_str: str) -> list[tuple[int, int]]:
-    """Contiguous hour blocks where apparent temp is in comfort range AND rain risk is low.
-
-    Scans COMFORT_DAY_START..COMFORT_DAY_END hour-by-hour. Returns list of
-    (start_h, end_h) tuples (end inclusive). Blocks shorter than
-    COMFORT_MIN_WINDOW_HOURS are skipped.
-    """
-    times: list[str] = hourly.get("time", [])
-    feels: list = hourly.get("apparent_temperature", [])
-    probs: list = hourly.get("precipitation_probability", [])
-
-    windows: list[tuple[int, int]] = []
-    start: int | None = None
-    last: int | None = None
-
-    def _flush() -> None:
-        if start is not None and last is not None:
-            if last - start + 1 >= COMFORT_MIN_WINDOW_HOURS:
-                windows.append((start, last))
-
-    for h in range(COMFORT_DAY_START, COMFORT_DAY_END + 1):
-        idx = find_hourly_index(times, today_str, h)
-        if idx is None or idx >= len(feels):
-            _flush()
-            start = None
-            last = None
-            continue
-        feel = feels[idx] or 0.0
-        prob = (probs[idx] if idx < len(probs) else 0) or 0
-        comfortable = COMFORT_TEMP_MIN <= feel <= COMFORT_TEMP_MAX and prob < RAIN_TODAY_PROB_MIN
-        if comfortable:
-            if start is None:
-                start = h
-            last = h
-        else:
-            _flush()
-            start = None
-            last = None
-
-    _flush()
-    return windows
+def _join_windows(blocks: list[tuple[int, int, float]]) -> str:
+    """Render blocks as `10h–16h, 19h–21h`; a single-hour block collapses to `10h`."""
+    return ", ".join(f"{s}h" if s == e else f"{s}h–{e}h" for s, e, _ in blocks)
 
 
 def _golden_hour_minutes(latitude: float) -> int:
@@ -155,22 +113,43 @@ def _format_smart_today(
         f"🌡 sensação ↓{feels_min}°C  ↑{feels_max}°C",
     ]
 
-    uv_start, uv_end, uv_peak = uv_window(hourly, today_str, uv_threshold)
-    if uv_start is not None and uv_end is not None:
-        label = uv_label(uv_max)
-        lines.append(f"🔆 UV {label} {uv_start}h–{uv_end}h (pico {int(round(uv_peak))})")
+    uv = threshold_windows(
+        hourly, "uv_index", today_str, lambda v: v >= uv_threshold, min_hours=MIN_WINDOW_HOURS
+    )
+    if uv:
+        peak = max(p for _, _, p in uv)
+        lines.append(f"🔆 UV {uv_label(uv_max)} {_join_windows(uv)} (pico {int(round(peak))})")
 
     if precip_prob >= RAIN_TODAY_PROB_MIN and precip_mm >= RAIN_TODAY_MM_MIN:
-        r_start, r_end, _peak = rain_window(hourly, today_str, RAIN_TODAY_PROB_MIN)
-        window_part = ""
-        if r_start is not None and r_end is not None:
-            window_part = f" {r_start}h–{r_end}h"
+        # Rain keeps 1h resolution — a lone high-probability hour is worth flagging.
+        rain = threshold_windows(
+            hourly,
+            "precipitation_probability",
+            today_str,
+            lambda v: v >= RAIN_TODAY_PROB_MIN,
+            min_hours=1,
+        )
+        window_part = f" {_join_windows(rain)}" if rain else ""
         lines.append(f"💧 {int(round(precip_mm))}mm {precip_prob}% chuva{window_part}")
 
-    comfort = _comfort_windows(hourly, today_str)
-    if comfort:
-        win_str = ", ".join(f"{s}h–{e}h" for s, e in comfort)
-        lines.append(f"😎 agradável {win_str}")
+    hot = threshold_windows(
+        hourly,
+        "apparent_temperature",
+        today_str,
+        lambda f: f > COMFORT_TEMP_MAX,
+        min_hours=MIN_WINDOW_HOURS,
+    )
+    if hot:
+        lines.append("🥵 quente " + _join_windows(hot))
+    cold = threshold_windows(
+        hourly,
+        "apparent_temperature",
+        today_str,
+        lambda f: f < COMFORT_TEMP_MIN,
+        min_hours=MIN_WINDOW_HOURS,
+    )
+    if cold:
+        lines.append("🥶 frio " + _join_windows(cold))
 
     golden = _golden_hours(daily, day_idx, latitude)
     if golden is not None:
@@ -371,10 +350,15 @@ def _format_smart_forecast(
         mm = d_precip[idx] if idx < len(d_precip) else 0.0
         prob = int(round(d_prob[idx] if idx < len(d_prob) else 0) or 0)
         if mm >= RAIN_NEXT_MM_MIN and prob >= RAIN_NEXT_PROB_MIN:
-            r_start, r_end, _peak = rain_window(hourly, date_str, RAIN_NEXT_PROB_MIN)
-            window_part = ""
-            if r_start is not None and r_end is not None:
-                window_part = f" {r_start}h–{r_end}h"
+            # Rain keeps 1h resolution — a lone high-probability hour is worth flagging.
+            rain = threshold_windows(
+                hourly,
+                "precipitation_probability",
+                date_str,
+                lambda v: v >= RAIN_NEXT_PROB_MIN,
+                min_hours=1,
+            )
+            window_part = f" {_join_windows(rain)}" if rain else ""
             parts.append(f"💧 {int(round(mm))}mm {prob}%{window_part}")
 
         anomaly = _pick_apparent_anomaly(idx, d_app_max, d_app_min, hist_baseline, recent_baseline)

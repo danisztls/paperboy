@@ -41,7 +41,7 @@ Package layout: `common.py` (shared helpers + `get_json`), `verbose.py` (default
 Two formatter branches by `cfg["kind"]`:
 
 - **Verbose (default)** — `verbose.format_message` → `_format_today` (header + daily summary + hourly rows at 5/7/9…23h) + `_format_forecast` (one compact line per upcoming day).
-- **Smart (`kind: smart`)** — `smart.format_smart_message` → `_format_smart_today` (header + apparent min/max + conditional UV window + conditional rain window + conditional comfort windows via `_comfort_windows` + golden-hour line) + `_format_smart_forecast`. Each upcoming day fires only if rain crosses thresholds OR an apparent-temp / humidity anomaly fires.
+- **Smart (`kind: smart`)** — `smart.format_smart_message` → `_format_smart_today` (header + apparent min/max + conditional UV / rain / hot (`🥵 quente`) / cold (`🥶 frio`) interval lines + golden-hour line) + `_format_smart_forecast`. The four interval signals all run through one primitive, `common.threshold_windows` (full-24h scan, **all** contiguous blocks ≥ `min_hours`, each with its peak), rendered via `_join_windows` (`10h–16h, 19h–21h`). Hot/cold/UV use `min_hours=MIN_WINDOW_HOURS` (2); **rain uses `min_hours=1`** — a lone high-probability hour is worth flagging. UV uses the block peak for `(pico N)`; rain's daily prob/mm gate still decides whether the line appears at all, then the hourly blocks fill the window. Each upcoming forecast day fires only if rain crosses thresholds OR an apparent-temp / humidity anomaly fires.
 
 ### Anomaly detection
 
@@ -63,11 +63,11 @@ Two formatter branches by `cfg["kind"]`:
 
 ### Shared helpers (`common.py`)
 
-`uv_window` / `rain_window` (both over `_hourly_window`; rain scans all 24h for tighter resolution), `daily_humidity_mean`, `wmo_emoji`, `uv_label`, `weekday_pt`, `header_line`, `day_value`, `find_today_idx`, `find_hourly_index`, `get_json`. Smart-only: `_pick_apparent_anomaly` (renders the apparent_max or apparent_min with the largest combined σ-magnitude — `_decision_magnitude`).
+`threshold_windows` (the unified smart-mode interval scanner: all 24h blocks ≥ `min_hours`, each as `(start, end, peak)`), `uv_window` / `_hourly_window` (single-block, every-2h `_DISPLAY_HOURS` scan — kept for the **verbose** formatter only), `daily_humidity_mean`, `wmo_emoji`, `uv_label`, `weekday_pt`, `header_line`, `day_value`, `find_today_idx`, `find_hourly_index`, `get_json`. Smart-only: `_pick_apparent_anomaly` (renders the apparent_max or apparent_min with the largest combined σ-magnitude — `_decision_magnitude`).
 
 ### Threshold constants (`smart.py`)
 
-Module-level, not config-exposed: `RAIN_TODAY_PROB_MIN`, `RAIN_TODAY_MM_MIN`, `RAIN_NEXT_PROB_MIN`, `RAIN_NEXT_MM_MIN`, `SIGMA_HIST` (3.0), `SIGMA_RECENT` (2.0), `SIGMA_FLOOR` (0.1, avoids divide-by-near-zero), `RECENT_MIN_SAMPLES` (4), comfort/golden-hour knobs; `CLIMATE_NORMAL_YEARS` (5) lives in `climate.py`.
+Module-level, not config-exposed: `RAIN_TODAY_PROB_MIN`, `RAIN_TODAY_MM_MIN`, `RAIN_NEXT_PROB_MIN`, `RAIN_NEXT_MM_MIN`, `SIGMA_HIST` (3.0), `SIGMA_RECENT` (2.0), `SIGMA_FLOOR` (0.1, avoids divide-by-near-zero), `RECENT_MIN_SAMPLES` (4), `COMFORT_TEMP_MIN`/`COMFORT_TEMP_MAX` (hot/cold cutoffs), `MIN_WINDOW_HOURS` (2 — shared min-duration for every interval line), golden-hour knobs; `CLIMATE_NORMAL_YEARS` (5) lives in `climate.py`.
 
 ### State cache
 

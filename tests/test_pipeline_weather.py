@@ -245,3 +245,103 @@ async def test_weather_precip_hidden(mock_http):
     hourly_line = next((line for line in lines if "**05h**" in line), None)
     assert hourly_line is not None
     assert "💧" not in hourly_line
+
+
+def _hourly_with(day: str, key: str, values: list) -> dict:
+    """Build an hourly dict with one `key` value per hour 0..23."""
+    return {
+        "time": [f"{day}T{h:02d}:00" for h in range(len(values))],
+        key: values,
+    }
+
+
+def _spans(blocks: list[tuple[int, int, float]]) -> list[tuple[int, int]]:
+    """Drop the peak so window assertions read cleanly."""
+    return [(s, e) for s, e, _ in blocks]
+
+
+DAY = "2026-06-22"
+
+
+def test_threshold_windows_full_day_scan():
+    """Hot and cold windows are found across the whole 24h, end-inclusive."""
+    from pull.weather.common import threshold_windows
+    from pull.weather.smart import COMFORT_TEMP_MAX, COMFORT_TEMP_MIN, MIN_WINDOW_HOURS
+
+    feels = [20.0] * 24
+    feels[2:6] = [10.0, 10.0, 10.0, 10.0]  # cold 02h–05h (overnight, missed by an old 6h floor)
+    feels[10:18] = [30.0] * 8  # hot 10h–17h (inclusive)
+    hourly = _hourly_with(DAY, "apparent_temperature", feels)
+
+    hot = threshold_windows(
+        hourly,
+        "apparent_temperature",
+        DAY,
+        lambda f: f > COMFORT_TEMP_MAX,
+        min_hours=MIN_WINDOW_HOURS,
+    )
+    cold = threshold_windows(
+        hourly,
+        "apparent_temperature",
+        DAY,
+        lambda f: f < COMFORT_TEMP_MIN,
+        min_hours=MIN_WINDOW_HOURS,
+    )
+
+    assert _spans(hot) == [(10, 17)]
+    assert _spans(cold) == [(2, 5)]
+
+
+def test_threshold_windows_multiple_blocks_and_peak():
+    """All qualifying blocks are returned (not just the first), each with its peak."""
+    from pull.weather.common import threshold_windows
+
+    # UV-style series: two separate above-threshold stretches in one day.
+    uv = [0.0] * 24
+    uv[9:13] = [7.0, 9.0, 8.0, 6.0]  # 09h–12h, peak 9
+    uv[15:18] = [6.0, 11.0, 6.0]  # 15h–17h, peak 11
+    hourly = _hourly_with(DAY, "uv_index", uv)
+
+    blocks = threshold_windows(hourly, "uv_index", DAY, lambda v: v >= 6, min_hours=2)
+
+    assert _spans(blocks) == [(9, 12), (15, 17)]
+    assert [b[2] for b in blocks] == [9.0, 11.0]
+    assert max(b[2] for b in blocks) == 11.0
+
+
+def test_threshold_windows_drops_short_blips_and_handles_none():
+    """Sub-min_hours blips are dropped; None breaks a run; a real 0.0 still passes a `< 18` test."""
+    from pull.weather.common import threshold_windows
+    from pull.weather.smart import COMFORT_TEMP_MAX, COMFORT_TEMP_MIN, MIN_WINDOW_HOURS
+
+    feels: list = [20.0] * 24
+    feels[8] = 35.0  # single hot hour → too short, dropped
+    feels[3:5] = [0.0, 0.0]  # genuine 0.0°C readings → cold 03h–04h
+    feels[14] = None  # missing reading mid-afternoon
+    hourly = _hourly_with(DAY, "apparent_temperature", feels)
+
+    hot = threshold_windows(
+        hourly,
+        "apparent_temperature",
+        DAY,
+        lambda f: f > COMFORT_TEMP_MAX,
+        min_hours=MIN_WINDOW_HOURS,
+    )
+    cold = threshold_windows(
+        hourly,
+        "apparent_temperature",
+        DAY,
+        lambda f: f < COMFORT_TEMP_MIN,
+        min_hours=MIN_WINDOW_HOURS,
+    )
+    assert hot == []
+    assert _spans(cold) == [(3, 4)]
+
+
+def test_join_windows_collapses_single_hour():
+    """A single-hour block renders as `10h`, not `10h–10h`; multi-hour keeps the dash."""
+    from pull.weather.smart import _join_windows
+
+    assert _join_windows([(10, 10, 0.0)]) == "10h"
+    assert _join_windows([(7, 9, 0.0), (16, 16, 0.0)]) == "7h–9h, 16h"
+    assert _join_windows([]) == ""
