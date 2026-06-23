@@ -5,6 +5,8 @@ Real RSSSource, Discord*Target, FileItemTarget run. Only the LLM adapter
 (via aioresponses) are faked.
 """
 
+from datetime import UTC, datetime, timedelta
+
 import aiohttp
 
 from tasks import process_feed_task
@@ -13,6 +15,10 @@ from tests.conftest import load_fixture, make_ctx, make_curate_cfg
 FEED_URL = "https://feed.example/rss"
 FEED_B_URL = "https://b.example.com/rss"
 WEBHOOK_URL = "https://discord.example/webhook"
+
+
+def _fetched(mock_http, url: str) -> bool:
+    return any(m == "GET" and str(u) == url for (m, u) in mock_http.requests)
 
 
 async def test_curate_happy(mock_http, fake_adapter, tmp_path):
@@ -310,3 +316,93 @@ async def test_curate_agentic_corroborates(fake_adapter, monkeypatch):
     # not a single prompt string.
     assert fake_adapter.structured_calls[-1]["messages"] is not None
     assert fake_adapter.structured_calls[-1]["prompt"] == ""
+
+
+async def test_per_feed_period_skips_not_due_feed(mock_http, fake_adapter, tmp_path):
+    """A feed whose own `period:` hasn't elapsed is not fetched; its state is preserved,
+    while a sibling on the (inherited) task period is processed normally."""
+    mock_http.get(FEED_URL, body=load_fixture("feed_basic.xml"))
+    mock_http.post(WEBHOOK_URL, status=204)
+    # FEED_B_URL is deliberately NOT mocked — it must never be fetched.
+
+    fake_adapter.queue_filter(
+        items=[
+            {"id": 0, "pass": False, "reason": "Off-topic."},
+            {"id": 1, "pass": True, "reason": "Cats are great."},
+        ],
+        memory=[{"text": "Cat news today.", "citations": [1]}],
+    )
+
+    b_last = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    state = {
+        "tasks": {
+            "test-curate": {
+                "feeds": {
+                    FEED_B_URL: {
+                        "name": "Slow",
+                        "items": [{"url": "https://b.example.com/posts/9", "title": "Old"}],
+                        "last_run": b_last,
+                    }
+                }
+            }
+        }
+    }
+
+    cfg = make_curate_cfg(
+        feeds=[
+            {"url": FEED_URL, "name": "Example"},  # inherits task period (1h default) → due
+            {"url": FEED_B_URL, "name": "Slow", "period": "1w"},  # not due
+        ],
+        file_path=str(tmp_path / "out.md"),
+        llm_filter={"criteria": "pass items about cats"},
+    )
+
+    async with aiohttp.ClientSession() as session:
+        result = await process_feed_task(
+            cfg, state, make_ctx(session, curate=fake_adapter, summarize=fake_adapter)
+        )
+
+    assert _fetched(mock_http, FEED_URL)
+    assert not _fetched(mock_http, FEED_B_URL), "weekly feed must not be fetched this run"
+
+    feeds_state = result["test-curate"]["feeds"]
+    # Due feed processed: fresh last_run + its items.
+    assert feeds_state[FEED_URL]["last_run"]
+    assert len(feeds_state[FEED_URL]["items"]) == 2
+    # Skipped feed: state carried through untouched (same last_run, same items).
+    assert feeds_state[FEED_B_URL]["last_run"] == b_last
+    assert feeds_state[FEED_B_URL]["items"] == [
+        {"url": "https://b.example.com/posts/9", "title": "Old"}
+    ]
+
+
+async def test_force_bypasses_per_feed_period(mock_http, fake_adapter, tmp_path):
+    """ctx.force (the --task path) fetches a feed even if its own period hasn't elapsed."""
+    mock_http.get(FEED_B_URL, body=load_fixture("feed_b.xml"))
+    mock_http.post(WEBHOOK_URL, status=204)
+
+    fake_adapter.queue_filter(
+        items=[{"id": 0, "pass": True, "reason": "Gardening passes."}],
+        memory=[{"text": "Garden tips.", "citations": [0]}],
+    )
+
+    b_last = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    state = {"tasks": {"test-curate": {"feeds": {FEED_B_URL: {"last_run": b_last}}}}}
+
+    cfg = make_curate_cfg(
+        feeds=[{"url": FEED_B_URL, "name": "Slow", "period": "1w"}],
+        file_path=str(tmp_path / "out.md"),
+        llm_filter={"criteria": "pass anything"},
+    )
+
+    async with aiohttp.ClientSession() as session:
+        result = await process_feed_task(
+            cfg,
+            state,
+            make_ctx(session, curate=fake_adapter, summarize=fake_adapter, force=True),
+        )
+
+    assert _fetched(mock_http, FEED_B_URL), "force must fetch the weekly feed"
+    feed_state = result["test-curate"]["feeds"][FEED_B_URL]
+    assert feed_state["last_run"] != b_last  # advanced
+    assert any(it["url"] == "https://b.example.com/posts/9" for it in feed_state["items"])

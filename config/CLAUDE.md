@@ -16,6 +16,7 @@ Config loading, primitives/accessors, and validation. `__init__.py` only re-expo
 ## `schema.py` — Pydantic validation
 
 - `validate_config(config)` — validates the full config against `_Config`, returns a list of error strings.
+- `period` is a task-level key (`_Task.period`) **and** an optional per-feed override on `_PullFeedItem`/`_PullYouTubeItem` (same `_Period` grammar). `_Task._check_task` rejects per-feed `period:` on `kind: digest` tasks.
 - Global LLM config is split into four top-level sections: `llm` (API keys only, under `llm.api_key`) and `curate` / `research` / `summarize` (each can carry its own `model` spec). Task/feed-level `curate.model` etc. override the matching global section.
 - Model specs are verbose dicts: `{provider, name, reasoning?}` where provider ∈ `{deepseek, gemini, claude_cli}` and reasoning ∈ `{off, low, medium, high}` (absent = off). `claude_cli` shells out to the local `claude` CLI (Claude Code) and reuses its login by default — set `llm.api_key.claude_cli` only to opt into direct API billing.
 - The Pydantic `ModelSpec` model validates each entry against `providers/llm/models.json` — unknown model names log a warning; setting `reasoning: low|medium|high` on a model whose registry entry has `thinking: false` is a hard error.

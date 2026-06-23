@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from config import Period, parse_period
-from tasks import is_due
+from tasks import due_feeds, is_due, task_is_due
 
 # --- parse_period ---
 
@@ -135,3 +135,84 @@ def testis_due_calendar_week_previous_weekis_due():
     now = datetime(2026, 5, 18, 6, 0, tzinfo=UTC).astimezone()  # Monday of next week
     last = datetime(2026, 5, 17, 23, 0, tzinfo=UTC).isoformat()  # Sunday of prior week
     assert is_due({"last_run": last}, Period(1, "w"), now)
+
+
+# --- due_feeds: per-feed period override + inheritance ---
+
+
+def _stamp(now, **delta):
+    return (now - timedelta(**delta)).isoformat()
+
+
+def test_due_feeds_inherits_task_period():
+    now = datetime(2026, 5, 17, 12, 0, tzinfo=UTC)
+    feeds = [{"url": "a"}]  # no own period → inherits the task period
+    state = {"a": {"last_run": _stamp(now, hours=2)}}
+    assert due_feeds(feeds, state, Period(1, "h"), now) == feeds  # 1h elapsed
+    assert due_feeds(feeds, state, Period(6, "h"), now) == []  # 6h not elapsed
+
+
+def test_due_feeds_own_period_overrides_task():
+    now = datetime(2026, 5, 17, 12, 0, tzinfo=UTC)
+    # Feed's own 1d period is not elapsed even though the 1h task period is.
+    feeds = [{"url": "slow", "period": "1d"}]
+    state = {"slow": {"last_run": _stamp(now, hours=3)}}
+    assert due_feeds(feeds, state, Period(1, "h"), now) == []
+
+
+def test_due_feeds_selects_only_elapsed():
+    now = datetime(2026, 5, 17, 12, 0, tzinfo=UTC)
+    feeds = [
+        {"url": "fast", "period": "30m"},  # elapsed
+        {"url": "slow", "period": "1w"},  # not elapsed
+    ]
+    state = {
+        "fast": {"last_run": _stamp(now, hours=1)},
+        "slow": {"last_run": _stamp(now, hours=1)},
+    }
+    selected = due_feeds(feeds, state, Period(1, "h"), now)
+    assert [f["url"] for f in selected] == ["fast"]
+
+
+def test_due_feeds_never_run_is_due():
+    now = datetime(2026, 5, 17, 12, 0, tzinfo=UTC)
+    feeds = [{"url": "new", "period": "1w"}]
+    assert due_feeds(feeds, {}, Period(1, "h"), now) == feeds
+
+
+# --- task_is_due: feed task wakes on the shortest feed period ---
+
+
+def _feed_task(*feeds):
+    return {"name": "t", "pull": [{"feed": f} for f in feeds]}
+
+
+def test_task_is_due_wakes_on_shortest_feed():
+    now = datetime(2026, 5, 17, 12, 0, tzinfo=UTC)
+    task_cfg = _feed_task(
+        {"url": "fast", "period": "30m"},
+        {"url": "slow", "period": "1d"},
+    )
+    state = {
+        "feeds": {
+            "fast": {"last_run": _stamp(now, hours=1)},  # 30m elapsed → due
+            "slow": {"last_run": _stamp(now, hours=1)},  # 1d not elapsed
+        }
+    }
+    # task period (1h) is irrelevant here — the 30m feed alone makes it due.
+    assert task_is_due(task_cfg, state, Period(1, "h"), now)
+
+
+def test_task_is_due_false_when_no_feed_elapsed():
+    now = datetime(2026, 5, 17, 12, 0, tzinfo=UTC)
+    task_cfg = _feed_task(
+        {"url": "a", "period": "6h"},
+        {"url": "b", "period": "1d"},
+    )
+    state = {
+        "feeds": {
+            "a": {"last_run": _stamp(now, hours=2)},
+            "b": {"last_run": _stamp(now, hours=2)},
+        }
+    }
+    assert not task_is_due(task_cfg, state, Period(1, "h"), now)

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from dataclasses import replace as dc_replace
+from datetime import UTC, datetime
 
 from config import (
     get_discord_cfg,
@@ -10,6 +11,7 @@ from config import (
     get_file_path,
     is_youtube_feed_url,
     parse_color,
+    parse_period,
     task_kind,
 )
 from config.scope import layer_dict, resolve_scoped
@@ -24,6 +26,7 @@ from push.discord import (
 )
 from push.file import FileDigestTarget, FileItemTarget
 from tasks.context import RunContext
+from tasks.due import DEFAULT_PERIOD, due_feeds
 from tasks.feed_state import build_feed_task_state
 from util import utc_now_iso
 
@@ -285,6 +288,14 @@ async def process_feed_task(task_cfg: dict, state: dict, ctx: RunContext) -> dic
             feed_cfgs = feed_cfgs[: ctx.collector.limit_feeds]
         task_state = state.get("tasks", {}).get(task_name, {})
         feeds_state = task_state.get("feeds", {})
+
+        # Per-feed period gating: a feed with its own `period:` is only fetched when
+        # its own clock has elapsed; the rest pass through with their state untouched.
+        # Bypassed for forced (--task) and analysis runs, and for digest (which posts
+        # all feeds together and rejects per-feed period at validation).
+        if not ctx.analysis and not ctx.force and kind != "digest":
+            task_period = parse_period(task_cfg.get("period", DEFAULT_PERIOD))
+            feed_cfgs = due_feeds(feed_cfgs, feeds_state, task_period, datetime.now(UTC))
 
         prev_coverage = task_state.get("coverage", {}) if curate_cfg else {}
 
