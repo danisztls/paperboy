@@ -256,6 +256,7 @@ async def _async_main(args: argparse.Namespace) -> None:
             llm=_build_llm_handles(config),
             collector=collector,
             analysis=analysis,
+            force=bool(args.task),
         )
 
         if args.regenerate_state:

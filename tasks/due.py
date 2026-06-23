@@ -8,7 +8,7 @@ cron sweeps fire as soon as the date rolls over.
 import logging
 from datetime import datetime, timedelta
 
-from config import Period, get_feeds, task_kind
+from config import Period, get_feeds, parse_period, task_kind
 
 DEFAULT_PERIOD = Period(count=1, unit="h")
 PERIOD_GRACE = timedelta(seconds=60)
@@ -39,14 +39,32 @@ def is_due(feed_state: dict, period: Period, now: datetime) -> bool:
     return (ny * 53 + nw) - (ly * 53 + lw) >= period.count
 
 
+def _feed_period(fc: dict, task_period: Period) -> Period:
+    """A feed's effective period: its own `period:` if set, else the task period."""
+    raw = fc.get("period")
+    return parse_period(raw) if raw else task_period
+
+
+def due_feeds(
+    feed_cfgs: list[dict], feeds_state: dict, task_period: Period, now: datetime
+) -> list[dict]:
+    """Feed cfgs whose own (or inherited task) period has elapsed."""
+    return [
+        fc
+        for fc in feed_cfgs
+        if is_due(feeds_state.get(fc["url"], {}), _feed_period(fc, task_period), now)
+    ]
+
+
 def task_is_due(task_cfg: dict, task_state: dict, period: Period, now: datetime) -> bool:
     """Whether a task should run this sweep.
 
     Task-level kinds compare the task's own last_run; feed tasks are due when
-    any of their feeds is due (a transiently broken feed keeps its own clock).
+    any of their feeds is due at its own period (a transiently broken feed keeps
+    its own clock). A task therefore wakes on the shortest of its feeds' periods.
     """
     if task_kind(task_cfg) in _TASK_LEVEL_KINDS:
         return is_due(task_state, period, now)
     feeds_state = task_state.get("feeds", {})
-    urls = [f["url"] for f in get_feeds(task_cfg) if f.get("url")]
-    return any(is_due(feeds_state.get(u, {}), period, now) for u in urls)
+    feed_cfgs = [f for f in get_feeds(task_cfg) if f.get("url")]
+    return bool(due_feeds(feed_cfgs, feeds_state, period, now))

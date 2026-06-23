@@ -34,6 +34,7 @@ def make_ctx(
     config: dict | None = None,
     analysis: bool = False,
     collector=None,
+    force: bool = False,
 ) -> RunContext:
     """Build a RunContext for direct process_*_task calls, wrapping fake adapters."""
 
@@ -50,6 +51,7 @@ def make_ctx(
         ),
         collector=collector,
         analysis=analysis,
+        force=force,
     )
 
 

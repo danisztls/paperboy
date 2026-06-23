@@ -36,6 +36,7 @@ class RunContext:
     llm: LLMHandles = field(default_factory=LLMHandles)
     collector: RunCapture | None = None
     analysis: bool = False  # inspection mode: dry-run, reasoning on, truncated input
+    force: bool = False  # --task <name>: run regardless of period (task and per-feed)
 
     @property
     def language(self) -> str:

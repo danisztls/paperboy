@@ -102,3 +102,38 @@ def test_validate_config_rejects_bad_reasoning_on_non_thinking_model():
     errors = validate_config(cfg)
     assert errors
     assert any("does not support thinking" in e for e in errors)
+
+
+def _task_with_feed(feed: dict, **task_extra) -> dict:
+    return {
+        "tasks": [
+            {
+                "name": "x",
+                "pull": [{"feed": feed}],
+                "push": [{"discord": {"webhook": "https://discord.example/wh"}}],
+                **task_extra,
+            }
+        ]
+    }
+
+
+def test_validate_config_accepts_feed_period():
+    cfg = _task_with_feed({"url": "https://example.com/feed.xml", "period": "6h"})
+    assert validate_config(cfg) == []
+
+
+def test_validate_config_rejects_bad_feed_period():
+    cfg = _task_with_feed({"url": "https://example.com/feed.xml", "period": "nonsense"})
+    errors = validate_config(cfg)
+    assert any("expected e.g." in e for e in errors)
+
+
+def test_validate_config_rejects_feed_period_on_digest():
+    cfg = _task_with_feed({"url": "https://example.com/feed.xml", "period": "6h"}, kind="digest")
+    errors = validate_config(cfg)
+    assert any("digest tasks do not support per-feed period" in e for e in errors)
+
+
+def test_validate_config_digest_allows_task_period():
+    cfg = _task_with_feed({"url": "https://example.com/feed.xml"}, kind="digest", period="6h")
+    assert validate_config(cfg) == []

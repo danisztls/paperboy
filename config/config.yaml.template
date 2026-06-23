@@ -126,6 +126,9 @@ tasks:
       - feed:
           name: My Feed
           url: https://example.com/feed.xml
+          # period: 6h              # optional — overrides the task period for this feed only
+          #                         # (same suffixes as the task period; the task wakes on the
+          #                         #  shortest of its feeds' periods). Not allowed on digest tasks.
           # discord:
           #   color: "#FF0000"      # optional — overrides task/global discord.color for this feed
           # summarize: true         # optional — override task-level summarize for this feed (also accepts dict form)

@@ -250,6 +250,7 @@ class _PullFeedItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str | None = None
     url: str
+    period: _Period = None  # overrides the task period for this feed only
     discord: _FeedDiscord = Field(default_factory=_FeedDiscord)
     ignore: _Ignore | None = None
     skip: _Skip | None = None
@@ -269,6 +270,7 @@ class _PullYouTubeItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str | None = None
     channel_id: str
+    period: _Period = None  # overrides the task period for this feed only
     discord: _FeedDiscord = Field(default_factory=_FeedDiscord)
     ignore: _Ignore | None = None
     skip: _Skip | None = None
@@ -429,6 +431,12 @@ class _Task(BaseModel):
 
     @model_validator(mode="after")
     def _check_task(self):
+        if self.kind == "digest" and any(
+            (item.feed is not None and item.feed.period is not None)
+            or (item.youtube is not None and item.youtube.period is not None)
+            for item in self.pull
+        ):
+            raise ValueError("digest tasks do not support per-feed period — set period on the task")
         has_research_pull = any(item.research is not None for item in self.pull)
         # youtube is sugar over feed (get_feeds expands it), so it's feed-family for mixing.
         has_feed_pull = any(item.feed is not None or item.youtube is not None for item in self.pull)

@@ -7,7 +7,7 @@ ride on `RunContext`; due checks live in `tasks.due`.
 """
 
 from tasks.context import LLMHandles, RunContext
-from tasks.due import DEFAULT_PERIOD, is_due, task_is_due
+from tasks.due import DEFAULT_PERIOD, due_feeds, is_due, task_is_due
 from tasks.feeds import process_feed_task, regenerate_feeds_state
 from tasks.finance import process_finance_task
 from tasks.realestate import process_realestate_task
@@ -31,6 +31,7 @@ __all__ = [
     "DEFAULT_PERIOD",
     "LLMHandles",
     "RunContext",
+    "due_feeds",
     "is_due",
     "process_feed_task",
     "process_finance_task",

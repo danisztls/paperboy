@@ -14,7 +14,9 @@ Conveniences: derived properties `language` (global `curate.language` or `EN-US`
 
 - `DEFAULT_PERIOD` (1h), `PERIOD_GRACE` (60s).
 - `is_due(feed_state, period, now)` — sliding-window for `m`/`h`, calendar-aligned (local date / ISO week) for `d`/`w`.
-- `task_is_due(task_cfg, task_state, period, now)` — task-level `last_run` for research/realestate/weather/finance; "any feed due" for feed tasks.
+- `_feed_period(fc, task_period)` — a feed's effective period: its own `period:` if set, else the task period.
+- `due_feeds(feed_cfgs, feeds_state, task_period, now)` — the subset of feed cfgs whose effective period elapsed.
+- `task_is_due(task_cfg, task_state, period, now)` — task-level `last_run` for research/realestate/weather/finance; "any feed due at its own period" (`due_feeds`) for feed tasks, so a task wakes on the shortest of its feeds' periods.
 
 ## `__init__.py` — public surface
 
@@ -22,7 +24,7 @@ Re-exports the processors plus `processor_for(kind)` (the kind→processor dispa
 
 ## Per-kind processors
 
-- `feeds.py` — `process_feed_task`: pull all feeds concurrently (`pull_feeds`, which resolves the scoped `ignore`/`skip`/`description`/`title` blocks via `config.scope.resolve_scoped` and injects them into the feed cfg), tag items with display meta (`color`, `skip_image`, `curate_skip`), then `process.summarize_items` → `process.curate_items` → push (digest / embed / markdown target by kind + `discord.format`) → `feed_state.build_feed_task_state`. Also `regenerate_feeds_state` (the `--regenerate-state` mode).
+- `feeds.py` — `process_feed_task`: pull (only) the due feeds concurrently (`pull_feeds`, which resolves the scoped `ignore`/`skip`/`description`/`title` blocks via `config.scope.resolve_scoped` and injects them into the feed cfg), tag items with display meta (`color`, `skip_image`, `curate_skip`), then `process.summarize_items` → `process.curate_items` → push (digest / embed / markdown target by kind + `discord.format`) → `feed_state.build_feed_task_state`. Feed list is narrowed to `due.due_feeds` (per-feed `period:` override) unless analysis/`ctx.force`/digest. Also `regenerate_feeds_state` (the `--regenerate-state` mode).
 - `feed_state.py` — `merge_feed_state` (per-feed item merge: stamp `first_seen`, carry summary/filter annotations, drop failed posts) and `build_feed_task_state` (all feeds + the coverage ledger). `apply_coverage(prev_coverage, coverage, now_iso) -> {"ledger", "rollups"}` upserts this run's topic updates: each `CoverageUpdate` continues an existing topic (id matched via `continues`, or a slug collision) — bumping `frequency`, refreshing `state`/`last_seen` — or seeds a new one; the active ledger is capped at `LEDGER_MAX_TOPICS`=60. Code owns `frequency`/timestamps so the trajectory bar reads a real count. Topics dormant past `LEDGER_ACTIVE_DAYS`=21 fold into per-month `rollups` buckets (top `ROLLUP_MAX_PER_PERIOD`=15 by frequency, last `ROLLUP_MAX_MONTHS`=6) — the long-horizon cutoff-gap backdrop.
 - `research.py` / `weather.py` / `finance.py` — thin wrappers around their `pull/` sources; all three post via `delivery.deliver_text`. Weather owns the smart-mode climate cache read/refresh; finance threads monitor state through the cfg (`_state_tickers` in, `_new_state_tickers` out) and persists state even on zero alerts so baselines advance.
 - `realestate.py` — `process_realestate_task`: per-url state (`realestate[<url>]: {items, last_run}`), `__legacy__` dedup bucket, batched embed/markdown push. Not captured by the collector and skipped in analysis mode.
