@@ -5,7 +5,9 @@ from datetime import UTC, datetime, timedelta
 from pipeline import CoverageUpdate
 from tasks.feed_state import LEDGER_ACTIVE_DAYS, apply_coverage
 
-NOW = "2026-06-16T12:00:00+00:00"
+# Dynamic so seeded/continued topics land inside the LEDGER_ACTIVE_DAYS window
+# regardless of when the suite runs (a fixed date here is a time bomb).
+NOW = datetime.now(UTC).isoformat()
 
 
 def _cu(continues, label, state, citations=()):

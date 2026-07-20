@@ -333,7 +333,9 @@ async def test_per_feed_period_skips_not_due_feed(mock_http, fake_adapter, tmp_p
         memory=[{"text": "Cat news today.", "citations": [1]}],
     )
 
-    b_last = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    # `1w` is calendar-aligned (ISO week), so last_run must be in the CURRENT week —
+    # "1 day ago" lands in the previous week every Monday and makes the feed due.
+    b_last = datetime.now(UTC).isoformat()
     state = {
         "tasks": {
             "test-curate": {
