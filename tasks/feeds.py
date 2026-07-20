@@ -218,7 +218,7 @@ def _select_passing(
             passing = [dc_replace(it, body=it.summary or it.body) for it in passing]
         memory_paragraphs = (
             [
-                MemoryParagraph(text=c.state, citations=c.citations, section=c.section)
+                MemoryParagraph(text=c.update or c.state, citations=c.citations, section=c.section)
                 for c in curate_result.coverage
             ]
             if curate_result.coverage

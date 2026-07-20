@@ -29,9 +29,10 @@ class CoverageUpdate(NamedTuple):
 
     continues: str | None  # existing ledger topic id this continues, or None for a new topic
     label: str  # canonical short topic label
-    state: str  # latest factual state, 1-2 sentences (also the digest paragraph)
+    state: str  # latest factual state, 1-3 sentences (the ledger memory; digest paragraph for new topics)
     citations: list[int]  # supporting item ids this run
     section: str | None = None  # thematic heading; set only on the first topic of a group
+    update: str | None = None  # one-sentence delta shown instead of `state` when continuing a topic
 
 
 @dataclass

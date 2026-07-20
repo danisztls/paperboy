@@ -3,6 +3,7 @@ import json
 import logging
 import textwrap
 from dataclasses import replace as dc_replace
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -25,13 +26,16 @@ class CoverageItem(BaseModel):
     """One topic the curator covered this run (structured-output shape).
 
     `continues` ties it to an existing coverage-ledger topic (or null = new topic);
-    `state` is the latest factual state and doubles as the digest briefing paragraph.
+    `state` is the latest factual state (the ledger memory, and the digest paragraph
+    for new topics); `update` is the one-sentence delta shown to readers instead of
+    `state` when the entry continues a ledger topic.
     """
 
     continues: str | None = None
     label: str
     section: str | None = None
     state: str
+    update: str | None = None
     citations: list[int] = []
 
 
@@ -113,8 +117,10 @@ def _build_curate_instructions(
     if extra_instructions:
         prefix += f"## Additional instructions\n{extra_instructions}\n\n"
     if ledger:
+        today = datetime.now().astimezone().date().isoformat()
         prefix += (
             "## Coverage ledger (topics already sent to readers — DO NOT re-report)\n"
+            f"Today is {today}. "
             "Each line is a topic already covered: `id` (reference it when continuing the topic), "
             "`freq` (how many times it has been covered), `last` (date last covered), the label, and "
             "its latest known state. Use the ledger for Step 2 (dedup + escalating-trajectory) and "
@@ -149,14 +155,16 @@ def _build_curate_instructions(
 
         **Step 2 — Deduplicate against the coverage ledger.**
         - Match each item to a ledger topic by subject. Fail any item whose topic is already in the ledger and that does not ADVANCE that topic's state with a significant new development (new facts, updated numbers, a meaningful consequence). Use reason: 'already covered'. Readers must never see the same topic twice without a genuine update.
-        - Escalating-trajectory bar: read the topic's `freq` directly — the higher the `freq`, the higher the bar for another instalment. At freq 1 a concrete update may pass; at a high `freq`, mere incremental movement (another number, another routine step, another day of the same trend) is 'more of the same' and should fail with reason: 'trajectory already covered'. Pass only when the development changes the reader's picture: a reversal, a resolution, a turning point, a newly-realised consequence, or a structural rupture.
+        - Escalating-trajectory bar: read the topic's `freq` directly — the higher the `freq`, the higher the bar for another instalment. At freq 1–2 a concrete update may pass. From freq 3 require a development that meaningfully changes the reader's picture. At freq 8+ pass ONLY a reversal, a resolution, a turning point, or a structural rupture — another day of the same trend, another strike in the same campaign, another number in a known series is 'more of the same' and fails with reason: 'trajectory already covered', no matter how prominent the coverage.
+        - Daily cap: if a topic's `last` is today, hold further instalments to the freq 8+ bar regardless of its actual `freq` — readers get at most one routine instalment per topic per day.
         - Within this batch, if multiple items cover the same event, keep only the one(s) that contribute the most relevant information; fail the rest with reason: 'duplicate within batch'.
 
         **Step 3 — Update coverage.** For EVERY passing item, emit one `coverage` entry for the topic it covers, in {language}. Each entry has:
         - `continues`: the `id` of the ledger topic this item continues, or `null` if it introduces a NEW topic not in the ledger.
         - `label`: a short, canonical topic label that stays STABLE across runs so future instalments can be matched to it (e.g. "US–Iran war & ceasefire", not the headline).
         - `section`: short thematic heading (e.g. "Brasil", "Geopolítica", "Economia"). Set ONLY on the first entry of a new thematic group; `null` otherwise. Never put the section inside `state`.
-        - `state`: 1–3 sentences giving the latest factual state of the topic. Lead with the core fact; add only the most essential detail (key figure, number, date, place, consequence). This text is shown to readers — no citation markers, brackets, section names, or meta-commentary. When continuing a ledger topic, write what is NEW, not a restatement.
+        - `state`: 1–3 sentences giving the latest factual state of the topic. Lead with the core fact; add only the most essential detail (key figure, number, date, place, consequence). No citation markers, brackets, section names, or meta-commentary. When continuing a ledger topic, fold the new development into the topic's known state — this is the ledger's memory of the topic, and what NEW topics show to readers.
+        - `update`: ONLY when `continues` is set: ONE sentence with just what is NEW this run — no context readers already saw in earlier instalments. This replaces `state` as what readers see for a continuing topic, so it must stand alone as a delta: lead with the new fact and keep the topic recognisable from the first words. null for new topics.
         - `citations`: list of integer item IDs from THIS batch supporting the entry. Usually one; use multiple only when two items genuinely cover the same event.
 
         Rules:
@@ -188,6 +196,7 @@ def _parse_decisions(decisions, prefix_tag, total, trace):
             state=c.state,
             citations=c.citations,
             section=c.section,
+            update=c.update,
         )
         for c in decisions.coverage
     ]
@@ -547,7 +556,7 @@ async def curate_items(
                     "reason": v["reason"],
                 }
             )
-        memory_for_trace = "\n\n".join(c.state for c in coverage) if coverage else None
+        memory_for_trace = "\n\n".join(c.update or c.state for c in coverage) if coverage else None
         _record_trace(
             collector, trace, model=handle.model, parsed=parsed_list, memory=memory_for_trace
         )

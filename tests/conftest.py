@@ -90,7 +90,8 @@ class FakeLLMAdapter(LLMAdapter):
         """Convenience: queue a FilterDecisions for the next complete_structured call.
 
         `memory` is a list of coverage dicts: {"text"|"state", "citations", "section"?,
-        "label"?, "continues"?}. `text` maps to the topic `state`; `label` defaults from it.
+        "label"?, "continues"?, "update"?}. `text` maps to the topic `state`; `label`
+        defaults from it.
         """
         coverage = []
         for c in memory or []:
@@ -101,6 +102,7 @@ class FakeLLMAdapter(LLMAdapter):
                     label=c.get("label") or state[:40] or "topic",
                     section=c.get("section"),
                     state=state,
+                    update=c.get("update"),
                     citations=c.get("citations", []),
                 )
             )
