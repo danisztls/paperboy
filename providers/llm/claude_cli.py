@@ -7,7 +7,7 @@ API key. As of 2026-06-15 programmatic use (`claude -p`) draws from a separate
 monthly credit pool metered at API rates — so this is not "free" the way
 interactive use is, and the adapter logs `total_cost_usd` per call.
 
-Single-shot per call via `--print`: claudinho drives any agentic loop (curate's
+Single-shot per call via `--print`: paperboy drives any agentic loop (curate's
 corroboration turns arrive as the `messages` conversation), so the CLI itself runs
 with all tools disabled and never takes its own turns. Structured output goes
 through the prompt (not `--json-schema`, which is ignored when tools are off) and

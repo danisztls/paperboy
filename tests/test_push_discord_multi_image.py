@@ -130,8 +130,8 @@ async def test_non_absolute_image_dropped_from_multi(mock_http):
     assert [e["image"]["url"] for e in payload["embeds"]] == ["https://img/2.jpg"]
 
 
-# ----- min_area_per_room filter (claudinho-side policy) -----
-# Listing parsing now lives in vasco's realestate adapter; claudinho only keeps
+# ----- min_area_per_room filter (paperboy-side policy) -----
+# Listing parsing now lives in vasco's realestate adapter; paperboy only keeps
 # the min-area-per-bedroom policy filter, which reads Item.meta.
 
 
@@ -153,7 +153,7 @@ def test_min_area_per_room_passes_unknown() -> None:
     assert _passes_area_per_room(_listing_item(bedrooms=None, area=90), 25)
 
 
-# ----- neighborhood block-list filter (claudinho-side policy) -----
+# ----- neighborhood block-list filter (paperboy-side policy) -----
 
 
 def _neighborhood_item(neighborhood) -> Item:

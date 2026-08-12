@@ -1,4 +1,4 @@
-# claudinho
+# paperboy
 
 A personal notifier that polls feeds and posts to Discord webhooks (or local markdown files) on a cron schedule.
 
@@ -17,12 +17,12 @@ Each task can push to any combination of `discord` (webhook) and `file` (local m
 
 ## Setup
 
-Requires [uv](https://github.com/astral-sh/uv) and a running **`vascod`** (the resident vasco daemon — sibling project) for content/listing fetches. claudinho talks to it over a UNIX socket; it does not embed vasco. Start it with `systemctl --user enable --now vascod.service` (see vasco's `contrib/systemd/`). If vascod isn't reachable, fetches return `None` and those items are skipped that run.
+Requires [uv](https://github.com/astral-sh/uv) and a running **`vascod`** (the resident vasco daemon — sibling project) for content/listing fetches. paperboy talks to it over a UNIX socket; it does not embed vasco. Start it with `systemctl --user enable --now vascod.service` (see vasco's `contrib/systemd/`). If vascod isn't reachable, fetches return `None` and those items are skipped that run.
 
 ```sh
 uv sync
-cp config/config.yaml.template ~/.config/claudinho/config.yaml
-cp secrets.yaml.template ~/.config/claudinho/secrets.yaml
+cp config/config.yaml.template ~/.config/paperboy/config.yaml
+cp secrets.yaml.template ~/.config/paperboy/secrets.yaml
 # Edit both files
 ```
 
@@ -43,8 +43,8 @@ uv run main.py --analysis --task <t>   # inspection mode: LLM reasoning + ELI5 r
 uv run main.py --verbose               # verbose output
 ```
 
-Config: `$XDG_CONFIG_HOME/claudinho/config.yaml` (default `~/.config/claudinho/config.yaml`)  
-State: `$XDG_DATA_HOME/claudinho/state.json` (default `~/.local/share/claudinho/state.json`)  
+Config: `$XDG_CONFIG_HOME/paperboy/config.yaml` (default `~/.config/paperboy/config.yaml`)  
+State: `$XDG_DATA_HOME/paperboy/state.json` (default `~/.local/share/paperboy/state.json`)  
 Logs: `<state_dir>/logs/<timestamp>.log`  
 Eval traces: `<state_dir>/evals/<task>/<run_iso>.jsonl` (one record per LLM call per run)
 
@@ -57,7 +57,7 @@ Every run writes a JSONL of its LLM calls (prompts, responses, tokens, latency, 
 ## Cron example
 
 ```cron
-*/15 * * * * cd /path/to/claudinho && uv run main.py >> /tmp/claudinho.log 2>&1
+*/15 * * * * cd /path/to/paperboy && uv run main.py >> /tmp/paperboy.log 2>&1
 ```
 
 ## Config reference

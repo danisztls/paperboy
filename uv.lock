@@ -219,7 +219,7 @@ wheels = [
 ]
 
 [[package]]
-name = "claudinho"
+name = "paperboy"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

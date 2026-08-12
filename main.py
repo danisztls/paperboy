@@ -47,12 +47,12 @@ log = logging.getLogger(__name__)
 
 def _xdg_config_path() -> pathlib.Path:
     xdg_config = pathlib.Path(os.environ.get("XDG_CONFIG_HOME", "~/.config")).expanduser()
-    return xdg_config / "claudinho" / "config.yaml"
+    return xdg_config / "paperboy" / "config.yaml"
 
 
 def _xdg_state_path() -> pathlib.Path:
     xdg_data = pathlib.Path(os.environ.get("XDG_DATA_HOME", "~/.local/share")).expanduser()
-    return xdg_data / "claudinho" / "state.json"
+    return xdg_data / "paperboy" / "state.json"
 
 
 def resolve_paths(args: argparse.Namespace) -> tuple[pathlib.Path, pathlib.Path]:
@@ -78,9 +78,9 @@ def resolve_paths(args: argparse.Namespace) -> tuple[pathlib.Path, pathlib.Path]
 
 def _acquire_lock() -> int:
     """Take the single-instance flock; exits if another instance holds it."""
-    xdg_runtime = pathlib.Path(os.environ.get("XDG_RUNTIME_DIR", f"/tmp/claudinho-{os.getuid()}"))
+    xdg_runtime = pathlib.Path(os.environ.get("XDG_RUNTIME_DIR", f"/tmp/paperboy-{os.getuid()}"))
     xdg_runtime.mkdir(parents=True, exist_ok=True)
-    lock_fd = os.open(xdg_runtime / "claudinho.lock", os.O_CREAT | os.O_WRONLY, 0o600)
+    lock_fd = os.open(xdg_runtime / "paperboy.lock", os.O_CREAT | os.O_WRONLY, 0o600)
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
@@ -323,12 +323,12 @@ def main():
         "--config",
         "-c",
         default=None,
-        help="Path to config file (YAML or JSON). Default: $XDG_CONFIG_HOME/claudinho/config.yaml",
+        help="Path to config file (YAML or JSON). Default: $XDG_CONFIG_HOME/paperboy/config.yaml",
     )
     parser.add_argument(
         "--state",
         default=None,
-        help="Path to state file. Default: $XDG_DATA_HOME/claudinho/state.json (or <config_dir>/state.json when config is given explicitly)",
+        help="Path to state file. Default: $XDG_DATA_HOME/paperboy/state.json (or <config_dir>/state.json when config is given explicitly)",
     )
     parser.add_argument(
         "-v",

@@ -113,7 +113,7 @@ def print_stats(config: dict, state: dict) -> None:
     tasks_cfg = config.get("tasks", []) or []
 
     table = Table(
-        title="[bold]claudinho stats[/bold]",
+        title="[bold]paperboy stats[/bold]",
         box=box.SIMPLE_HEAVY,
         header_style="bold",
         expand=False,

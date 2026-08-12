@@ -1,8 +1,8 @@
 """Contract test for the vascod thin client (process/_vasco.py).
 
 Self-contained: spins up a tiny stub daemon that speaks the wire protocol, so it
-validates claudinho's half of the contract without importing vasco (which
-claudinho no longer depends on). Cross-repo PROTOCOL_VERSION agreement is enforced
+validates paperboy's half of the contract without importing vasco (which
+paperboy no longer depends on). Cross-repo PROTOCOL_VERSION agreement is enforced
 at runtime by the client's mismatch guard, exercised here too.
 """
 

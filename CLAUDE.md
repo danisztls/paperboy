@@ -8,7 +8,7 @@ A personal notifier that posts to Discord webhooks on a cron schedule. Supported
 
 - **RSS** — polls feeds, posts new entries as Discord embeds, tracks seen entries. A `youtube` pull item is sugar over `feed` (`config.get_feeds` builds the `videos.xml?channel_id=<id>` URL from `channel_id`); everything downstream treats it as a feed.
 - **Digest** — like RSS but all passing entries are collected and posted as a single text message (splits on 2000-char limit). No OG image fetching. Uses `[Title](<url>)` to suppress Discord link previews.
-- **Real-estate** — structured listings from real-estate portals. vasco's `realestate` adapter fetches (HTTP-first, auto-escalating to Camoufox browser on bot-blocked sites) and parses the source portal (vivareal) into normalized listing dicts; claudinho maps those to `Item`s and applies its own policy (`min_area_per_room`, `max_items`, dedup).
+- **Real-estate** — structured listings from real-estate portals. vasco's `realestate` adapter fetches (HTTP-first, auto-escalating to Camoufox browser on bot-blocked sites) and parses the source portal (vivareal) into normalized listing dicts; paperboy maps those to `Item`s and applies its own policy (`min_area_per_room`, `max_items`, dedup).
 - **Research** — an agentic loop over vasco's real search + `fetch`/`extract` (via vascod): the LLM searches, reads promising pages, then synthesizes a cited plain-text answer. DeepSeek primary, Gemini fallback. No provider `web_search`.
 - **Weather** — fetches the daily forecast from Open-Meteo (no API key) and posts a `wttr.in`-style text report. `kind: smart` switches to a signal-only variant gated by σ-based anomaly thresholds against climate normals + past 7 days.
 - **Finance** — pulls quotes from yfinance (sync lib wrapped in `asyncio.to_thread`). Detected by `pull` containing a `finance` item with exactly one of two sub-keys: `report` (periodic snapshot) or `monitor` (intraday alerts on deltas + price-band crossings). User writes yfinance symbols verbatim (no alias map).
@@ -21,7 +21,7 @@ Intended to be run on a cron, not as a long-lived process.
 
 The project uses `uv` (see `uv.lock`, `.python-version` pinning Python 3.14).
 
-- Run: `uv run main.py` (reads `~/.config/claudinho/config.yaml`, writes state to `~/.local/share/claudinho/state.json`)
+- Run: `uv run main.py` (reads `~/.config/paperboy/config.yaml`, writes state to `~/.local/share/paperboy/state.json`)
 - Run with explicit config: `uv run main.py --config config.yaml` (state defaults to `<config_dir>/state.json`)
 - Run one task by name, ignoring period/last_run: `uv run main.py --task "world-news"`
 - Verbose output: add `--verbose` to any invocation
@@ -43,7 +43,7 @@ The project uses `uv` (see `uv.lock`, `.python-version` pinning Python 3.14).
 
 After any implementation, run format then lint before finishing.
 
-Config is read from `$XDG_CONFIG_HOME/claudinho/config.yaml` (default `~/.config/claudinho/config.yaml`) and state is written to `$XDG_DATA_HOME/claudinho/state.json` (default `~/.local/share/claudinho/state.json`). Both paths can be overridden: pass `--config` and/or `--state`. Copy `config/config.yaml.template` and fill in webhook URLs and feed URLs.
+Config is read from `$XDG_CONFIG_HOME/paperboy/config.yaml` (default `~/.config/paperboy/config.yaml`) and state is written to `$XDG_DATA_HOME/paperboy/state.json` (default `~/.local/share/paperboy/state.json`). Both paths can be overridden: pass `--config` and/or `--state`. Copy `config/config.yaml.template` and fill in webhook URLs and feed URLs.
 
 Logs are written to `<state_dir>/logs/<timestamp>.log` on every run.
 
@@ -159,7 +159,7 @@ Any change that adds, removes, or renames a config key must also update the corr
 
 - Errors posting one entry must not kill the run — `main.py` catches per-task exceptions, the gather uses `return_exceptions=True`.
 - Keep the 2-second sleep between posts in the same task (Discord webhook rate limits).
-- Don't add a sync HTTP path; feed fetching runs concurrently via the shared aiohttp session. Article content extraction (summarize step) is handled by `vascod` (the resident vasco daemon, sibling project) over a UNIX socket — claudinho is a thin client (`process/_vasco.py`), **not** a vasco library importer. vascod must be running (`systemctl --user status vascod.service`); a failed fetch returns `None` and the item is skipped this run. See `process/CLAUDE.md`.
+- Don't add a sync HTTP path; feed fetching runs concurrently via the shared aiohttp session. Article content extraction (summarize step) is handled by `vascod` (the resident vasco daemon, sibling project) over a UNIX socket — paperboy is a thin client (`process/_vasco.py`), **not** a vasco library importer. vascod must be running (`systemctl --user status vascod.service`); a failed fetch returns `None` and the item is skipped this run. See `process/CLAUDE.md`.
 - Only update `last_run` on a successful feed fetch. A `None` from `Source.pull()` must short-circuit the state write so a transiently broken feed retries on the next cron tick rather than waiting `period` hours.
 - LLM curate failures retry once after 10s; on second failure all items are treated as passing (fail-open).
 - All feeds in a given RSS/digest task share one LLM curate call; items are sent grouped by source with monotonically increasing integer IDs across all feeds.

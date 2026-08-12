@@ -1,6 +1,6 @@
 """Thin client bridge to vascod — the resident vasco daemon — over its UNIX socket.
 
-claudinho no longer imports vasco as a library; it sends fetch requests to the
+paperboy no longer imports vasco as a library; it sends fetch requests to the
 ``vascod`` service (`vasco serve`) and reads back the envelope. The public
 functions below keep their original signatures — only the transport changed.
 
@@ -76,7 +76,7 @@ async def _request(op: str, **params: Any) -> Any | None:
 
     if resp.get("protocol_version") != PROTOCOL_VERSION:
         log.error(
-            "vascod protocol mismatch: claudinho=%s daemon=%s — update claudinho",
+            "vascod protocol mismatch: paperboy=%s daemon=%s — update paperboy",
             PROTOCOL_VERSION,
             resp.get("protocol_version"),
         )

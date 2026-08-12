@@ -2,7 +2,7 @@
 
 vasco's realestate adapter (``mode_used="realestate"``) parses the source portal
 (vivareal) into normalized listing dicts; this module maps
-them to pipeline ``Item``s and applies claudinho-side policy
+them to pipeline ``Item``s and applies paperboy-side policy
 (``min_area_per_room`` filter, ``max_items`` cap, ``seen`` dedup).
 
 vasco picks the parser by domain, so a config item just needs a ``url`` —

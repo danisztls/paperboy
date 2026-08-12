@@ -2,7 +2,7 @@
 
 Drives vasco's real search + fetch/extract (over vascod) in a bounded loop:
 each turn the LLM picks the next action (search / read / finish) via structured
-output, claudinho executes it against vascod and feeds the result back, then the
+output, paperboy executes it against vascod and feeds the result back, then the
 LLM synthesizes a final answer over the gathered passages. This replaces the old
 provider-`web_search` search task — retrieval now comes from vasco (cache,
 escalation, quality scoring), not the model's built-in tool.
