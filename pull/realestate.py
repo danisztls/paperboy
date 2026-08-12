@@ -1,7 +1,7 @@
 """Web scraping source: structured real-estate listings via vasco.
 
-vasco's realestate adapter (``mode_used="realestate"``) parses each portal
-(vivareal / portal-a / portal-b) into normalized listing dicts; this module maps
+vasco's realestate adapter (``mode_used="realestate"``) parses the source portal
+(vivareal) into normalized listing dicts; this module maps
 them to pipeline ``Item``s and applies claudinho-side policy
 (``min_area_per_room`` filter, ``max_items`` cap, ``seen`` dedup).
 
@@ -114,7 +114,7 @@ def _format_body(listing: dict) -> str:
 def _abs_url(base: str, u: str | None) -> str | None:
     """Resolve a possibly-relative image URL against the listing page URL.
 
-    Some portals (e.g. portal-a) emit relative image paths like
+    A portal may emit relative image paths like
     `../imoveis/x.jpeg`; Discord rejects non-absolute embed image URLs with a 400,
     so absolutize here at the source→Item boundary.
     """

@@ -175,19 +175,19 @@ def test_neighborhood_passes_unknown() -> None:
 
 
 # ----- relative image URLs are absolutized at the source→Item boundary -----
-# Some portals (portal-a) emit `../imoveis/x.jpeg`; Discord rejects
-# non-absolute embed image URLs with a 400, so _to_item must resolve them.
+# A portal may emit `../imoveis/x.jpeg`; Discord rejects non-absolute embed
+# image URLs with a 400, so _to_item must resolve them.
 
 
 def test_to_item_absolutizes_relative_images() -> None:
     listing = {
-        "url": "https://portal-a.com.br/pt/imovel.php?id=698",
+        "url": "https://portal.example/pt/imovel.php?id=698",
         "title": "GALPÃO",
         "image": "../imoveis/698_42153_360.jpeg",
         "images": ["../imoveis/698_42153_360.jpeg"],
     }
-    item = _to_item(listing, "Portal A")
-    expected = "https://portal-a.com.br/imoveis/698_42153_360.jpeg"
+    item = _to_item(listing, "Portal")
+    expected = "https://portal.example/imoveis/698_42153_360.jpeg"
     assert item.image == expected
     assert item.images == [expected]
 

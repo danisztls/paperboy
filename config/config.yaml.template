@@ -180,7 +180,7 @@ tasks:
 
   # Real-estate task: structured listings via vasco's realestate adapter.
   # Detected by pull containing a realestate item. New listings are posted as Discord embeds.
-  # vasco picks the parser by domain (vivareal, portal-a, portal-b),
+  # vasco picks the parser by domain (currently vivareal only),
   # so a realestate item just needs a `url` — which also keys its state bucket.
   # Multiple `realestate:` items are allowed (one per url); each gets its own state
   # bucket and last_run/failure isolation, but all post to the same push targets
@@ -197,7 +197,7 @@ tasks:
   #         exclude_neighborhoods: ["North District", "Vila Índigo"]  # optional — block-list, case/accent-insensitive.
   #                                    # drops listings in these; only acts where the source exposes a neighborhood.
   #     - realestate:                     # additional source for the same task — different state bucket
-  #         url: "https://portal-a.com.br/pt/pesq_imovel.php?pja=true&pcid=1&pcat=0&ptip=A"
+  #         url: "https://www.vivareal.com.br/aluguel/sp/sao-paulo/..."
   #   push:
   #     - discord:
   #         webhook: !secret discord_webhook_imoveis
