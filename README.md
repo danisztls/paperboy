@@ -54,7 +54,25 @@ Both paths can be overridden with `--config` and `--state`.
 
 Every run writes a JSONL of its LLM calls (prompts, responses, tokens, latency, optional reasoning trace) under `<state_dir>/evals/<task>/<run_iso>.jsonl`. Use these to spot-check what the LLM saw and said on any past run — for a curate call that includes the per-item verdicts and reasons, the coverage briefing (topic states), and (when `curate.corroborate` is on) the search trajectory and prompt-cache hit/miss counts.
 
-## Cron example
+## Scheduling
+
+Unit files live in [`contrib/systemd/`](contrib/systemd/). Install them with `systemctl link` so
+the repo stays the single source of truth — editing the unit is then a tracked change, not silent
+drift between the repo and `~/.config/systemd/user/`:
+
+```sh
+systemctl --user link "$PWD/contrib/systemd/paperboy.service" "$PWD/contrib/systemd/paperboy.timer"
+systemctl --user enable --now paperboy.timer
+```
+
+After editing a unit in the repo, run `systemctl --user daemon-reload`. Note that the units assume
+the repo lives at `~/Dev/cli/paperboy` (`WorkingDirectory`); adjust if yours is elsewhere.
+
+`paperboy.service` gates on vascod's socket and RSSHub being reachable before running, so the
+boot-time catch-up run (`Persistent=true`) doesn't fire before its dependencies are up. Its socket
+path must stay in sync with `process/_vasco.py:_socket_path()`.
+
+Cron works too, if you'd rather not use systemd:
 
 ```cron
 */15 * * * * cd /path/to/paperboy && uv run main.py >> /tmp/paperboy.log 2>&1

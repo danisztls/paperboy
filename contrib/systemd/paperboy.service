@@ -1,0 +1,16 @@
+[Unit]
+Description=paperboy — scheduled feed/listing/weather/finance notifier
+After=network-online.target vascod.service
+Wants=vascod.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Dev/cli/paperboy
+# Wait (up to ~120s) for vascod's socket and RSSHub to be ready before running, so
+# the boot-time catch-up run (timer Persistent=true) doesn't fire before deps are up.
+# The socket path must track process/_vasco.py:_socket_path() — same override, same default.
+ExecStartPre=/bin/sh -c 'sock="${VASCO_SERVICE_SOCKET:-${XDG_RUNTIME_DIR}/vasco/vascod.sock}"; for i in $(seq 1 60); do [ -S "$sock" ] && curl -sf -o /dev/null --max-time 2 http://127.0.0.1:1200/healthz && exit 0; sleep 2; done; echo "paperboy: deps (vascod/RSSHub) not ready after 120s, proceeding anyway" >&2'
+ExecStart=%h/.local/bin/uv run main.py
+
+[Install]
+WantedBy=default.target

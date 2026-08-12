@@ -49,6 +49,8 @@ Logs are written to `<state_dir>/logs/<timestamp>.log` on every run.
 
 Eval traces (every LLM call's prompt, response, tokens, latency, optional reasoning) are written to `<state_dir>/evals/<task_name>/<run_iso>.jsonl` on every run — one record per LLM call. No rotation policy ships yet; clean up manually if disk pressure becomes an issue.
 
+Scheduling units live in `contrib/systemd/` and are installed with `systemctl --user link` (not copied) so the repo is the single source of truth — a copied unit drifts silently, which is exactly how `paperboy.service` came to gate on a vascod socket path that had moved. `ExecStartPre` in `paperboy.service` duplicates the socket path from `process/_vasco.py:_socket_path()`; **change both together**. Editing a unit requires `systemctl --user daemon-reload` to take effect.
+
 ## Architecture
 
 Slim root modules (`main.py`, `logsetup.py`, `pipeline.py`, `stats.py`, `util.py`) plus subpackages; orchestration lives in the `tasks/` package. The execution model is a **pull → process → push** pipeline, with always-on capture writing every LLM call's I/O to disk:

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run paperboy every 30 minutes between 07:00 and 19:00
+
+[Timer]
+OnCalendar=*-*-* 07..19:00/30:00
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target
