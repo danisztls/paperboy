@@ -3,11 +3,9 @@ urls:
   - https://example.com/some-article              # article (fetched + summarized)
 
 models:
-  - provider: anthropic          # 'anthropic', 'openai', 'gemini', or 'deepseek'
-    model: claude-sonnet-4-6
-  - provider: openai
-    model: gpt-4o-mini
-  # - provider: gemini
-  #   model: gemini-2.0-flash
-  # - provider: deepseek
-  #   model: deepseek-chat
+  - provider: deepseek           # one of: deepseek, gemini, claude_cli
+    model: deepseek-v4-flash
+  - provider: gemini
+    model: gemini-2.5-flash
+  # - provider: claude_cli       # reuses the local `claude` CLI login
+  #   model: sonnet

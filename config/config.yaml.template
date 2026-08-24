@@ -193,9 +193,10 @@ tasks:
   #         name: "VivaReal"           # optional — display label (falls back to provider/url)
   #         max_items: 10              # optional — cap new items per run (avoids Discord spam on first run)
   #         min_area_per_room: 25      # optional, vivareal only — drop cramped layouts (area / quartos < N m²)
-  #                                    # 25 = framework floor (internal notes)
-  #         exclude_neighborhoods: ["North District", "Vila Índigo"]  # optional — block-list, case/accent-insensitive.
-  #                                    # drops listings in these; only acts where the source exposes a neighborhood.
+  #                                    # e.g. 25 rejects a 3-bedroom listing under 75 m².
+  #         exclude_neighborhoods: ["Some Neighborhood", "Another One"]  # optional — block-list,
+  #                                    # case/accent-insensitive. Drops listings in these; only acts
+  #                                    # where the source exposes a neighborhood.
   #     - realestate:                     # additional source for the same task — different state bucket
   #         url: "https://www.vivareal.com.br/aluguel/sp/sao-paulo/..."
   #   push:
