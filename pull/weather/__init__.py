@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Open-Meteo weather source.
 
 `WeatherSource` fetches the forecast (no auth) and formats `Item.body` via one

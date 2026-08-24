@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Web scraping source: structured real-estate listings via vasco.
 
 vasco's realestate adapter (``mode_used="realestate"``) parses the source portal

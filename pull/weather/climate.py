@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Climate normals from the Open-Meteo Archive API (ERA5 reanalysis).
 
 Monthly cache of μ + σ for apparent max/min and daily-mean humidity over the

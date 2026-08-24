@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Layered config resolution: merge global → task → feed config blocks.
 
 Several config blocks (`ignore`, `skip`, `description`, `title`, `discord`) can be set at more

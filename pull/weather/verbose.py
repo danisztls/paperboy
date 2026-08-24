@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Default (verbose) forecast formatter: full daily summary + hourly rows."""
 
 from __future__ import annotations

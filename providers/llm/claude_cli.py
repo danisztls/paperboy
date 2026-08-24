@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """`claude -p` adapter — shell out to the locally-installed Claude Code CLI.
 
 A third LLM provider beside DeepSeek and Gemini. Its point is auth: `claude`

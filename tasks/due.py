@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Period-based due checks.
 
 `period`'s suffix decides the comparison kind: `Nm`/`Nh` are sliding-window

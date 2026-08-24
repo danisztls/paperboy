@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Feed aggregator and notifier: RSS feeds, real-estate listings, and LLM tasks posted to Discord"""
 
 import argparse

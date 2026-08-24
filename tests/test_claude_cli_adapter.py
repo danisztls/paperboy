@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for the claude_cli adapter (providers/llm/claude_cli.py).
 
 The subprocess boundary is faked: `shutil.which` is stubbed so the binary

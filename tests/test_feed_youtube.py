@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for entry `skip` (shorts/livestreams) + field `ignore` in pull.feed.get_new_entries.
 
 `get_new_entries` receives the already-resolved feed cfg, so these pass the effective

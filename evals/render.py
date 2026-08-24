@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Rich-rendered views of captured run data. Imported lazily from capture.RunCapture.display."""
 
 from evals.capture import FeedRecord, LLMCall, TaskCapture

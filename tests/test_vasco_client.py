@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Contract test for the vascod thin client (process/_vasco.py).
 
 Self-contained: spins up a tiny stub daemon that speaks the wire protocol, so it

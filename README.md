@@ -262,3 +262,8 @@ youtube:
   skip: { shorts: true, livestreams: true }
   ignore: { description: true }
 ```
+
+## License
+
+[GNU AGPL-3.0-only](LICENSE). If you run a modified version as a network service, you must make
+your source available to its users.

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Real-estate task: structured listings from portals via vasco's realestate adapter."""
 
 import logging

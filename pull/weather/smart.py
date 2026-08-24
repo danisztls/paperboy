@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Smart (signal-only) formatter: lines fire only on rain thresholds or σ-anomalies.
 
 Anomalies are checked against two frames with OR semantics: hist (climate-month

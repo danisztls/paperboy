@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Orchestrator-level invariant: empty task results must not touch state."""
 
 from main import merge_task_results

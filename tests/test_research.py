@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for the agentic research loop (pull/research.py) and its task wrapper.
 
 The two fakes: FakeLLMAdapter (scripted complete_structured decisions + complete

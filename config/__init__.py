@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Config loading, primitives/accessors, and Pydantic validation.
 
 - `values` — `Period`, parsers, `task_kind`, and the raw-dict accessors (`get_*`).

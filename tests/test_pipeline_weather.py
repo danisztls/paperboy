@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """E2E tests for the weather pipeline (Open-Meteo → DiscordText)."""
 
 import json

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Pydantic validation of the full config file.
 
 Any change that adds, removes, or renames a config key must be reflected here

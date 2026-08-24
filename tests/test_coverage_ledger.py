@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Unit tests for the coverage merge (tasks/feed_state.apply_coverage): active ledger + rollups."""
 
 from datetime import UTC, datetime, timedelta

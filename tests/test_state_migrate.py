@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 from state.migrate import CURRENT_VERSION, migrate, needs_migration
 
 

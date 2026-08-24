@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Abstract pipeline: Source → (Processor) → Target."""
 
 from __future__ import annotations

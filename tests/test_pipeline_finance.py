@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """E2E tests for the finance pipeline (yfinance → DiscordText).
 
 yfinance is sync and doesn't go through aiohttp, so we monkeypatch the two

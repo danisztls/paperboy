@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Tests for the `youtube` pull source — sugar over `feed` expanded in config.get_feeds."""
 
 import aiohttp

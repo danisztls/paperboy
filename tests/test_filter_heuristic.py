@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Unit tests for process.filter_heuristic.apply_regex / url_filtered."""
 
 from process.filter_heuristic import apply_regex, url_filtered

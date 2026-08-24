@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """RSS/digest task pipeline: pull feeds → summarize → curate → push → merge state."""
 
 import asyncio

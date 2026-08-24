@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Shared helpers for both weather formatters (verbose + smart)."""
 
 from __future__ import annotations

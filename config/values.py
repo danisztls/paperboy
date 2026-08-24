@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Config primitives and raw-dict accessors (no validation — see schema.py)."""
 
 from dataclasses import dataclass

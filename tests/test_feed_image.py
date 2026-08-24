@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Unit tests for `pull.feed._entry_image` resolution chain.
 
 feedparser entries are dict-like; the function only uses `.get()` and iteration,

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Task orchestration: one `process_*_task(task_cfg, state, ctx)` per task kind.
 
 Each processor pulls from its source(s), pushes to the configured targets, and

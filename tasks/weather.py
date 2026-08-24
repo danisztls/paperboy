@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Weather task: Open-Meteo forecast posted as plain text, with smart-mode climate cache."""
 
 import logging

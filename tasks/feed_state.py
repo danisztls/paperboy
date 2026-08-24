@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """State merging for RSS/digest tasks (per-feed items + the coverage ledger)."""
 
 import logging

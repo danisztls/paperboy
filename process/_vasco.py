@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Daniel de Souza
+# SPDX-License-Identifier: AGPL-3.0-only
+
 """Thin client bridge to vascod — the resident vasco daemon — over its UNIX socket.
 
 paperboy no longer imports vasco as a library; it sends fetch requests to the
