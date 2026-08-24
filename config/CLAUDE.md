@@ -35,7 +35,9 @@ A `pull: - youtube: {channel_id, name?, …}` item is **not** a separate `Source
 Callers extract each scope's block themselves, because accessors differ — e.g. the task-level Discord block lives under `push[].discord` (`get_discord_cfg`), not `task["discord"]`:
 
 ```python
-color = parse_color(layer_dict(global_cfg.get("discord"), get_discord_cfg(task_cfg), fc.get("discord")).get("color"))
+color = parse_color(
+    layer_dict(global_cfg.get("discord"), get_discord_cfg(task_cfg), fc.get("discord")).get("color")
+)
 ```
 
 Used in `tasks/feeds.py` for `ignore`, `skip`, `description`, `title` (all via `resolve_scoped`), and `discord` (`.color`). `resolve_scoped(key, …, youtube=bool)` adds the YouTube-scope layers: for a feed where `is_youtube_feed_url(url)` is true it interleaves the global/task `youtube.<key>` blocks at the matching precedence, so a global `youtube.ignore.description` is overridable per task/feed. `language` is the deliberate exception — it is sourced from different parent blocks at different scopes (`curate.language` globally vs feed-level) and doesn't reduce to one keyed merge, so it stays a `RunContext.language` property read at the curate call site.

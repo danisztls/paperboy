@@ -5,7 +5,7 @@ description = "Scheduled personal notifier: feeds, listings, weather, finance an
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "aiohttp>=3.9",
+    "aiohttp>=3.9,<3.14",  # aioresponses 0.7.9 (latest) breaks on 3.14: ClientResponse.stream_writer
     "beautifulsoup4>=4.12",
     "feedparser>=6.0.12",
     "openai>=2.33.0",  # OpenAI-compatible client used by the DeepSeek adapter
