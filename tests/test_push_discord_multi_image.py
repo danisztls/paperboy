@@ -169,7 +169,9 @@ def test_neighborhood_drops_excluded_case_and_accent_insensitive() -> None:
 
 
 def test_neighborhood_keeps_non_excluded() -> None:
-    assert _passes_neighborhood(_neighborhood_item("South District"), ["North District", "Vila Índigo"])
+    assert _passes_neighborhood(
+        _neighborhood_item("South District"), ["North District", "Vila Índigo"]
+    )
 
 
 def test_neighborhood_passes_unknown() -> None:
